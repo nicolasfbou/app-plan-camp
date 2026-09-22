@@ -65,3 +65,18 @@ export async function openFreshApp(page: Page) {
   await page.goto('/');
   return errors;
 }
+
+/** Attend que la transformation du Stage soit stable (rendu par image d'animation). */
+export async function settledTransform(page: Page) {
+  let previous = '';
+  let current = await stageTransform(page);
+  await expect
+    .poll(async () => {
+      previous = JSON.stringify(current);
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      current = await stageTransform(page);
+      return JSON.stringify(current) === previous;
+    })
+    .toBe(true);
+  return current;
+}

@@ -20,6 +20,8 @@ export interface StoredBlob {
   mimeType: string;
   byteLength: number;
   sha256: string;
+  /** Date d'écriture (ISO). Sert à ne jamais nettoyer un fichier tout juste importé. */
+  createdAt?: string;
 }
 
 export interface ProjectRepository {
@@ -38,8 +40,12 @@ export interface ProjectRepository {
   /** Stocke des octets tels quels et retourne leur empreinte. */
   putBlob(bytes: ArrayBuffer, mimeType: string): Promise<Omit<StoredBlob, 'bytes'>>;
   getBlob(id: string): Promise<StoredBlob | undefined>;
-  /** Supprime les fichiers qui ne sont plus référencés par aucun plan (ex. import annulé). */
-  deleteOrphanBlobs(): Promise<number>;
+  /**
+   * Supprime les fichiers qui ne sont référencés par aucun plan (ex. import annulé) et qui ont
+   * plus de `minAgeMs` : un fichier tout juste importé dans un autre onglet, pas encore
+   * référencé par la sauvegarde automatique, n'est donc jamais supprimé.
+   */
+  deleteOrphanBlobs(minAgeMs?: number): Promise<number>;
 
   /**
    * Préférence d'affichage (dernier zoom / centre de vue) : confort uniquement. Stockée à part,

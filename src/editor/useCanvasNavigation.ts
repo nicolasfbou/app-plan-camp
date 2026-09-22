@@ -14,11 +14,14 @@ import { type Viewport, interpretWheel, panBy, pinch, zoomAt } from '@/domain/vi
 import { useEditorStore } from '@/store/editorStore.ts';
 import { useViewportStore } from '@/store/viewportStore.ts';
 
-function isTypingTarget(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLElement &&
-    (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
-  );
+/**
+ * Espace sert au déplacement seulement quand le focus n'est sur aucun contrôle (sinon Espace doit
+ * activer le bouton, cocher la case, etc.) et qu'aucune boîte de dialogue n'est ouverte.
+ */
+function spaceMeansPan(target: EventTarget | null, element: HTMLElement): boolean {
+  if (document.querySelector('dialog[open]')) return false;
+  if (!(target instanceof HTMLElement)) return true;
+  return target === document.body || target === element || element.contains(target);
 }
 
 export function useCanvasNavigation(containerRef: RefObject<HTMLElement | null>, enabled: boolean): void {
@@ -107,7 +110,7 @@ export function useCanvasNavigation(containerRef: RefObject<HTMLElement | null>,
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && !isTypingTarget(e.target)) {
+      if (e.code === 'Space' && spaceMeansPan(e.target, element)) {
         e.preventDefault();
         if (!e.repeat) useEditorStore.getState().setSpaceHeld(true);
       }

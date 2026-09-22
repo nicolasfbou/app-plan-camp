@@ -13,7 +13,13 @@ import {
   readImageHeader,
   sniffFormat,
 } from '@/domain/image/header.ts';
-import { type SizeAssessment, assessImageSize } from '@/domain/image/sizeAssessment.ts';
+import { pdfPagePixelSize } from '@/domain/image/pdfRaster.ts';
+import {
+  CANVAS_MAX_AREA,
+  CANVAS_MAX_SIDE,
+  type SizeAssessment,
+  assessImageSize,
+} from '@/domain/image/sizeAssessment.ts';
 import type { ProjectRepository } from '@/persistence/ProjectRepository.ts';
 import { decodeImage } from './decodeImage.ts';
 import { ImportError } from './errors.ts';
@@ -97,6 +103,15 @@ export async function finalizePdfImport(
   page: number,
   dpi: number,
 ): Promise<ImportedBackground> {
+  // Au-delà des limites des canevas, certains navigateurs rendent une page blanche sans erreur :
+  // on refuse avant le rendu plutôt que d'enregistrer un fond faux.
+  const { widthPt, heightPt } = await prepared.pdf.pageSize(page);
+  const { width, height } = pdfPagePixelSize(widthPt, heightPt, dpi);
+  if (Math.max(width, height) > CANVAS_MAX_SIDE || width * height > CANVAS_MAX_AREA) {
+    throw new ImportError(
+      `Rendu impossible à ${dpi} ppp : ${width} × ${height} px dépasse la limite des canevas du navigateur. Choisissez une résolution plus faible.`,
+    );
+  }
   const png = await prepared.pdf.renderPng(page, dpi);
   const pdfBlob = await repo.putBlob(prepared.file.bytes, MIME_TYPES.pdf);
   const baseName = prepared.file.name.replace(/\.pdf$/i, '');

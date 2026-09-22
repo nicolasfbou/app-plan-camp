@@ -172,7 +172,10 @@ describe('camps et plans', () => {
     const used = await withImage(createPlanDocument({ siteId: 's', name: 'A' }), randomBytes(1000));
     await repo.savePlan(used);
     const orphan = await repo.putBlob(randomBytes(500), 'image/png');
-    expect(await repo.deleteOrphanBlobs()).toBe(1);
+    // Un fichier tout juste écrit (import en cours dans un autre onglet) est protégé.
+    expect(await repo.deleteOrphanBlobs()).toBe(0);
+    expect(await repo.getBlob(orphan.id)).toBeDefined();
+    expect(await repo.deleteOrphanBlobs(0)).toBe(1);
     expect(await repo.getBlob(orphan.id)).toBeUndefined();
     expect(await repo.getBlob(used.plan.baseImage!.blobId)).toBeDefined();
   });

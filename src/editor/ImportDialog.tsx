@@ -47,10 +47,21 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Applique le fond importé au plan ouvert (action annulable). */
-async function applyBackground(imported: ImportedBackground): Promise<void> {
+/**
+ * Applique le fond importé au plan pour lequel l'import a été lancé (action annulable).
+ * Si ce plan n'est plus ouvert (navigation pendant l'import) ou si la boîte a été fermée,
+ * rien n'est appliqué : le fichier stocké devient orphelin et sera nettoyé plus tard.
+ */
+async function applyBackground(
+  imported: ImportedBackground,
+  planId: string,
+  isActive: () => boolean,
+): Promise<void> {
   const doc = planStore.getState().doc;
-  if (!doc) return;
+  if (!doc || doc.plan.id !== planId || !isActive()) {
+    imported.bitmap.close();
+    return;
+  }
   const current = doc.plan.baseImage;
   const hasObjects = Object.keys(doc.objects).length > 0;
   if (
@@ -62,6 +73,10 @@ async function applyBackground(imported: ImportedBackground): Promise<void> {
     throw new ImportError(t('import.replaceBlocked'));
   }
   const loaded = await buildDisplayPyramid(imported.ref.blobId, imported.bitmap);
+  if (planStore.getState().doc?.plan.id !== planId || !isActive()) {
+    loaded.levels.forEach((level) => level.bitmap.close());
+    return;
+  }
   freshBackgrounds.add(imported.ref.blobId);
   useEditorStore.getState().setBackground({ kind: 'ready', background: loaded });
   planStore.getState().update(t('history.importBackground'), (draft) => {
@@ -70,36 +85,50 @@ async function applyBackground(imported: ImportedBackground): Promise<void> {
   });
 }
 
-export function ImportDialog({ file, onClose }: { file: File; onClose(): void }) {
+export function ImportDialog({ file, planId, onClose }: { file: File; planId: string; onClose(): void }) {
   const [step, setStep] = useState<Step>({ kind: 'working', message: t('import.reading') });
   // Le PDF ouvert vit aussi longtemps que la boîte de dialogue (rendu compris), pas une étape.
   const openPdf = useRef<LoadedPdf | null>(null);
-  useEffect(() => () => void openPdf.current?.destroy(), []);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      void openPdf.current?.destroy();
+      openPdf.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const prepared = await prepareImport({ name: file.name, bytes: await file.arrayBuffer() });
-      if (cancelled) return;
+      if (cancelled) {
+        if (prepared.kind === 'pdf') void prepared.pdf.destroy();
+        return;
+      }
       if (prepared.kind === 'pdf') {
         openPdf.current = prepared.pdf;
         return setStep({ kind: 'pdf', prepared });
       }
       if (prepared.assessment.level !== 'normal') return setStep({ kind: 'confirm-size', prepared });
       setStep({ kind: 'working', message: t('import.processing') });
-      await applyBackground(await finalizeImageImport(repository, prepared));
+      await applyBackground(await finalizeImageImport(repository, prepared), planId, () => !cancelled);
       if (!cancelled) onClose();
     })().catch((error: unknown) => !cancelled && setStep({ kind: 'error', message: messageOf(error) }));
     return () => {
       cancelled = true;
     };
-  }, [file, onClose]);
+  }, [file, planId, onClose]);
 
   const run = (message: string, action: () => Promise<ImportedBackground>) => {
     setStep({ kind: 'working', message });
     action()
-      .then(applyBackground)
-      .then(onClose, (error: unknown) => setStep({ kind: 'error', message: messageOf(error) }));
+      .then((imported) => applyBackground(imported, planId, () => mounted.current))
+      .then(
+        () => mounted.current && onClose(),
+        (error: unknown) => mounted.current && setStep({ kind: 'error', message: messageOf(error) }),
+      );
   };
 
   if (step.kind === 'working') {

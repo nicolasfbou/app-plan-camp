@@ -126,7 +126,13 @@ export class IndexedDbRepository implements ProjectRepository {
   }
 
   async putBlob(bytes: ArrayBuffer, mimeType: string): Promise<Omit<StoredBlob, 'bytes'>> {
-    const meta = { id: newId(), mimeType, byteLength: bytes.byteLength, sha256: await sha256Hex(bytes) };
+    const meta = {
+      id: newId(),
+      mimeType,
+      byteLength: bytes.byteLength,
+      sha256: await sha256Hex(bytes),
+      createdAt: new Date().toISOString(),
+    };
     await this.db.blobs.put({ ...meta, bytes });
     return meta;
   }
@@ -135,12 +141,17 @@ export class IndexedDbRepository implements ProjectRepository {
     return this.db.blobs.get(id);
   }
 
-  async deleteOrphanBlobs(): Promise<number> {
+  async deleteOrphanBlobs(minAgeMs = 60 * 60 * 1000): Promise<number> {
+    const cutoff = Date.now() - minAgeMs;
     return this.db.transaction('rw', this.db.plans, this.db.blobs, async () => {
       const ids = (await this.db.blobs.toCollection().primaryKeys()) as string[];
       let deleted = 0;
       for (const id of ids) {
-        if ((await this.db.plans.where('blobIds').equals(id).count()) === 0) {
+        if ((await this.db.plans.where('blobIds').equals(id).count()) > 0) continue;
+        // Lecture complète nécessaire pour la date ; seuls les orphelins sont lus.
+        const blob = await this.db.blobs.get(id);
+        const created = blob?.createdAt ? Date.parse(blob.createdAt) : 0;
+        if (created <= cutoff) {
           await this.db.blobs.delete(id);
           deleted++;
         }

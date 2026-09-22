@@ -16,12 +16,16 @@ const FORMAT_LABELS: Record<string, string> = {
 };
 
 type Verification =
-  { state: 'idle' } | { state: 'running' } | { state: 'ok' } | { state: 'mismatch' | 'missing' };
+  | { state: 'idle' }
+  | { state: 'running' }
+  | { state: 'ok' }
+  | { state: 'mismatch' | 'missing' }
+  | { state: 'error'; message: string };
 
 /** Télécharge des octets stockés tels quels, sans conversion. */
 async function downloadStored(blobId: string, fileName: string, mimeType: string) {
   const stored = await repository.getBlob(blobId);
-  if (!stored) return;
+  if (!stored) throw new Error(t('bg.verify.missing'));
   const url = URL.createObjectURL(new Blob([stored.bytes], { type: mimeType }));
   const link = document.createElement('a');
   link.href = url;
@@ -53,12 +57,20 @@ function BackgroundDetails({ image }: { image: BaseImageRef }) {
 
   const verify = async () => {
     setVerification({ state: 'running' });
-    const main = await verifyStoredBlob(repository, image.blobId, image.sha256);
-    const pdf =
-      source.kind === 'pdf' ? await verifyStoredBlob(repository, source.pdfBlobId, source.pdfSha256) : main;
-    const failed = !main.ok ? main : !pdf.ok ? pdf : null;
-    setVerification(failed && !failed.ok ? { state: failed.reason } : { state: 'ok' });
+    try {
+      const main = await verifyStoredBlob(repository, image.blobId, image.sha256);
+      const pdf =
+        source.kind === 'pdf' ? await verifyStoredBlob(repository, source.pdfBlobId, source.pdfSha256) : main;
+      const failed = !main.ok ? main : !pdf.ok ? pdf : null;
+      setVerification(failed && !failed.ok ? { state: failed.reason } : { state: 'ok' });
+    } catch (error) {
+      setVerification({ state: 'error', message: error instanceof Error ? error.message : String(error) });
+    }
   };
+  const download = (blobId: string, fileName: string, mimeType: string) =>
+    downloadStored(blobId, fileName, mimeType).catch((error: unknown) =>
+      setVerification({ state: 'error', message: error instanceof Error ? error.message : String(error) }),
+    );
 
   return (
     <div className="space-y-4" data-testid="background-panel">
@@ -113,6 +125,12 @@ function BackgroundDetails({ image }: { image: BaseImageRef }) {
             {t('bg.verify.ok')}
           </p>
         )}
+        {verification.state === 'error' && (
+          <p role="alert" className="flex gap-2 text-xs text-red-700">
+            <ShieldAlert size={14} className="mt-0.5 shrink-0" aria-hidden />
+            {verification.message}
+          </p>
+        )}
         {(verification.state === 'mismatch' || verification.state === 'missing') && (
           <p role="alert" className="flex gap-2 text-xs text-red-700">
             <ShieldAlert size={14} className="mt-0.5 shrink-0" aria-hidden />
@@ -121,14 +139,14 @@ function BackgroundDetails({ image }: { image: BaseImageRef }) {
         )}
         <Button
           className="w-full"
-          onClick={() => void downloadStored(image.blobId, image.fileName, image.mimeType)}
+          onClick={() => void download(image.blobId, image.fileName, image.mimeType)}
         >
           <Download size={16} /> {t('bg.download')}
         </Button>
         {source.kind === 'pdf' && (
           <Button
             className="w-full"
-            onClick={() => void downloadStored(source.pdfBlobId, source.pdfFileName, 'application/pdf')}
+            onClick={() => void download(source.pdfBlobId, source.pdfFileName, 'application/pdf')}
           >
             <Download size={16} /> {t('bg.downloadPdf')}
           </Button>

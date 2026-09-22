@@ -8,6 +8,7 @@ import {
   openFreshApp,
   sha256OfBuffer,
   sha256OfFile,
+  settledTransform,
   stageTransform,
   waitForBackground,
   waitSaved,
@@ -32,7 +33,7 @@ test('parcours principal : camp → plan → photo → fermer → recharger → 
   await waitSaved(page);
 
   const box = (await page.getByTestId('canvas-container').boundingBox())!;
-  const fit = await stageTransform(page);
+  const fit = await settledTransform(page);
   const imageCenter = { x: fit.x + 160 * fit.scale, y: fit.y + 100 * fit.scale };
   expect(imageCenter.x).toBeCloseTo(box.width / 2, 0);
   expect(imageCenter.y).toBeCloseTo(box.height / 2, 0);

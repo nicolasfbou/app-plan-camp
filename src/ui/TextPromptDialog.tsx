@@ -2,13 +2,14 @@ import { type ReactNode, useState } from 'react';
 import { t } from '@/i18n/index.ts';
 import { Button } from './Button.tsx';
 import { Modal } from './Modal.tsx';
+import { useSubmit } from './useSubmit.ts';
 
 interface TextPromptDialogProps {
   title: string;
   label: string;
   initialValue: string;
   confirmLabel: string;
-  onConfirm(value: string): void;
+  onConfirm(value: string): Promise<void> | void;
   onCancel(): void;
   children?: ReactNode;
 }
@@ -24,8 +25,11 @@ export function TextPromptDialog({
   children,
 }: TextPromptDialogProps) {
   const [value, setValue] = useState(initialValue);
+  const { busy, error, submit: run } = useSubmit();
   const trimmed = value.trim();
-  const submit = () => trimmed && onConfirm(trimmed);
+  const submit = () => {
+    if (trimmed) void run(() => onConfirm(trimmed));
+  };
 
   return (
     <Modal
@@ -35,7 +39,7 @@ export function TextPromptDialog({
       footer={
         <>
           <Button onClick={onCancel}>{t('common.cancel')}</Button>
-          <Button variant="primary" disabled={!trimmed} onClick={submit}>
+          <Button variant="primary" disabled={!trimmed || busy} onClick={submit}>
             {confirmLabel}
           </Button>
         </>
@@ -60,6 +64,11 @@ export function TextPromptDialog({
           />
         </label>
         {children}
+        {error && (
+          <p role="alert" className="text-sm text-red-700">
+            {error}
+          </p>
+        )}
       </form>
     </Modal>
   );

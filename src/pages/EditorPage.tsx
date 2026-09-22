@@ -137,7 +137,7 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
           if (file) setImportFile(file);
         }}
       />
-      {importFile && <ImportDialog file={importFile} onClose={closeImport} />}
+      {importFile && <ImportDialog file={importFile} planId={planId} onClose={closeImport} />}
       {renaming && (
         <TextPromptDialog
           title={t('plans.rename.title')}

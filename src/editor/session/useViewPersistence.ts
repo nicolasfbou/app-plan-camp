@@ -22,13 +22,15 @@ export function useViewPersistence(planId: string): void {
   useEffect(() => {
     if (!background || !stageReady || appliedFor.current === background.blobId) return;
     const blobId = background.blobId;
-    appliedFor.current = blobId;
     let cancelled = false;
-    const fresh = freshBackgrounds.delete(blobId);
+    const fresh = freshBackgrounds.has(blobId);
     (fresh ? Promise.resolve(undefined) : repository.getViewPrefs(planId))
       .catch(() => undefined)
       .then((prefs) => {
         if (cancelled) return;
+        // Marqué appliqué seulement ici : une relance annulée n'empêche pas la vue initiale.
+        appliedFor.current = blobId;
+        freshBackgrounds.delete(blobId);
         const { stageSize, setViewport } = useViewportStore.getState();
         const inside =
           prefs &&
@@ -46,17 +48,22 @@ export function useViewPersistence(planId: string): void {
   // Mémorisation de la vue (préférence d'affichage uniquement).
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let pending: (() => void) | null = null;
     const unsubscribe = useViewportStore.subscribe((state, previous) => {
       if (state.viewport === previous.viewport || !appliedFor.current) return;
       clearTimeout(timer);
-      timer = setTimeout(() => {
+      pending = () => {
+        pending = null;
         void repository
           .saveViewPrefs(planId, toViewCenter(state.viewport, state.stageSize))
           .catch(() => undefined);
-      }, SAVE_DELAY_MS);
+      };
+      timer = setTimeout(() => pending?.(), SAVE_DELAY_MS);
     });
     return () => {
+      // En quittant le plan, la dernière vue est enregistrée sans attendre le délai.
       clearTimeout(timer);
+      pending?.();
       unsubscribe();
     };
   }, [planId]);

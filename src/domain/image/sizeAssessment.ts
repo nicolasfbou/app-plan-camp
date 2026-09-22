@@ -12,6 +12,8 @@ export const NORMAL_MAX_MEGAPIXELS = 50;
 export const LARGE_MAX_MEGAPIXELS = 120;
 export const GPU_TEXTURE_SIDE = 16_384;
 export const CANVAS_MAX_SIDE = 32_767;
+/** Surface maximale d'un canevas dans Chromium (≈ 268 MP). */
+export const CANVAS_MAX_AREA = 268_435_456;
 
 export type SizeLevel = 'normal' | 'large' | 'dangerous';
 export type SizeReason = 'megapixels' | 'side' | 'megapixels-critical' | 'side-critical';
