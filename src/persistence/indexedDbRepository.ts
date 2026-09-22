@@ -113,6 +113,25 @@ export class IndexedDbRepository implements ProjectRepository {
     });
   }
 
+  async getPlanSummary(id: string): Promise<PlanSummary | undefined> {
+    const record = await this.db.plans.get(id);
+    if (!record) return undefined;
+    const { siteId, name, kind, updatedAt } = record;
+    return { id, siteId, name, kind, updatedAt };
+  }
+
+  async saveImportedPlan(doc: PlanDocument, newSite: Site | null): Promise<void> {
+    await this.db.transaction('rw', this.db.sites, this.db.plans, this.db.blobs, async () => {
+      if (newSite) await this.db.sites.put(newSite);
+      const previous = await this.db.plans.get(doc.plan.id);
+      await this.savePlan(doc);
+      for (const blobId of previous?.blobIds ?? []) {
+        const references = await this.db.plans.where('blobIds').equals(blobId).count();
+        if (references === 0) await this.db.blobs.delete(blobId);
+      }
+    });
+  }
+
   async getPlanSavedAt(id: string): Promise<number | undefined> {
     return (await this.db.plans.get(id))?.savedAt;
   }

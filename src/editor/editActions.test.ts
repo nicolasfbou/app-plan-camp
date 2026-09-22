@@ -26,7 +26,7 @@ beforeEach(() => {
 
 describe('commandes d’édition', () => {
   it('création : sélectionne l’objet et revient à l’outil Sélection ; épaisseur selon le zoom', () => {
-    expect(useEditorStore.getState()).toMatchObject({ selectedId: rect.id, tool: 'select' });
+    expect(useEditorStore.getState()).toMatchObject({ selectedIds: [rect.id], tool: 'select' });
     expect(rect.style.strokeWidth).toBe(6); // 3 px écran à 50 % = 6 px image
   });
 
@@ -34,7 +34,7 @@ describe('commandes d’édition', () => {
     editActions.duplicateSelected();
     const copy = objects().find((o) => o.id !== rect.id)!;
     expect(copy.geometry).toMatchObject({ x: 132, y: 132 });
-    expect(useEditorStore.getState().selectedId).toBe(copy.id);
+    expect(useEditorStore.getState().selectedIds).toEqual([copy.id]);
   });
 
   it('copier / coller : chaque collage est un nouvel objet, décalé un peu plus', () => {

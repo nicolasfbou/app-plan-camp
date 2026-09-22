@@ -35,12 +35,14 @@ export function isLayerUsable(layer: Layer): boolean {
 }
 
 /**
- * Calque du niveau demandé qui recevra un nouvel objet : de préférence un calque visible et
- * déverrouillé (le plus haut). S'il n'y en a aucun, le calque du dessus du niveau est retourné ;
+ * Calque du niveau demandé qui recevra un nouvel objet quand aucun calque actif n'est choisi : le
+ * plus BAS des calques visibles et déverrouillés de ce niveau, c'est-à-dire normalement le calque
+ * d'origine (un calque créé ou dupliqué se place au-dessus : il ne « capte » donc pas les objets
+ * sans avoir été rendu actif). S'il n'y en a aucun, le premier calque du niveau est retourné ;
  * l'appelant doit alors refuser la création (voir `isLayerUsable`).
  */
 export function layerForTier(doc: PlanDocument, tier: RenderTier): Layer {
-  const ofTier = [...doc.layers].reverse().filter((l) => l.tier === tier);
+  const ofTier = doc.layers.filter((l) => l.tier === tier);
   const layer = ofTier.find(isLayerUsable) ?? ofTier[0] ?? doc.layers.at(-1);
   if (!layer) throw new Error('Le plan ne contient aucun calque.');
   return layer;
@@ -80,6 +82,7 @@ function base(doc: PlanDocument, tier: RenderTier, name: string, style: Style, p
     visible: true,
     locked: false,
     zIndex: topZIndex(doc, layer.id),
+    groupId: null,
     metadata: {},
     createdAt: now,
     updatedAt: now,

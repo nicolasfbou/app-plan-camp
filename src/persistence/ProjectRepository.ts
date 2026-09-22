@@ -38,6 +38,17 @@ export interface ProjectRepository {
   /** Date (ms) de la dernière écriture du plan, pour comparer avec un journal de récupération. */
   getPlanSavedAt(id: string): Promise<number | undefined>;
   deletePlan(id: string): Promise<void>;
+  /**
+   * Résumé d'un plan lu SANS le valider : sert à savoir si un identifiant existe déjà (même si
+   * son contenu est illisible) et dans quel camp il se trouve.
+   */
+  getPlanSummary(id: string): Promise<PlanSummary | undefined>;
+  /**
+   * Écriture ATOMIQUE d'un plan importé : crée le camp éventuel, écrit le plan (remplace celui de
+   * même identifiant), puis supprime les fichiers de l'ancienne version qui ne sont plus
+   * référencés. En cas d'échec, rien de tout cela n'est écrit.
+   */
+  saveImportedPlan(doc: PlanDocument, newSite: Site | null): Promise<void>;
 
   /** Stocke des octets tels quels et retourne leur empreinte. */
   putBlob(bytes: ArrayBuffer, mimeType: string): Promise<Omit<StoredBlob, 'bytes'>>;

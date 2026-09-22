@@ -1,4 +1,15 @@
-import { ChevronsDown, ChevronsUp, ArrowDown, ArrowUp, Copy, PenLine, Trash2 } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  ChevronsDown,
+  ChevronsUp,
+  Copy,
+  Group,
+  PenLine,
+  Pentagon,
+  Trash2,
+  Ungroup,
+} from 'lucide-react';
 import { isEditable, layerOf } from '@/domain/model/operations.ts';
 import { geometryBox, moveGeometryTo, resizeGeometry, normalizeAngle } from '@/domain/model/shapes.ts';
 import type { PlanDocument, PlanObject, Style } from '@/domain/model/types.ts';
@@ -21,11 +32,102 @@ import {
 type TextObject = Extract<PlanObject, { type: 'text' }>;
 
 export function PropertiesPanel() {
-  const selectedId = useEditorStore((s) => s.selectedId);
-  const object = usePlanStore((s) => (selectedId ? s.doc?.objects[selectedId] : undefined));
+  const selectedIds = useEditorStore((s) => s.selectedIds);
   const doc = usePlanStore((s) => s.doc);
-  if (!object || !doc) return <p className="text-sm text-slate-500">{t('props.empty')}</p>;
-  return <ObjectProperties key={object.id} object={object} doc={doc} />;
+  const objects = doc
+    ? selectedIds.map((id) => doc.objects[id]).filter((o): o is PlanObject => Boolean(o))
+    : [];
+  if (!doc || objects.length === 0) return <p className="text-sm text-slate-500">{t('props.empty')}</p>;
+  if (objects.length > 1) return <MultiProperties objects={objects} doc={doc} />;
+  return <ObjectProperties key={objects[0]!.id} object={objects[0]!} doc={doc} />;
+}
+
+/** Sélection multiple : propriétés communes appliquées à tous les objets modifiables. */
+function MultiProperties({ objects, doc }: { objects: PlanObject[]; doc: PlanDocument }) {
+  const editable = objects.filter((o) => isEditable(doc, o));
+  const disabled = editable.length === 0;
+  const groupIds = new Set(objects.map((o) => o.groupId));
+  const oneGroup = groupIds.size === 1 && objects[0]!.groupId !== null;
+  const layerIds = new Set(objects.map((o) => o.layerId));
+  const commonLayer = layerIds.size === 1 ? objects[0]!.layerId : '';
+  const areas = objects.filter((o) => o.type === 'zone' || o.type === 'building');
+  const same = <T,>(values: T[]): T | null =>
+    values.every((v) => v === values[0]) ? (values[0] ?? null) : null;
+  const allLocked = objects.every((o) => o.locked);
+
+  return (
+    <div className="space-y-3 text-sm" data-testid="properties-panel">
+      <p className="font-medium text-slate-800" data-testid="selection-count">
+        {oneGroup
+          ? t('multi.grouped', { count: objects.length })
+          : t('multi.count', { count: objects.length })}
+      </p>
+      <div className="flex gap-2">
+        <Button className="flex-1" disabled={disabled || oneGroup} onClick={editActions.group}>
+          <Group size={16} /> {t('multi.group')}
+        </Button>
+        <Button
+          className="flex-1"
+          disabled={disabled || objects.every((o) => !o.groupId)}
+          onClick={editActions.ungroup}
+        >
+          <Ungroup size={16} /> {t('multi.ungroup')}
+        </Button>
+      </div>
+      <SelectField
+        label={t('props.layer')}
+        value={commonLayer}
+        disabled={disabled}
+        options={[
+          ...(commonLayer ? [] : [{ value: '', label: t('multi.mixed') }]),
+          ...[...doc.layers]
+            .reverse()
+            .filter((l) => l.id === commonLayer || (l.visible && !l.locked))
+            .map((l) => ({ value: l.id, label: l.name })),
+        ]}
+        onChange={(layerId) => layerId && editActions.setLayer(layerId)}
+      />
+      {areas.length > 0 && (
+        <Section title={t('props.fill')}>
+          <ColorField
+            label={t('props.fill')}
+            value={same(areas.map((o) => o.style.fill))}
+            allowNone
+            disabled={disabled}
+            onChange={(fill) => editActions.setStyle({ fill }, 'fill')}
+          />
+        </Section>
+      )}
+      <Section title={t('props.stroke')}>
+        <ColorField
+          label={t('props.strokeColor')}
+          value={same(objects.filter((o) => o.type !== 'text').map((o) => o.style.stroke))}
+          disabled={disabled}
+          onChange={(stroke) => editActions.setStyle({ stroke }, 'stroke')}
+        />
+      </Section>
+      <Section title={t('props.visible')}>
+        <Toggle
+          label={t('props.locked')}
+          checked={allLocked}
+          onChange={(locked) => editActions.setLocked(locked)}
+        />
+      </Section>
+      <div className="flex gap-2 border-t border-slate-200 pt-3">
+        <Button className="flex-1" onClick={editActions.duplicateSelected}>
+          <Copy size={16} /> {t('props.duplicate')}
+        </Button>
+        <Button
+          className="flex-1"
+          variant="danger"
+          disabled={disabled}
+          onClick={() => editActions.deleteSelected()}
+        >
+          <Trash2 size={16} /> {t('props.delete')}
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 function typeLabel(object: PlanObject): string {
@@ -35,6 +137,7 @@ function typeLabel(object: PlanObject): string {
 
 function ObjectProperties({ object, doc }: { object: PlanObject; doc: PlanDocument }) {
   const vertexEditing = useEditorStore((s) => s.vertexEditing);
+  const selectedVertex = useEditorStore((s) => s.selectedVertex);
   const editable = isEditable(doc, object);
   const layerLocked = layerOf(doc, object)?.locked ?? false;
   const disabled = !editable;
@@ -73,7 +176,7 @@ function ObjectProperties({ object, doc }: { object: PlanObject; doc: PlanDocume
             .reverse()
             .filter((l) => l.id === object.layerId || (l.visible && !l.locked))
             .map((l) => ({ value: l.id, label: l.name }))}
-          onChange={(layerId) => set({ ...object, layerId }, 'Changer de calque')}
+          onChange={(layerId) => editActions.setLayer(layerId)}
         />
       </Row>
 
@@ -290,6 +393,33 @@ function ObjectProperties({ object, doc }: { object: PlanObject; doc: PlanDocume
             onClick={() => useEditorStore.getState().setVertexEditing(!vertexEditing)}
           >
             <PenLine size={16} /> {vertexEditing ? t('props.stopEditPoints') : t('props.editPoints')}
+          </Button>
+        )}
+        {hasPoints && vertexEditing && (
+          <div className="space-y-2 rounded-md bg-slate-100 p-2">
+            <p className="text-xs text-slate-600">{t('vertex.help')}</p>
+            <Button
+              className="w-full"
+              disabled={disabled || selectedVertex === null}
+              onClick={() => editActions.deleteSelectedVertex()}
+            >
+              <Trash2 size={16} /> {t('vertex.delete')}
+            </Button>
+          </div>
+        )}
+        {object.type === 'line' && object.geometry.points.length >= 3 && (
+          <Button className="w-full" disabled={disabled} onClick={editActions.closeSelectedPolyline}>
+            <Pentagon size={16} /> {t('vertex.close')}
+          </Button>
+        )}
+        {object.geometry.kind === 'rect' && (object.type === 'zone' || object.type === 'building') && (
+          <Button className="w-full" disabled={disabled} onClick={editActions.convertSelectedToPolygon}>
+            <Pentagon size={16} /> {t('vertex.toPolygon')}
+          </Button>
+        )}
+        {object.groupId && (
+          <Button className="w-full" disabled={disabled} onClick={editActions.ungroup}>
+            <Ungroup size={16} /> {t('multi.ungroup')}
           </Button>
         )}
         <div className="flex gap-2">

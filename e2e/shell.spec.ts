@@ -8,7 +8,9 @@ import {
   waitForBackground,
 } from './helpers.ts';
 
-test('éditeur : 3 canevas physiques, 6 groupes logiques d’annotation', async ({ page }) => {
+test('éditeur : 3 canevas physiques ; un groupe Konva par calque, portant sa catégorie logique', async ({
+  page,
+}) => {
   await openFreshApp(page);
   await createCamp(page, 'Camp');
   await createPlan(page, 'Plan');
@@ -25,7 +27,14 @@ test('éditeur : 3 canevas physiques, 6 groupes logiques d’annotation', async 
       .getChildren()
       .map((g) => g.name());
   });
-  expect(groups).toEqual(['zones', 'buildings', 'circulation', 'pedestrians', 'signage', 'texts']);
+  expect(groups).toEqual([
+    'user-layer tier-zones',
+    'user-layer tier-buildings',
+    'user-layer tier-circulation',
+    'user-layer tier-pedestrians',
+    'user-layer tier-signage',
+    'user-layer tier-texts',
+  ]);
 });
 
 test('les panneaux latéraux se réduisent et la zone de travail s’agrandit', async ({ page }) => {

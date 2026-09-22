@@ -205,3 +205,83 @@ export function moveVertex(object: PlanObject, index: number, to: Point): PlanOb
     geometry: { ...bg, points: bg.points.map((p, i) => (i === index ? { ...to } : p)) },
   } as PlanObject;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Édition avancée des sommets (phase 3)
+// ---------------------------------------------------------------------------------------------
+
+type PointsGeometry = Extract<Geometry, { kind: 'polygon' | 'polyline' }>;
+
+function pointsOf(object: PlanObject): PointsGeometry | null {
+  const g = object.geometry;
+  return g.kind === 'polygon' || g.kind === 'polyline' ? g : null;
+}
+
+/** Nombre minimal de sommets : 3 pour un polygone, 2 pour une polyligne. */
+export function minVertices(object: PlanObject): number {
+  return object.geometry.kind === 'polygon' ? 3 : 2;
+}
+
+/** Milieux des segments (poignées « insérer un sommet »), rotation appliquée. */
+export function segmentMidpoints(object: PlanObject): { afterIndex: number; point: Point }[] {
+  const vertices = worldVertices(object);
+  const closed = object.geometry.kind === 'polygon';
+  const result: { afterIndex: number; point: Point }[] = [];
+  const count = closed ? vertices.length : vertices.length - 1;
+  for (let i = 0; i < count; i++) {
+    const a = vertices[i]!;
+    const b = vertices[(i + 1) % vertices.length]!;
+    result.push({ afterIndex: i, point: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } });
+  }
+  return result;
+}
+
+/** Insère un sommet après `afterIndex` (rotation intégrée d'abord : le rendu ne bouge pas). */
+export function insertVertex(object: PlanObject, afterIndex: number, at: Point): PlanObject {
+  const baked = bakeRotation(object);
+  const g = pointsOf(baked);
+  if (!g || afterIndex < 0 || afterIndex >= g.points.length) return object;
+  const points = [...g.points.slice(0, afterIndex + 1), { ...at }, ...g.points.slice(afterIndex + 1)];
+  return { ...baked, geometry: { ...g, points } } as PlanObject;
+}
+
+/** Supprime un sommet, sauf si la forme passerait sous le minimum. */
+export function removeVertex(object: PlanObject, index: number): PlanObject {
+  const baked = bakeRotation(object);
+  const g = pointsOf(baked);
+  if (!g || index < 0 || index >= g.points.length || g.points.length <= minVertices(object)) return object;
+  return { ...baked, geometry: { ...g, points: g.points.filter((_, i) => i !== index) } } as PlanObject;
+}
+
+/**
+ * Ferme une polyligne (≥ 3 sommets) : elle devient une zone polygonale, avec un remplissage
+ * léger de la couleur du trait. Les autres propriétés sont conservées.
+ */
+export function closePolyline(object: PlanObject): PlanObject {
+  if (object.type !== 'line' || object.geometry.points.length < 3) return object;
+  const baked = bakeRotation(object) as Extract<PlanObject, { type: 'line' }>;
+  const { geometry, ...rest } = baked;
+  return {
+    ...rest,
+    type: 'zone',
+    geometry: { kind: 'polygon', points: geometry.points },
+    style: { ...baked.style, fill: baked.style.stroke ?? '#6b7280', fillOpacity: 0.25 },
+  } as PlanObject;
+}
+
+/**
+ * Convertit un rectangle en polygone à 4 sommets (rotation intégrée) pour pouvoir ajuster chaque
+ * coin sur un bâtiment réel. Le rendu est identique ; les coins arrondis sont abandonnés.
+ */
+export function rectToPolygon(object: PlanObject): PlanObject {
+  const g = object.geometry;
+  if (g.kind !== 'rect' || (object.type !== 'zone' && object.type !== 'building')) return object;
+  const c = geometryCenter(g);
+  const corners = [
+    { x: g.x, y: g.y },
+    { x: g.x + g.width, y: g.y },
+    { x: g.x + g.width, y: g.y + g.height },
+    { x: g.x, y: g.y + g.height },
+  ].map((p) => rotatePoint(p, c, object.rotation));
+  return { ...object, rotation: 0, geometry: { kind: 'polygon', points: corners } } as PlanObject;
+}

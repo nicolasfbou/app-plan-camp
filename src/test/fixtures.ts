@@ -29,6 +29,7 @@ export function makeZone(layerId: string, x = 100, y = 200, overrides: Partial<P
     visible: true,
     locked: false,
     zIndex: 0,
+    groupId: null,
     metadata: {},
     createdAt: FIXED_DATE,
     updatedAt: FIXED_DATE,
@@ -42,6 +43,7 @@ export function makeLargeDocument(count: number): PlanDocument {
   const doc = makeDocument();
   const layerId = (tier: string) => doc.layers.find((l) => l.tier === tier)!.id;
   const base = {
+    groupId: null,
     presetId: null,
     style: TEST_STYLE,
     rotation: 0,

@@ -1,4 +1,6 @@
-import { Copy, Map as MapIcon, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Copy, Download, Map as MapIcon, Pencil, Plus, Trash2 } from 'lucide-react';
+import { downloadBytes } from '@/app/download.ts';
+import { exportCampplan } from '@/persistence/campplan.ts';
 import { useState } from 'react';
 import { createPlanDocument, duplicatePlanDocument, nowIso } from '@/domain/model/factories.ts';
 import { PLAN_KINDS } from '@/domain/model/schema.ts';
@@ -83,6 +85,22 @@ export function CampPage({ siteId }: { siteId: string }) {
                     onClick={() => setDialog({ kind: 'rename', plan })}
                   >
                     <Pencil size={16} />
+                  </IconButton>
+                  <IconButton
+                    label={t('campplan.exportOf', { name: plan.name })}
+                    onClick={() =>
+                      void exportCampplan(repository, plan.id).then(
+                        ({ bytes, fileName }) => downloadBytes(bytes, fileName, 'application/octet-stream'),
+                        (e: unknown) =>
+                          window.alert(
+                            t('campplan.exportError', {
+                              message: e instanceof Error ? e.message : String(e),
+                            }),
+                          ),
+                      )
+                    }
+                  >
+                    <Download size={16} />
                   </IconButton>
                   <IconButton
                     label={`${t('common.duplicate')} ${plan.name}`}

@@ -8,7 +8,7 @@ import { ImportDialog } from '@/editor/ImportDialog.tsx';
 import { NavigationControls } from '@/editor/NavigationControls.tsx';
 import { NoticeBanner } from '@/editor/NoticeBanner.tsx';
 import { TextEditorOverlay } from '@/editor/TextEditorOverlay.tsx';
-import { useEditorShortcuts } from '@/editor/useEditorShortcuts.ts';
+import { isTypingTarget, useEditorShortcuts } from '@/editor/useEditorShortcuts.ts';
 import { useUiStore } from '@/store/uiStore.ts';
 import { useBackgroundLoader } from '@/editor/session/useBackgroundLoader.ts';
 import { usePlanSession } from '@/editor/session/usePlanSession.ts';
@@ -17,20 +17,15 @@ import { viewportActions } from '@/editor/viewportActions.ts';
 import { nowIso } from '@/domain/model/factories.ts';
 import { t } from '@/i18n/index.ts';
 import { useEditorStore } from '@/store/editorStore.ts';
-import { planStore, usePlanStore } from '@/store/planStore.ts';
+import { planStore, selectIsDirty, usePlanStore } from '@/store/planStore.ts';
+import { downloadBytes } from '@/app/download.ts';
+import { exportCampplan } from '@/persistence/campplan.ts';
 import { Button } from '@/ui/Button.tsx';
 import { TextPromptDialog } from '@/ui/TextPromptDialog.tsx';
 import { Notice, PageLayout } from './PageLayout.tsx';
 import { useAsync } from './useAsync.ts';
 
 export const ACCEPTED_FILES = '.jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf';
-
-function isTypingTarget(target: EventTarget | null) {
-  return (
-    target instanceof HTMLElement &&
-    (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
-  );
-}
 
 /** Raccourcis de navigation : + / − zoom, 0 adapter, 1 taille réelle. */
 function useNavigationShortcuts() {
@@ -77,7 +72,8 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
       planStore.subscribe((state) => {
         const editor = useEditorStore.getState();
         const objects = state.doc?.objects ?? {};
-        if (editor.selectedId && !objects[editor.selectedId]) editor.select(null);
+        const remaining = editor.selectedIds.filter((id) => objects[id]);
+        if (remaining.length !== editor.selectedIds.length) editor.select(remaining);
         if (editor.editingTextId && !objects[editor.editingTextId]) editor.setEditingText(null);
       }),
     [],
@@ -87,13 +83,32 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
   useEffect(
     () =>
       useEditorStore.subscribe((state, previous) => {
-        if (state.selectedId && state.selectedId !== previous.selectedId)
-          useUiStore.getState().setRightTab('properties');
+        // (depuis l'onglet « Fond » seulement : on ne quitte pas l'onglet Calques en y travaillant)
+        const ui = useUiStore.getState();
+        if (state.selectedIds.length > 0 && previous.selectedIds.length === 0 && ui.rightTab === 'background')
+          ui.setRightTab('properties');
       }),
     [],
   );
 
   const openFilePicker = useCallback(() => fileInput.current?.click(), []);
+
+  /** Export .campplan : les modifications en attente sont d'abord écrites, pour un fichier à jour. */
+  const exportPlan = useCallback(async () => {
+    try {
+      const state = planStore.getState();
+      if (state.doc && selectIsDirty(state)) {
+        await repository.savePlan(state.doc);
+        if (planStore.getState().revision === state.revision) state.markSaved(state.revision);
+      }
+      const { bytes, fileName } = await exportCampplan(repository, planId);
+      downloadBytes(bytes, fileName, 'application/octet-stream');
+    } catch (e) {
+      useEditorStore
+        .getState()
+        .notify(t('campplan.exportError', { message: e instanceof Error ? e.message : String(e) }));
+    }
+  }, [planId]);
   const closeImport = useCallback(() => setImportFile(null), []);
 
   if (state.status === 'error') {
@@ -112,6 +127,7 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
         saveError={saveError}
         onRename={() => setRenaming(true)}
         onImport={openFilePicker}
+        onExport={() => void exportPlan()}
       />
       <div className="flex min-h-0 flex-1">
         <main className="relative min-w-0 flex-1">

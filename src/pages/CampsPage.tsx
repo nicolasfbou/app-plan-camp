@@ -1,5 +1,6 @@
-import { Pencil, Plus, TentTree, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { FolderInput, Pencil, Plus, TentTree, Trash2 } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { ImportProjectDialog } from './ImportProjectDialog.tsx';
 import { createSite, nowIso } from '@/domain/model/factories.ts';
 import type { Site } from '@/domain/model/types.ts';
 import { formatDateTime, t, tPlural } from '@/i18n/index.ts';
@@ -31,6 +32,8 @@ async function loadSites(): Promise<SiteWithCount[]> {
 export function CampsPage() {
   const [state, reload] = useAsync(loadSites, 'camps');
   const [dialog, setDialog] = useState<Dialog>(null);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const importInput = useRef<HTMLInputElement>(null);
   const close = () => setDialog(null);
 
   return (
@@ -38,9 +41,14 @@ export function CampsPage() {
       title={t('camps.title')}
       subtitle={t('camps.subtitle')}
       action={
-        <Button variant="primary" onClick={() => setDialog({ kind: 'create' })}>
-          <Plus size={16} /> {t('camps.new')}
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={() => importInput.current?.click()}>
+            <FolderInput size={16} /> {t('campplan.importButton')}
+          </Button>
+          <Button variant="primary" onClick={() => setDialog({ kind: 'create' })}>
+            <Plus size={16} /> {t('camps.new')}
+          </Button>
+        </div>
       }
     >
       {state.status === 'error' && <Notice tone="error">{state.error.message}</Notice>}
@@ -76,6 +84,27 @@ export function CampsPage() {
         </ul>
       )}
 
+      <input
+        ref={importInput}
+        type="file"
+        accept=".campplan"
+        className="hidden"
+        data-testid="campplan-input"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          if (file) setImportFile(file);
+        }}
+      />
+      {importFile && (
+        <ImportProjectDialog
+          file={importFile}
+          onClose={() => {
+            setImportFile(null);
+            reload();
+          }}
+        />
+      )}
       {dialog?.kind === 'create' && (
         <TextPromptDialog
           title={t('camps.new')}

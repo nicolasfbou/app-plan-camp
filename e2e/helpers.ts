@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { type Page, expect } from '@playwright/test';
 
 export const fixture = (name: string) => new URL(`./fixtures/${name}`, import.meta.url).pathname;
@@ -171,4 +173,12 @@ export async function openPlanWithPhoto(page: Page, file = fixture('quadrants.pn
   await createPlan(page, 'Plan');
   await importBackground(page, file);
   await waitForBackground(page);
+}
+
+/**
+ * Chemin temporaire en ASCII pour `setInputFiles` : Chromium ignore silencieusement un fichier
+ * dont le chemin contient des accents (les dossiers de résultats reprennent les titres des tests).
+ */
+export function asciiTempPath(name: string): string {
+  return join(mkdtempSync(join(tmpdir(), 'campplan-e2e-')), name);
 }

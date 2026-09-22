@@ -9,7 +9,9 @@
  * - Texte, étiquette : un clic, puis saisie directe.
  * Après création, l'objet est sélectionné et l'outil Sélection est réactivé.
  */
-import type Konva from 'konva';
+import Konva from 'konva';
+import { expandGroups } from '@/domain/model/multi.ts';
+import { isDisplayed, isEditable } from '@/domain/model/operations.ts';
 import { type RefObject, useEffect } from 'react';
 import { createAreaObject, createLineObject, createTextObject } from '@/domain/model/objectFactory.ts';
 import type { Point } from '@/domain/model/types.ts';
@@ -102,6 +104,58 @@ function createBox(draft: Extract<Draft, { kind: 'box' }>): void {
   editActions.create(object, draft.tool === 'ellipse' ? 'Créer une ellipse' : 'Créer un rectangle');
 }
 
+/** Rectangle de sélection : suit le pointeur, puis sélectionne les objets qu'il touche. */
+function startMarquee(element: HTMLElement, stage: Konva.Stage, start: Point, additive: boolean): void {
+  const editor = useEditorStore.getState();
+  editor.setMarquee({ start, end: start });
+  const onMove = (ev: PointerEvent) => {
+    if (useEditorStore.getState().marquee) editor.setMarquee({ start, end: imagePoint(element, ev) });
+  };
+  const detach = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onCancel);
+  };
+  const onCancel = () => {
+    detach();
+    editor.setMarquee(null);
+  };
+  const onUp = (ev: PointerEvent) => {
+    detach();
+    const marquee = useEditorStore.getState().marquee;
+    editor.setMarquee(null);
+    if (!marquee) return; // annulé entre-temps (2e doigt, Échap)
+    const end = imagePoint(element, ev);
+    if (screenDistance(start, end) < MIN_DRAG_PX) {
+      if (!additive) editor.select(null); // simple clic dans le vide
+      return;
+    }
+    const doc = planStore.getState().doc;
+    if (!doc) return;
+    const s = useViewportStore.getState().viewport;
+    const box = {
+      x: Math.min(start.x, end.x) * s.scale + s.x,
+      y: Math.min(start.y, end.y) * s.scale + s.y,
+      width: Math.abs(end.x - start.x) * s.scale,
+      height: Math.abs(end.y - start.y) * s.scale,
+    };
+    const hits = stage
+      .find('.plan-object')
+      .filter((node) => node.isVisible() && Konva.Util.haveIntersection(box, node.getClientRect()))
+      .map((node) => node.id())
+      .filter((id) => {
+        const object = doc.objects[id];
+        return object !== undefined && isEditable(doc, object) && isDisplayed(doc, object);
+      });
+    const ids = expandGroups(doc, hits);
+    if (additive) editor.select([...editor.selectedIds, ...ids]);
+    else editor.select(ids);
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onCancel);
+}
+
 export function useDrawingTools(stageRef: RefObject<Konva.Stage | null>, enabled: boolean): void {
   useEffect(() => {
     const stage = stageRef.current;
@@ -113,9 +167,11 @@ export function useDrawingTools(stageRef: RefObject<Konva.Stage | null>, enabled
       const tool = editor.tool;
       if (e.evt.button !== 0) return;
 
-      // Outil Sélection : un clic dans le vide désélectionne (et quitte l'édition des sommets).
+      // Outil Sélection, dans le vide : clic = désélection ; glisser = rectangle de sélection
+      // (Maj : ajoute à la sélection). Seuls les objets modifiables et affichés sont retenus.
       if (tool === 'select') {
-        if (e.target === stage) editor.select(null);
+        if (e.target !== stage) return;
+        startMarquee(element, stage, imagePoint(element, e.evt), e.evt.shiftKey);
         return;
       }
       if (tool === 'hand') return;

@@ -1,14 +1,25 @@
 import { memo, useMemo } from 'react';
 import { Group, Layer } from 'react-konva';
-import { isDisplayed, isEditable, objectsInRenderOrder } from '@/domain/model/operations.ts';
-import type { PlanObject, RenderTier } from '@/domain/model/types.ts';
+import { expandGroups } from '@/domain/model/multi.ts';
+import { isEditable, objectsInRenderOrder } from '@/domain/model/operations.ts';
+import type { PlanObject } from '@/domain/model/types.ts';
 import { useEditorStore } from '@/store/editorStore.ts';
 import { planStore, usePlanStore } from '@/store/planStore.ts';
-import { CONTENT_GROUPS } from '../renderTiers.ts';
 import { ObjectNode } from './ObjectNode.tsx';
 
 // Callbacks stables : les nœuds mémorisés ne sont pas redessinés inutilement.
-const select = (id: string) => useEditorStore.getState().select(id);
+/**
+ * Clic sur un objet : un membre de groupe sélectionne tout le groupe ; Maj + clic ajoute ou retire
+ * de la sélection ; un clic sur un objet déjà sélectionné garde la sélection (pour la déplacer).
+ */
+const select = (id: string, additive: boolean) => {
+  const doc = planStore.getState().doc;
+  const editor = useEditorStore.getState();
+  if (!doc) return;
+  const ids = expandGroups(doc, [id]);
+  if (additive) editor.toggleSelection(ids);
+  else if (!editor.selectedIds.includes(id)) editor.select(ids);
+};
 const openOnDoubleClick = (object: PlanObject) => {
   const editor = useEditorStore.getState();
   const doc = planStore.getState().doc;
@@ -21,48 +32,51 @@ const openOnDoubleClick = (object: PlanObject) => {
 };
 
 /**
- * Couche physique « content » : les 6 catégories logiques, chacune dans son groupe nommé,
- * objets triés par calque puis zIndex.
+ * Couche physique « content ». Un `Konva.Group` par calque du plan, dans l'ordre des calques
+ * (réordonner les calques change donc réellement le rendu) ; chaque groupe porte aussi la
+ * catégorie logique de son calque (nom `tier-<catégorie>`). Objets triés par zIndex dans le calque.
  */
 export const ObjectsLayer = memo(function ObjectsLayer({ scaleBucket }: { scaleBucket: number }) {
   const doc = usePlanStore((s) => s.doc);
   const interactiveTool = useEditorStore((s) => s.tool === 'select');
   const editingTextId = useEditorStore((s) => s.editingTextId);
 
-  // Tri et répartition par catégorie recalculés seulement quand le document change.
-  const { byTier, tierOfLayer } = useMemo(() => {
-    const byTier = new Map<RenderTier, PlanObject[]>(CONTENT_GROUPS.map((tier) => [tier, []]));
-    const tierOfLayer = new Map(doc?.layers.map((l) => [l.id, l]) ?? []);
-    if (doc) {
-      for (const object of objectsInRenderOrder(doc)) {
-        const layer = tierOfLayer.get(object.layerId);
-        if (layer) byTier.get(layer.tier)?.push(object);
-      }
-    }
-    return { byTier, tierOfLayer };
+  // Répartition par calque recalculée seulement quand le document change.
+  const byLayer = useMemo(() => {
+    const map = new Map<string, PlanObject[]>(doc?.layers.map((l) => [l.id, []]) ?? []);
+    if (doc) for (const object of objectsInRenderOrder(doc)) map.get(object.layerId)?.push(object);
+    return map;
   }, [doc]);
 
   return (
     <Layer name="content">
-      {CONTENT_GROUPS.map((tier) => (
-        <Group key={tier} name={tier}>
-          {doc &&
-            byTier.get(tier)!.map((object) => {
-              const layer = tierOfLayer.get(object.layerId)!;
-              if (!isDisplayed(doc, object)) return null;
-              return (
-                <ObjectNode
-                  key={object.id}
-                  object={object}
-                  editable={isEditable(doc, object)}
-                  interactive={interactiveTool && !layer.locked}
-                  hidden={editingTextId === object.id}
-                  scale={scaleBucket}
-                  onSelect={select}
-                  onDoubleClick={openOnDoubleClick}
-                />
-              );
-            })}
+      {doc?.layers.map((layer) => (
+        <Group
+          key={layer.id}
+          id={`layer-${layer.id}`}
+          name={`user-layer tier-${layer.tier}`}
+          visible={layer.visible}
+          opacity={layer.opacity}
+          listening={interactiveTool && !layer.locked}
+        >
+          {/* Calque masqué : ses objets ne sont pas créés du tout (aucun coût mémoire ni de rendu). */}
+          {layer.visible &&
+            byLayer
+              .get(layer.id)!
+              .map((object) =>
+                object.visible ? (
+                  <ObjectNode
+                    key={object.id}
+                    object={object}
+                    editable={!object.locked && !layer.locked}
+                    interactive={interactiveTool && !layer.locked}
+                    hidden={editingTextId === object.id}
+                    scale={scaleBucket}
+                    onSelect={select}
+                    onDoubleClick={openOnDoubleClick}
+                  />
+                ) : null,
+              )}
         </Group>
       ))}
     </Layer>

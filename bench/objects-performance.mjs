@@ -47,6 +47,7 @@ function makeObjects(n, layers, width, height) {
     const s = cell * 0.7;
     const id = `bench-${i}`;
     const base = {
+      groupId: null,
       id,
       name: `Objet ${i}`,
       presetId: null,
@@ -240,7 +241,15 @@ for (const n of counts) {
   });
   await page.keyboard.press('0');
   await page.keyboard.press('v');
-  await page.waitForTimeout(300);
+  // Attendre la fin de l'animation « adapter » : la cible doit être mesurée sur une vue stable.
+  await page.waitForFunction(
+    () =>
+      new Promise((resolve) => {
+        const s = window.Konva.stages[0];
+        const a = [s.x(), s.y(), s.scaleX()].join();
+        setTimeout(() => resolve(a === [s.x(), s.y(), s.scaleX()].join()), 200);
+      }),
+  );
 
   // Sélection (clic) puis glisser d'un objet.
   const target = await page.evaluate(() => {

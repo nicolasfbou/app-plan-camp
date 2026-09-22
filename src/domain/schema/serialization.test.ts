@@ -14,7 +14,7 @@ describe('sérialisation du projet', () => {
   it('écrit la version du format', () => {
     const json = JSON.parse(serializePlanDocument(makeDocument()));
     expect(json.schemaVersion).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe(1);
+    expect(SCHEMA_VERSION).toBe(2);
   });
 
   it('n’enregistre aucune donnée de viewport dans le document', () => {
@@ -80,5 +80,21 @@ describe('migration du schemaVersion', () => {
     expect(() => migrateDocument({ schemaVersion: 1 }, {}, 2)).toThrow(
       /Migration manquante du format 1 vers 2/,
     );
+  });
+});
+
+describe('migration réelle 1 → 2 (regroupement)', () => {
+  it('un plan enregistré au format 1 s’ouvre en format 2, chaque objet reçoit groupId: null', () => {
+    const v2 = makeLargeDocument(12);
+    // Reconstitue exactement un document de la phase 2 : format 1, sans groupId.
+    const v1 = JSON.parse(JSON.stringify(v2)) as Record<string, unknown> & {
+      objects: Record<string, Record<string, unknown>>;
+    };
+    v1.schemaVersion = 1;
+    for (const object of Object.values(v1.objects)) delete object.groupId;
+    const migrated = parsePlanDocument(JSON.stringify(v1));
+    expect(migrated.schemaVersion).toBe(2);
+    expect(Object.values(migrated.objects).every((o) => o.groupId === null)).toBe(true);
+    expect(migrated).toEqual(v2);
   });
 });

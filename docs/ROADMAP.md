@@ -48,24 +48,23 @@ Règle : le parcours complet doit être fiable avant toute fonction avancée.
 - Copier / coller (presse-papiers interne), dupliquer, supprimer, flèches clavier (1 / 10 px image)
 - Annuler / rétablir branchés sur toutes les opérations ; journal de récupération à la fermeture
 
-## Phase 3 — Calques et raccourcis
+## Phase 3 — Fichier `.campplan`, calques avancés, sélection multiple, sommets ✅
 
-Afficher/masquer, verrouiller, renommer, réordonner, opacité, « seulement ce calque » ;
-copier/coller/dupliquer/supprimer, flèches clavier.
+- Export / import `.campplan` : photo et PDF d'origine, plan complet, modèles utilisés, métadonnées,
+  calibration, SHA-256, version du format ; vérification complète avant écriture ; copie par
+  défaut, remplacement seulement confirmé (voir ARCHITECTURE §14.1)
+- Schéma v2 (`groupId`) avec migration depuis v1
+- Calques : créer, renommer, dupliquer, réordonner (le rendu suit), afficher seulement, calque actif
+- Sélection multiple (Maj + clic, rectangle, Ctrl+A), groupes, opérations groupées en une action
+- Sommets : insérer, supprimer ; fermer une polyligne ; rectangle → polygone
+- Essai complet sur la photo réelle du Camp 105 (`bench/camp105-phase3.mjs`)
 
-## Phase 4 — Fichier `.campplan`
-
-> Proposition à valider : avancer ce chantier en phase 3, pour disposer d'une sauvegarde externe
-> dès que des plans réels sont dessinés (voir retour utilisateur de la phase 2).
-
-Export et import complets (image d'origine, annotations, calques, styles, calibration, métadonnées).
-
-## Phase 5 — Circulation et piétons
+## Phase 4 — Circulation et piétons
 
 Flux fléchés (sens, double sens, taille, fréquence), presets de circulation, corridor piéton
 (largeur, remplissages, icônes), icônes et signalisation.
 
-## Phase 6 — Export
+## Phase 5 — Export
 
 PNG / JPG haute résolution, PDF Lettre / Légal / 11x17 / A4 / A3, portrait / paysage, marges, titre.
 

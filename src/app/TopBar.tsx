@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   ChevronRight,
+  Download,
   CircleCheck,
   CircleDot,
   ImageUp,
@@ -24,9 +25,10 @@ interface TopBarProps {
   saveError?: string | null;
   onRename?(): void;
   onImport?(): void;
+  onExport?(): void;
 }
 
-export function TopBar({ siteId, siteName, saveError = null, onRename, onImport }: TopBarProps) {
+export function TopBar({ siteId, siteName, saveError = null, onRename, onImport, onExport }: TopBarProps) {
   const planName = usePlanStore((s) => s.doc?.plan.name ?? null);
   const hasBackground = usePlanStore((s) => s.doc?.plan.baseImage != null);
   const canUndo = usePlanStore(selectCanUndo);
@@ -104,6 +106,12 @@ export function TopBar({ siteId, siteName, saveError = null, onRename, onImport 
       {onImport && planName !== null && (
         <Button onClick={onImport}>
           <ImageUp size={16} /> {hasBackground ? t('topbar.replace') : t('topbar.import')}
+        </Button>
+      )}
+
+      {onExport && planName !== null && (
+        <Button onClick={onExport}>
+          <Download size={16} /> {t('campplan.export')}
         </Button>
       )}
 

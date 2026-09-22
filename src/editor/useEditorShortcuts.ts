@@ -4,7 +4,8 @@
  *
  * V Sélection · H Main · R Rectangle · U Rectangle arrondi · E Ellipse · P Polygone · L Ligne
  * K Polyligne · T Texte · G Étiquette · Suppr / Retour arrière Supprimer · Échap Annuler / désélectionner
- * Entrée Terminer le polygone · Ctrl+C / Ctrl+V / Ctrl+D Copier / coller / dupliquer
+ * Entrée Terminer le polygone · Ctrl+C / Ctrl+V / Ctrl+D Copier / coller / dupliquer · Ctrl+A Tout
+ * sélectionner · Ctrl+G / Ctrl+Maj+G Grouper / dégrouper
  * Flèches : déplacer de 1 px image (Maj : 10 px image).
  */
 import { useEffect } from 'react';
@@ -25,18 +26,20 @@ export const TOOL_KEYS: Record<string, Tool> = {
   g: 'label',
 };
 
+/** Types de champ qui ne reçoivent pas de texte : les raccourcis du plan y restent actifs. */
+const NON_TEXT_INPUTS = new Set(['checkbox', 'radio', 'button', 'submit', 'reset', 'color', 'file', 'range']);
+
 export function isTypingTarget(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLElement &&
-    (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
-  );
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable || ['TEXTAREA', 'SELECT'].includes(target.tagName)) return true;
+  return target instanceof HTMLInputElement && !NON_TEXT_INPUTS.has(target.type);
 }
 
 /** Contrôle d'interface ayant le focus (bouton, onglet, choix…), hors champs de saisie. */
 function isControlTarget(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLElement &&
-    target.closest('button, a, [role="radio"], [role="tab"], [role="slider"]') !== null
+    target.closest('button, a, input, [role="radio"], [role="tab"], [role="slider"]') !== null
   );
 }
 
@@ -49,12 +52,22 @@ export function useEditorShortcuts(): void {
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
 
+      const hasSelection = editor.selectedIds.length > 0;
+      if (mod && e.shiftKey && !e.altKey && key === 'g') {
+        if (hasSelection) {
+          e.preventDefault();
+          editActions.ungroup();
+        }
+        return;
+      }
       if (mod && !e.shiftKey && !e.altKey) {
         // Le raccourci n'est intercepté que s'il agit : sinon la copie native du navigateur reste possible.
         const actions: Record<string, { enabled: boolean; run(): void }> = {
-          c: { enabled: editor.selectedId !== null, run: editActions.copySelected },
-          v: { enabled: editor.clipboard !== null, run: editActions.paste },
-          d: { enabled: editor.selectedId !== null, run: editActions.duplicateSelected },
+          c: { enabled: hasSelection, run: editActions.copySelected },
+          v: { enabled: editor.clipboard.length > 0, run: editActions.paste },
+          d: { enabled: hasSelection, run: editActions.duplicateSelected },
+          a: { enabled: editor.tool === 'select', run: editActions.selectAll },
+          g: { enabled: editor.selectedIds.length > 1, run: editActions.group },
         };
         const action = actions[key];
         if (action?.enabled) {
@@ -68,9 +81,10 @@ export function useEditorShortcuts(): void {
       switch (e.key) {
         case 'Escape':
           e.preventDefault();
-          if (editor.draft) editor.setDraft(null);
+          if (editor.marquee) editor.setMarquee(null);
+          else if (editor.draft) editor.setDraft(null);
           else if (editor.vertexEditing) editor.setVertexEditing(false);
-          else if (editor.selectedId) editor.select(null);
+          else if (hasSelection) editor.select(null);
           else if (editor.tool !== 'select') editor.setTool('select');
           return;
         case 'Enter':
@@ -81,12 +95,15 @@ export function useEditorShortcuts(): void {
           return;
         case 'Delete':
         case 'Backspace':
+          // Une case à cocher ou un curseur du panneau a le focus : jamais de suppression d'objets.
+          if (e.target instanceof HTMLInputElement) return;
           e.preventDefault();
           if (editor.draft?.kind === 'path') {
             const points = editor.draft.points.slice(0, -1);
             editor.setDraft(points.length ? { ...editor.draft, points } : null);
-          } else {
-            editActions.deleteSelected();
+          } else if (!editActions.deleteSelectedVertex()) {
+            // En mode « Modifier les points », Suppr retire le sommet sélectionné ; sinon la sélection.
+            if (!editor.vertexEditing) editActions.deleteSelected();
           }
           return;
         case 'ArrowLeft':
@@ -94,7 +111,7 @@ export function useEditorShortcuts(): void {
         case 'ArrowUp':
         case 'ArrowDown': {
           // Sur un bouton, un onglet ou une liste de choix, les flèches gardent leur rôle de navigation.
-          if (!editor.selectedId || isControlTarget(e.target)) return;
+          if (!hasSelection || isControlTarget(e.target)) return;
           e.preventDefault();
           const step = e.shiftKey ? 10 : 1;
           const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;

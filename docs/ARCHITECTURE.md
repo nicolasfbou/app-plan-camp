@@ -301,6 +301,8 @@ projet.campplan
 Image, objets, calques, propriétés, calibration et métadonnées sont stockés séparément, comme
 demandé. Le JSON reste lisible et versionné (`schemaVersion` et migrations).
 
+> Esquisse de la phase 0. Le format réellement implémenté (phase 3) est décrit au §14.1.
+
 ---
 
 ## 7. Architecture applicative
@@ -520,3 +522,88 @@ redessiner les autres), on pourra la déplacer temporairement dans `overlay` san
   100 / 500 / 1 000 objets ouverts en 0,5 / 0,6 / 0,7 s ; déplacement de la vue 60 / 59 / 50-54 ips ;
   glisser d'un objet 59-60 ips ; sélection ≈ 30 ms. Aucune élimination hors écran n'est nécessaire
   à ce stade ; toujours 3 couches Konva physiques.
+
+---
+
+## 14. Calques, sélection multiple, sommets et fichier `.campplan` (phase 3)
+
+### 14.1 Format `.campplan` (version 1)
+
+Archive ZIP (fflate, fichiers binaires stockés sans recompression) :
+
+```
+Camp 105 - Plan général.campplan
+ ├─ manifest.json                        format « campplan », formatVersion, schemaVersion, application,
+ │                                       exportedAt, camp, plan, planSha256, files[], presets, counts
+ ├─ plan.json                            document complet (objets, calques, calibration, métadonnées)
+ ├─ fichiers/background-<sha16>.<ext>    photo d'origine, octets identiques
+ └─ fichiers/pdf-<sha16>.pdf             PDF d'origine (si le fond vient d'un PDF)
+```
+
+- Chaque fichier est décrit dans `files[]` : chemin, rôle, `blobId`, type MIME, taille, SHA-256.
+  L'export relit les octets stockés et vérifie leur SHA-256 avant d'écrire l'archive.
+- `planSha256` protège `plan.json` ; `presets` recopie les modèles utilisés par le plan.
+- **Lecture = vérification complète AVANT toute écriture** : archive ZIP valide, entrées attendues
+  seulement (taille déclarée plafonnée avant décompression), manifeste, format, version
+  (migrations `FORMAT_MIGRATIONS` ; version plus récente refusée avec un message clair), empreinte
+  de `plan.json`, validation zod + migrations du document, taille et SHA-256 de chaque fichier,
+  cohérence avec la référence de la photo. Toute anomalie → `CampplanError`, rien n'est créé.
+- **Écriture** : fichiers d'origine d'abord (nouveaux identifiants, SHA revérifié), puis camp
+  éventuel + plan + nettoyage des fichiers de la version remplacée dans **une seule transaction**
+  IndexedDB (`saveImportedPlan`). Un échec (ex. quota) ne crée ni camp vide ni plan partiel ; les
+  fichiers déjà écrits restent orphelins et sont supprimés par le nettoyage différé (§12).
+- **Jamais d'écrasement silencieux** : si l'identifiant du plan existe (lu sans validation, donc même
+  un plan illisible compte), l'import crée par défaut une **copie** (nouvel identifiant, nom
+  « … (importé) »). Le **remplacement** exige un choix explicite et une case de confirmation, et le
+  plan remplacé reste dans son camp.
+
+### 14.2 Schéma v2
+
+`schemaVersion` passe à 2 : chaque objet a un `groupId` (null = non groupé). Migration 1 → 2 :
+`groupId: null`. Un plan v1 s'ouvre, se modifie et se réenregistre en v2 (testé en e2e).
+
+### 14.3 Calques
+
+- `doc.layers` est l'ordre d'affichage. Dans la couche physique « content », chaque calque est un
+  `Konva.Group` (id `layer-<id>`, nom `user-layer tier-<catégorie>`), dans cet ordre : réordonner les
+  calques change réellement le rendu, **sans nouvelle couche physique** (toujours 3 canvas).
+- Créer (au-dessus, devient actif), renommer, dupliquer (juste au-dessus, objets copiés, groupes
+  recréés), monter / descendre, afficher / masquer, « afficher seulement », verrouiller, supprimer
+  (calque vide uniquement ; au moins un calque).
+- Un calque masqué ne crée aucun nœud Konva pour ses objets (mémoire et rendu nuls).
+- **Calque actif** : les nouveaux objets y vont. Sans calque actif, un objet va dans le calque
+  **le plus bas** (normalement celui d'origine) de sa catégorie : un calque ajouté ne capte pas les
+  objets sans avoir été choisi. Un calque masqué ou verrouillé ne reçoit jamais d'objet (message).
+
+### 14.4 Sélection multiple et groupes
+
+- Maj + clic (ajoute / retire), rectangle de sélection dans le vide, Ctrl+A (objets modifiables),
+  Maj + clic dans la liste des calques.
+- Déplacer, dupliquer, copier / coller, supprimer, couleur de remplissage / trait, calque,
+  verrouillage : sur toute la sélection, en **une** entrée d'historique. Le glisser de plusieurs
+  nœuds ouvre une transaction ; chaque nœud valide sa position ; la transaction est fermée en
+  micro-tâche après le dernier.
+- Grouper (Ctrl+G) / dégrouper (Ctrl+Maj+G) : un clic sur un membre sélectionne tout le groupe.
+- Verrous : les objets verrouillés d'une sélection ne sont pas attachés au Transformer (cadre
+  pointillé) et sont ignorés par toutes les opérations du domaine.
+- Poignées : sélection multiple ou petit objet (< 40 px écran) → coins seuls. Une poignée de côté
+  déformerait en biais un objet pivoté, et sur un petit objet elle recouvrirait la zone de glisser.
+
+### 14.5 Sommets
+
+Double clic sur un polygone ou une polyligne → mode sommets : glisser un sommet ; glisser un « + »
+(milieu de segment) insère un sommet (insertion + glisser = une action) ; clic puis Suppr retire le
+sommet (minimum 3 pour un polygone, 2 pour une ligne). « Fermer en polygone » transforme une
+polyligne en zone ; « Convertir en polygone » transforme un rectangle (rotation intégrée) pour en
+ajuster les coins. Tout est annulable et enregistré.
+
+### 14.6 Mesures
+
+- Photo réelle du Camp 105 (4000 × 2250, 9 MP) — `bench/camp105-phase3.mjs` : 21 objets sur 7 calques
+  tracés avec les vrais outils ; réouverture identique ; 126 vérifications d'attache (6 zooms,
+  12,5 → 400 %), écart maximal 0 px ; export .campplan 3,35 Mo ; réimport dans un navigateur vide :
+  objets, calques et SHA-256 identiques. Les zones tracées sont des **exemples de test**, pas un plan
+  de circulation approuvé.
+- Performance (`bench/objects-performance.mjs`, même photo, Chromium sans GPU ; valeurs de
+  référence, pas des garanties) : 100 / 500 / 1 000 objets ouverts en 0,4 / 0,55 / 0,65 s ; vue
+  60 / 59 / 53 ips ; glisser d'un objet 60 ips ; sélection ≈ 30 ms.

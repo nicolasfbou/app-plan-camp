@@ -10,15 +10,28 @@ import { SCHEMA_VERSION } from '../model/schema.ts';
 export type Migration = (doc: Record<string, unknown>) => Record<string, unknown>;
 export type MigrationTable = Readonly<Record<number, Migration>>;
 
-/** Aucune migration pour l'instant : la version 1 est la première. */
-export const MIGRATIONS: MigrationTable = {};
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export const MIGRATIONS: MigrationTable = {
+  /** 1 → 2 : ajout de `groupId` (null) à chaque objet. Rien d'autre ne change. */
+  1: (doc) => {
+    const objects = isRecord(doc.objects) ? doc.objects : {};
+    return {
+      ...doc,
+      objects: Object.fromEntries(
+        Object.entries(objects).map(([id, object]) => [
+          id,
+          isRecord(object) ? { groupId: null, ...object } : object,
+        ]),
+      ),
+    };
+  },
+};
 
 export class ProjectFormatError extends Error {
   override name = 'ProjectFormatError';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export function migrateDocument(

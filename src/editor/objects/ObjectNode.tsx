@@ -14,7 +14,7 @@ interface ObjectNodeProps {
   interactive: boolean;
   hidden: boolean;
   scale: number;
-  onSelect(id: string): void;
+  onSelect(id: string, additive: boolean): void;
   onDoubleClick(object: PlanObject): void;
 }
 
@@ -59,16 +59,22 @@ export const ObjectNode = memo(function ObjectNode({
     onPointerDown: (e: Konva.KonvaEventObject<PointerEvent>) => {
       if (e.evt.button !== 0) return;
       e.cancelBubble = true;
-      onSelect(object.id);
+      onSelect(object.id, e.evt.shiftKey);
     },
+    onDragStart: () => editActions.beginNodeGesture('Déplacer'),
+    onTransformStart: () => editActions.beginNodeGesture('Transformer'),
     onDblClick: () => onDoubleClick(object),
     onDblTap: () => onDoubleClick(object),
     onDragEnd: (e: Konva.KonvaEventObject<DragEvent>) => {
+      // Le Transformer déplace avec lui tous les nœuds sélectionnés, mais seul le nœud tiré
+      // signale la fin du glisser : on enregistre la position de chacun (une seule action).
+      const transformerNodes = e.target.getStage()?.findOne<Konva.Transformer>('Transformer')?.nodes() ?? [];
+      const moved = transformerNodes.includes(e.target) ? transformerNodes : [e.target];
       if (editActions.isGestureCancelled()) {
         e.target.position(center); // geste annulé : l'objet revient à sa position enregistrée
         return;
       }
-      editActions.commitNodeTransform(object.id, transformOf(e.target), 'Déplacer');
+      for (const node of moved) editActions.commitNodeTransform(node.id(), transformOf(node), 'Déplacer');
     },
     onTransformEnd: (e: Konva.KonvaEventObject<Event>) => {
       const node = e.target;

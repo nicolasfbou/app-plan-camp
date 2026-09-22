@@ -10,7 +10,12 @@
  */
 import { z } from 'zod';
 
-export const SCHEMA_VERSION = 1;
+/**
+ * Historique du format :
+ * - 1 : format initial (phases 0 à 2).
+ * - 2 : `groupId` sur chaque objet (regroupement, phase 3).
+ */
+export const SCHEMA_VERSION = 2;
 
 export const idSchema = z.string().min(1);
 export const isoDateSchema = z.iso.datetime();
@@ -122,6 +127,8 @@ const objectBase = {
   locked: z.boolean(),
   /** Ordre d'empilement au sein du calque (plus grand = au-dessus). */
   zIndex: z.number().int(),
+  /** Groupe d'objets manipulés ensemble (null = objet non groupé). */
+  groupId: idSchema.nullable(),
   metadata: metadataSchema,
   createdAt: isoDateSchema,
   updatedAt: isoDateSchema,

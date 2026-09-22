@@ -56,6 +56,12 @@ export function CanvasStage() {
       aria-label={t('canvas.label')}
       data-testid="canvas-container"
       data-tool={tool}
+      // Cliquer le plan rend le clavier au plan : un champ ou une case du panneau garderait sinon
+      // le focus et bloquerait les raccourcis (Suppr, Ctrl+G…). Le champ est validé en perdant le focus.
+      onPointerDown={(e) => {
+        const focused = document.activeElement;
+        if (focused instanceof HTMLElement && !e.currentTarget.contains(focused)) focused.blur();
+      }}
     >
       {size.width > 0 && size.height > 0 && (
         <Stage

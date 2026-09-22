@@ -38,13 +38,20 @@ interface EditorState {
   tool: Tool;
   /** Modèle appliqué par les outils de surface (rectangle, ellipse, polygone). */
   presetId: string;
-  selectedId: string | null;
-  /** Mode « Modifier les points » d'un polygone / d'une polyligne. */
+  /** Objets sélectionnés (vide = aucune sélection). */
+  selectedIds: string[];
+  /** Mode « Modifier les points » d'un polygone / d'une polyligne (sélection d'un seul objet). */
   vertexEditing: boolean;
+  /** Sommet sélectionné en mode « Modifier les points » (Suppr le retire). */
+  selectedVertex: number | null;
+  /** Calque qui reçoit les nouveaux objets s'il est visible et déverrouillé (sinon : selon le modèle). */
+  activeLayerId: string | null;
+  /** Rectangle de sélection en cours (coordonnées image). */
+  marquee: { start: Point; end: Point } | null;
   /** Texte en cours d'édition dans le champ superposé. */
   editingTextId: string | null;
   draft: Draft | null;
-  clipboard: PlanObject | null;
+  clipboard: PlanObject[];
   pasteCount: number;
   spaceHeld: boolean;
   isPanning: boolean;
@@ -54,11 +61,17 @@ interface EditorState {
   setBackground(status: BackgroundStatus): void;
   setTool(tool: Tool): void;
   setPreset(presetId: string): void;
-  select(id: string | null): void;
+  /** Remplace la sélection (un identifiant, une liste, ou null pour tout désélectionner). */
+  select(ids: string | readonly string[] | null): void;
+  /** Ajoute ou retire des objets de la sélection (Maj + clic). */
+  toggleSelection(ids: readonly string[]): void;
   setVertexEditing(on: boolean): void;
+  setSelectedVertex(index: number | null): void;
+  setActiveLayer(layerId: string | null): void;
+  setMarquee(marquee: { start: Point; end: Point } | null): void;
   setEditingText(id: string | null): void;
   setDraft(draft: Draft | null): void;
-  setClipboard(object: PlanObject): void;
+  setClipboard(objects: PlanObject[]): void;
   nextPaste(): number;
   setSpaceHeld(held: boolean): void;
   setPanning(panning: boolean): void;
@@ -69,11 +82,14 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   background: { kind: 'none' },
   tool: 'select',
   presetId: DEFAULT_AREA_PRESET_ID,
-  selectedId: null,
+  selectedIds: [],
   vertexEditing: false,
+  selectedVertex: null,
+  activeLayerId: null,
+  marquee: null,
   editingTextId: null,
   draft: null,
-  clipboard: null,
+  clipboard: [],
   pasteCount: 0,
   spaceHeld: false,
   isPanning: false,
@@ -88,9 +104,31 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   },
   setTool: (tool) => set({ tool, draft: null, vertexEditing: false, editingTextId: null }),
   setPreset: (presetId) => set({ presetId }),
-  select: (selectedId) =>
-    set((s) => ({ selectedId, vertexEditing: selectedId === s.selectedId ? s.vertexEditing : false })),
-  setVertexEditing: (vertexEditing) => set({ vertexEditing }),
+  select(ids) {
+    const selectedIds = ids === null ? [] : typeof ids === 'string' ? [ids] : [...new Set(ids)];
+    set((s) => {
+      const same =
+        selectedIds.length === 1 && s.selectedIds.length === 1 && selectedIds[0] === s.selectedIds[0];
+      return {
+        selectedIds,
+        vertexEditing: same ? s.vertexEditing : false,
+        selectedVertex: same ? s.selectedVertex : null,
+      };
+    });
+  },
+  toggleSelection(ids) {
+    const current = new Set(get().selectedIds);
+    const allIn = ids.every((id) => current.has(id));
+    for (const id of ids) {
+      if (allIn) current.delete(id);
+      else current.add(id);
+    }
+    set({ selectedIds: [...current], vertexEditing: false, selectedVertex: null });
+  },
+  setVertexEditing: (vertexEditing) => set({ vertexEditing, selectedVertex: null }),
+  setSelectedVertex: (selectedVertex) => set({ selectedVertex }),
+  setActiveLayer: (activeLayerId) => set({ activeLayerId }),
+  setMarquee: (marquee) => set({ marquee }),
   setEditingText: (editingTextId) => set({ editingTextId }),
   setDraft: (draft) => set({ draft }),
   setClipboard: (clipboard) => set({ clipboard, pasteCount: 0 }),
@@ -105,8 +143,11 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
     get().setBackground({ kind: 'none' });
     set({
       tool: 'select',
-      selectedId: null,
+      selectedIds: [],
       vertexEditing: false,
+      selectedVertex: null,
+      activeLayerId: null,
+      marquee: null,
       editingTextId: null,
       draft: null,
       spaceHeld: false,
@@ -114,3 +155,7 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
     });
   },
 }));
+
+/** Identifiant de l'objet sélectionné s'il est seul, sinon null. */
+export const selectSingleId = (s: { selectedIds: string[] }): string | null =>
+  s.selectedIds.length === 1 ? s.selectedIds[0]! : null;
