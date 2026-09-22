@@ -484,3 +484,39 @@ redessiner les autres), on pourra la déplacer temporairement dans `overlay` san
   évite le moiré et accélère le rendu ; l'original est utilisé dès qu'il apporte plus de détail.
 - **Préférence de vue** (centre + zoom) : table IndexedDB séparée `viewPrefs`, hors document, hors
   `.campplan`, supprimée avec le plan.
+
+## 13. Édition du plan (phase 2)
+
+- **Coordonnées** : toute géométrie est créée, modifiée et stockée en pixels image. Les outils
+  convertissent la position du pointeur avec `screenToImage`, les champs du panneau affichent des
+  pixels image. Vérifié en e2e à 12,5 / 25 / 50 / 100 / 200 / 400 % et après redimensionnement de la
+  fenêtre, et par `bench/real-photo-check.mjs` sur une photo réelle (écart mesuré : 0 px).
+- **Convention de rendu** : chaque objet est un nœud Konva placé au centre de sa géométrie et pivoté
+  autour de ce centre (rectangle, ellipse, boîte englobante des points, centre du texte).
+- **Transformer** : pendant le geste, Konva modifie le nœud (aucune écriture dans le store) ; à la fin,
+  `normalizeTransform` intègre l'échelle dans la géométrie (largeur, rayons, points, taille de police)
+  et le nœud revient à l'échelle 1. Aucun `scaleX` / `scaleY` n'est jamais stocké. La rotation reste
+  un angle (un rectangle pivoté ne peut pas s'exprimer autrement).
+- **Sommets** : avant d'éditer un sommet d'un polygone pivoté, la rotation est intégrée aux points
+  (même rendu), sinon le centre de rotation bougerait avec le sommet.
+- **Historique** : un glisser, un redimensionnement, une rotation ou un déplacement de sommet = une
+  entrée. Les modifications répétées d'un même champ (flèches clavier, curseur d'opacité, saisie
+  du nom ou du texte) sont fusionnées si elles se suivent à moins d'une seconde.
+- **Conflits de pointeur** : main, Espace et bouton du milieu sont interceptés en phase de capture,
+  avant Konva ; ils déplacent la caméra et jamais un objet. Avec l'outil Sélection, glisser dans le
+  vide ne fait rien (clic = désélection). Tactile : deux doigts = déplacement / zoom de la vue.
+- **Zones de clic** : les surfaces ont toujours un remplissage de clic (même à opacité 0) ; les
+  traits ont une zone de clic d'au moins 12 px écran, recalculée par palier de zoom (puissances de 2)
+  pour ne pas redessiner tous les objets à chaque cran de molette.
+- **Épaisseurs par défaut** : exprimées en pixels écran au zoom de création puis stockées en pixels
+  image, pour que le trait soit visible quel que soit le zoom où l'on dessine.
+- **Verrouillage** : un objet (ou un calque) verrouillé reste visible et sélectionnable (pour pouvoir
+  le déverrouiller) mais ne peut être ni déplacé, ni transformé, ni supprimé ; la règle est appliquée
+  dans le domaine (`replaceObject`, `removeObject`…), pas seulement dans l'interface.
+- **Sauvegarde** : autosave après chaque action. À la fermeture ou au masquage de la page, si des
+  modifications ne sont pas encore dans IndexedDB, un journal de récupération est écrit de façon
+  synchrone dans `localStorage`, validé puis appliqué à la réouverture.
+- **Performance mesurée** (`bench/objects-performance.mjs`, photo réelle de 18 MP, sans GPU) :
+  100 / 500 / 1 000 objets ouverts en 0,5 / 0,6 / 0,7 s ; déplacement de la vue 60 / 59 / 50-54 ips ;
+  glisser d'un objet 59-60 ips ; sélection ≈ 30 ms. Aucune élimination hors écran n'est nécessaire
+  à ce stade ; toujours 3 couches Konva physiques.

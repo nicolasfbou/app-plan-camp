@@ -329,3 +329,23 @@ test('Espace + glisser sur un objet déplace la caméra, pas l’objet ; l’out
   expect(await storedObjects(page)).toEqual(stored);
   await expect(page.getByTestId('canvas-container')).toHaveAttribute('data-tool', 'select');
 });
+
+test('le canevas ne vole jamais les touches d’un champ : R, Suppr et flèches restent dans le champ', async ({
+  page,
+}) => {
+  await page.keyboard.press('r');
+  await dragOnCanvas(page, [300, 300], [450, 400]);
+  const name = page.getByLabel('Nom', { exact: true });
+  await name.click();
+  await name.press('End');
+  await name.pressSequentially(' rue');
+  await name.press('Backspace');
+  await name.press('Delete');
+  await name.press('ArrowLeft');
+  await expect(name).toHaveValue('Zone personnalisée ru');
+  await expect(page.getByTestId('canvas-container')).toHaveAttribute('data-tool', 'select');
+  expect(await planNodes(page)).toHaveLength(1);
+  // Toute la saisie du nom forme une seule action d'historique.
+  await page.getByRole('button', { name: /Annuler \(Ctrl\+Z\)/ }).click();
+  await expect(name).toHaveValue('Zone personnalisée');
+});

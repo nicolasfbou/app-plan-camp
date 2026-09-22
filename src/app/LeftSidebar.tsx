@@ -133,6 +133,7 @@ function PresetList() {
             <button
               type="button"
               role="radio"
+              data-preset={preset.id}
               aria-checked={presetId === preset.id}
               onClick={() => choose(preset)}
               className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm focus-visible:outline-2 focus-visible:outline-white ${

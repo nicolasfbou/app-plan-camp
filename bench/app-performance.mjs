@@ -44,7 +44,10 @@ await Promise.race([
 ]);
 await page.getByTestId('navigation-controls').waitFor({ timeout: 120_000 });
 const importMs = Date.now() - t;
-await page.getByTestId('save-status').filter({ hasText: 'Enregistré' }).waitFor({ timeout: 30_000 });
+await page
+  .getByTestId('save-status')
+  .filter({ hasText: /^Enregistré$/ })
+  .waitFor({ timeout: 30_000 });
 const dims = await page.getByTestId('bg-dimensions').textContent();
 
 t = Date.now();

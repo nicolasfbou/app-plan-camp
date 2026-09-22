@@ -35,10 +35,18 @@ Règle : le parcours complet doit être fiable avant toute fonction avancée.
   préférence de vue séparée du projet
 - Rendu Konva : 3 couches physiques, 8 catégories logiques (mesure et décision : ARCHITECTURE §11)
 
-## Phase 2 — Dessin de base
+## Phase 2 — Outils de dessin et édition ✅
 
-Sélection, rectangle, polygone, ellipse, ligne, polyligne, texte, étiquette ; déplacer, redimensionner,
-pivoter ; panneau Propriétés ; zones prédéfinies.
+- Outils : Sélection, Main, Rectangle, Rectangle arrondi, Ellipse / cercle, Polygone, Ligne,
+  Polyligne, Texte, Étiquette ; retour automatique à Sélection après création
+- Modèles de zones (15) et de bâtiments (10) appliqués à la création (type, nom, style, calque)
+- Sélection, déplacement, redimensionnement, rotation (Transformer, échelle intégrée à la géométrie)
+- Modification des sommets des polygones et polylignes ; édition de texte en place (double clic)
+- Panneau de propriétés adapté au type ; couleurs rapides + personnalisée ; opacité 0-100 % ;
+  styles de ligne continu / tirets / pointillé
+- Calques : afficher / masquer, verrouiller, liste des objets ; ordre dans le calque
+- Copier / coller (presse-papiers interne), dupliquer, supprimer, flèches clavier (1 / 10 px image)
+- Annuler / rétablir branchés sur toutes les opérations ; journal de récupération à la fermeture
 
 ## Phase 3 — Calques et raccourcis
 
@@ -46,6 +54,9 @@ Afficher/masquer, verrouiller, renommer, réordonner, opacité, « seulement ce 
 copier/coller/dupliquer/supprimer, flèches clavier.
 
 ## Phase 4 — Fichier `.campplan`
+
+> Proposition à valider : avancer ce chantier en phase 3, pour disposer d'une sauvegarde externe
+> dès que des plans réels sont dessinés (voir retour utilisateur de la phase 2).
 
 Export et import complets (image d'origine, annotations, calques, styles, calibration, métadonnées).
 

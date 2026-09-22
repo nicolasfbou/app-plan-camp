@@ -7,3 +7,7 @@ test-results
 *.tsbuildinfo
 .DS_Store
 .env*
+
+# Photos réelles de test (données locales, jamais poussées)
+local-test-data/*
+!local-test-data/README.md
