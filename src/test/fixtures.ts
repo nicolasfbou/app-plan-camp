@@ -100,8 +100,16 @@ export function makeLargeDocument(count: number): PlanDocument {
         fontFamily: 'Inter',
         fontSize: 28,
         fontWeight: 'bold',
+        italic: false,
         align: 'center',
-        label: { background: '#ffffff', backgroundOpacity: 0.9, border: '#0f172a', padding: 6 },
+        label: {
+          background: '#ffffff',
+          backgroundOpacity: 0.9,
+          border: '#0f172a',
+          borderWidth: 2,
+          padding: 6,
+          cornerRadius: 4,
+        },
       },
     ];
     doc.objects[id] = objects[i % objects.length]!;

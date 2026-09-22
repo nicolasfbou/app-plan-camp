@@ -6,6 +6,9 @@ import { TopBar } from '@/app/TopBar.tsx';
 import { CanvasStage } from '@/editor/CanvasStage.tsx';
 import { ImportDialog } from '@/editor/ImportDialog.tsx';
 import { NavigationControls } from '@/editor/NavigationControls.tsx';
+import { TextEditorOverlay } from '@/editor/TextEditorOverlay.tsx';
+import { useEditorShortcuts } from '@/editor/useEditorShortcuts.ts';
+import { useUiStore } from '@/store/uiStore.ts';
 import { useBackgroundLoader } from '@/editor/session/useBackgroundLoader.ts';
 import { usePlanSession } from '@/editor/session/usePlanSession.ts';
 import { useViewPersistence } from '@/editor/session/useViewPersistence.ts';
@@ -33,7 +36,7 @@ function useNavigationShortcuts() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || isTypingTarget(e.target)) return;
-      if (document.querySelector('dialog[open]')) return;
+      if (document.querySelector('dialog[open]') || useEditorStore.getState().editingTextId) return;
       const actions: Record<string, () => void> = {
         '+': viewportActions.zoomIn,
         '=': viewportActions.zoomIn,
@@ -65,6 +68,17 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
   useBackgroundLoader();
   useViewPersistence(planId);
   useNavigationShortcuts();
+  useEditorShortcuts();
+
+  // Sélectionner un objet affiche ses propriétés.
+  useEffect(
+    () =>
+      useEditorStore.subscribe((state, previous) => {
+        if (state.selectedId && state.selectedId !== previous.selectedId)
+          useUiStore.getState().setRightTab('properties');
+      }),
+    [],
+  );
 
   const openFilePicker = useCallback(() => fileInput.current?.click(), []);
   const closeImport = useCallback(() => setImportFile(null), []);
@@ -78,7 +92,7 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
   }
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <TopBar
         siteId={siteId}
         siteName={site.status === 'ready' ? site.value?.name : undefined}
@@ -90,6 +104,7 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
         <main className="relative min-w-0 flex-1">
           <CanvasStage />
           {background.kind === 'ready' && <NavigationControls />}
+          <TextEditorOverlay />
           {state.status === 'ready' && !hasBaseImage && (
             <div className="absolute inset-0 flex items-center justify-center p-8">
               <div className="max-w-md rounded-lg border border-slate-300 bg-white p-6 text-center shadow-sm">

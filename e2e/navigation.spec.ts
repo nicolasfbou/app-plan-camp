@@ -39,13 +39,15 @@ test('molette : le point sous le curseur reste sous le curseur', async ({ page }
   expect(after.y).toBeCloseTo(before.y, 3);
 });
 
-test('déplacement : outil main, bouton du milieu, Espace + glisser — le fond ne bouge jamais dans le projet', async ({
+test('déplacement : outil Main, bouton du milieu, Espace + glisser — le fond ne bouge jamais dans le projet', async ({
   page,
 }) => {
   const box = (await page.getByTestId('canvas-container').boundingBox())!;
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
 
+  // Outil Main : le glisser déplace la caméra.
+  await page.getByRole('button', { name: 'Main', exact: true }).click();
   const t0 = await settledTransform(page);
   await page.mouse.move(cx, cy);
   await page.mouse.down();
@@ -114,6 +116,7 @@ test('boutons : + / − / adapter / 100 % / recentrer', async ({ page }) => {
   await expect(level).toHaveText('100 %');
 
   const box = (await page.getByTestId('canvas-container').boundingBox())!;
+  await page.keyboard.press('h');
   await page.mouse.move(box.x + 100, box.y + 100);
   await page.mouse.down();
   await page.mouse.move(box.x + 400, box.y + 300, { steps: 4 });

@@ -112,7 +112,11 @@ const objectBase = {
   /** Identifiant du preset d'origine (ex. `zone.stationnement`), null si objet libre. */
   presetId: z.string().nullable(),
   style: styleSchema,
-  /** Rotation en degrés autour du centre de la géométrie. */
+  /**
+   * Rotation en degrés (sens horaire) autour du CENTRE de la géométrie : centre du rectangle ou de
+   * l'ellipse, centre de la boîte englobante des points, point d'ancrage (centre) d'un texte.
+   * L'échelle, elle, n'est jamais stockée : elle est intégrée à la géométrie (largeur, points, taille).
+   */
   rotation: z.number(),
   visible: z.boolean(),
   locked: z.boolean(),
@@ -135,7 +139,12 @@ export const labelSpecSchema = z.object({
   background: hexColorSchema,
   backgroundOpacity: unitInterval,
   border: hexColorSchema.nullable(),
+  /** Épaisseur de la bordure, en pixels image. */
+  borderWidth: z.number().nonnegative(),
+  /** Marge intérieure, en pixels image. */
   padding: z.number().nonnegative(),
+  /** Rayon des coins du fond, en pixels image. */
+  cornerRadius: z.number().nonnegative(),
 });
 
 export const planObjectSchema = z.discriminatedUnion('type', [
@@ -151,7 +160,11 @@ export const planObjectSchema = z.discriminatedUnion('type', [
   z.object({
     ...objectBase,
     type: z.literal('building'),
-    geometry: z.discriminatedUnion('kind', [rectGeometrySchema, polygonGeometrySchema]),
+    geometry: z.discriminatedUnion('kind', [
+      rectGeometrySchema,
+      ellipseGeometrySchema,
+      polygonGeometrySchema,
+    ]),
   }),
   z.object({ ...objectBase, type: z.literal('line'), geometry: polylineGeometrySchema }),
   z.object({
@@ -173,13 +186,16 @@ export const planObjectSchema = z.discriminatedUnion('type', [
   z.object({
     ...objectBase,
     type: z.literal('text'),
+    /** Centre du bloc de texte (ou de l'étiquette). La couleur du texte est `style.fill`. */
     geometry: pointGeometrySchema,
     text: z.string(),
     fontFamily: z.string(),
     /** Taille en pixels image. */
     fontSize: z.number().positive(),
     fontWeight: z.enum(['normal', 'bold']),
+    italic: z.boolean(),
     align: z.enum(['left', 'center', 'right']),
+    /** Non nul = étiquette (texte sur fond avec marge et bordure). */
     label: labelSpecSchema.nullable(),
   }),
   z.object({
@@ -215,7 +231,7 @@ export const baseImageRefSchema = z.object({
     z.object({
       kind: z.literal('pdf'),
       /**
-       * PDF d'origine, conservé tel quel. L'image de fond (`blobId`) est un PNG sans perte rendu
+       * PDF d'origine, conservé tel quel. L'image de fond (`blobId`) est la page RASTÉRISÉE, encodée en PNG, rendue
        * depuis ce PDF à `dpi` : elle peut être régénérée à tout moment depuis l'original.
        */
       pdfBlobId: idSchema,

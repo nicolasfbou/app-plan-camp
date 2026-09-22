@@ -5,7 +5,8 @@
  *
  * Mesure : temps d'import, temps de réouverture, mémoire totale de Chromium, fluidité du
  * déplacement (intervalle entre images) à plusieurs niveaux de zoom, et captures d'écran.
- * Attention : Chromium sans GPU (rendu logiciel) : les temps absolus sont pessimistes.
+ * Attention : Chromium sans GPU (rendu logiciel). Mesures de référence de cet environnement, pas une
+ * garantie : sur un poste réel, elles dépendent du GPU, du navigateur et de la résolution d'écran.
  */
 import { execSync } from 'node:child_process';
 import { chromium } from '@playwright/test';

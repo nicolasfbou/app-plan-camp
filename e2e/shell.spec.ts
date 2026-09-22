@@ -41,13 +41,26 @@ test('les panneaux latéraux se réduisent et la zone de travail s’agrandit', 
   await expect.poll(async () => (await canvas.boundingBox())!.width).toBeGreaterThan(initialWidth + 400);
 });
 
-test('aucun outil de dessin n’est présenté comme disponible', async ({ page }) => {
+test('la palette contient exactement les outils livrés en phase 2', async ({ page }) => {
   await openFreshApp(page);
   await createCamp(page, 'Camp');
   await createPlan(page, 'Plan');
-  const sidebar = page.getByTestId('left-sidebar');
-  await expect(sidebar.getByRole('button')).toHaveText(['Main']);
-  await expect(sidebar).toContainText('Les outils de dessin arriveront à la phase 2.');
+  const toolbar = page.getByRole('toolbar', { name: 'Outils' });
+  const names = await toolbar
+    .getByRole('button')
+    .evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')));
+  expect(names).toEqual([
+    'Sélection',
+    'Main',
+    'Rectangle',
+    'Rectangle arrondi',
+    'Ellipse / cercle',
+    'Polygone',
+    'Ligne',
+    'Polyligne',
+    'Texte',
+    'Étiquette',
+  ]);
 });
 
 test('est installable : manifeste PWA et service worker', async ({ page }) => {

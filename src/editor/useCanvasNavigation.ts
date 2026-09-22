@@ -5,7 +5,9 @@
  * - Molette de souris : zoom autour du curseur. Pincement trackpad (ctrl+molette) : zoom fin.
  * - Défilement à deux doigts du trackpad : déplacement.
  * - Glisser avec l'outil main, avec le bouton du milieu, ou avec Espace maintenu : déplacement.
- * - Écran tactile : un doigt déplace, deux doigts zooment (pincement).
+ * - Écran tactile : deux doigts déplacent et zooment (pincement) ; un doigt déplace avec l'outil main,
+ *   sinon il sert à l'outil actif (sélection, dessin).
+ * Ces gestes sont interceptés en phase de capture, avant Konva : ils ne déplacent jamais un objet.
  * Les mises à jour sont regroupées par image d'animation pour rester fluides.
  */
 import { type RefObject, useEffect } from 'react';
@@ -69,11 +71,12 @@ export function useCanvasNavigation(containerRef: RefObject<HTMLElement | null>,
       };
     };
 
-    const onPointerDown = (e: PointerEvent) => {
-      const { tool, spaceHeld } = useEditorStore.getState();
-      const wantsPan =
-        e.pointerType === 'touch' || e.button === 1 || (e.button === 0 && (tool === 'hand' || spaceHeld));
-      if (!wantsPan) return;
+    // Doigts posés (écran tactile) : deux doigts = pincement / déplacement, quel que soit l'outil.
+    const touches = new Map<number, Point>();
+
+    const startPan = (e: PointerEvent) => {
+      // Intercepté AVANT Konva (phase de capture) : aucun objet ne sera déplacé par ce geste.
+      e.stopPropagation();
       e.preventDefault();
       element.setPointerCapture(e.pointerId);
       pointers.set(e.pointerId, local(e));
@@ -83,7 +86,23 @@ export function useCanvasNavigation(containerRef: RefObject<HTMLElement | null>,
       }
     };
 
+    const onPointerDown = (e: PointerEvent) => {
+      const { tool, spaceHeld } = useEditorStore.getState();
+      if (e.pointerType === 'touch') {
+        touches.set(e.pointerId, local(e));
+        if (touches.size >= 2) {
+          // Deuxième doigt : on bascule en pincement avec les deux doigts.
+          for (const [id, point] of touches) pointers.set(id, point);
+          return startPan(e);
+        }
+        if (tool === 'hand') return startPan(e);
+        return;
+      }
+      if (e.button === 1 || (e.button === 0 && (tool === 'hand' || spaceHeld))) startPan(e);
+    };
+
     const onPointerMove = (e: PointerEvent) => {
+      if (touches.has(e.pointerId)) touches.set(e.pointerId, local(e));
       const previousPoint = pointers.get(e.pointerId);
       if (!previousPoint) return;
       const before = gesture();
@@ -96,6 +115,7 @@ export function useCanvasNavigation(containerRef: RefObject<HTMLElement | null>,
     };
 
     const onPointerUp = (e: PointerEvent) => {
+      touches.delete(e.pointerId);
       if (!pointers.delete(e.pointerId)) return;
       if (element.hasPointerCapture(e.pointerId)) element.releasePointerCapture(e.pointerId);
       if (pointers.size === 0) {
@@ -121,7 +141,7 @@ export function useCanvasNavigation(containerRef: RefObject<HTMLElement | null>,
     const onBlur = () => useEditorStore.getState().setSpaceHeld(false);
 
     element.addEventListener('wheel', onWheel, { passive: false });
-    element.addEventListener('pointerdown', onPointerDown);
+    element.addEventListener('pointerdown', onPointerDown, { capture: true });
     element.addEventListener('pointermove', onPointerMove);
     element.addEventListener('pointerup', onPointerUp);
     element.addEventListener('pointercancel', onPointerUp);
@@ -132,7 +152,7 @@ export function useCanvasNavigation(containerRef: RefObject<HTMLElement | null>,
     return () => {
       cancelAnimationFrame(frame);
       element.removeEventListener('wheel', onWheel);
-      element.removeEventListener('pointerdown', onPointerDown);
+      element.removeEventListener('pointerdown', onPointerDown, { capture: true });
       element.removeEventListener('pointermove', onPointerMove);
       element.removeEventListener('pointerup', onPointerUp);
       element.removeEventListener('pointercancel', onPointerUp);

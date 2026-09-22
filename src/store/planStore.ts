@@ -22,6 +22,16 @@ export interface HistoryEntry {
   label: string;
   patches: Patch[];
   inversePatches: Patch[];
+  /** Modifications répétées d'un même champ (flèches, curseur, saisie) fusionnées en une entrée. */
+  mergeKey?: string;
+  time?: number;
+}
+
+/** Délai pendant lequel deux modifications de même `mergeKey` forment une seule action. */
+export const MERGE_WINDOW_MS = 1000;
+
+export interface UpdateOptions {
+  mergeKey?: string;
 }
 
 export interface PlanState {
@@ -35,7 +45,7 @@ export interface PlanState {
 
   /** Ouvre un document : réinitialise l'historique, état « enregistré ». */
   load(doc: PlanDocument | null): void;
-  update(label: string, recipe: (draft: PlanDocument) => void): void;
+  update(label: string, recipe: (draft: PlanDocument) => unknown, options?: UpdateOptions): void;
   beginTransaction(label: string): void;
   commitTransaction(): void;
   cancelTransaction(): void;
@@ -69,10 +79,13 @@ export function createPlanStore() {
         set({ doc, past: [], future: [], pending: null, revision, savedRevision: revision });
       },
 
-      update(label, recipe) {
+      update(label, recipe, options) {
         const { doc, pending } = get();
         if (!doc) return;
-        const [next, patches, inversePatches] = produceWithPatches(doc, recipe);
+        // La valeur retournée par la recette est ignorée : seules les mutations du brouillon comptent.
+        const [next, patches, inversePatches] = produceWithPatches(doc, (draft) => {
+          recipe(draft);
+        });
         if (patches.length === 0) return;
         if (pending) {
           // Les inverses s'appliquent dans l'ordre inverse des modifications.
@@ -85,8 +98,26 @@ export function createPlanStore() {
             },
           });
         } else {
-          set({ doc: next });
-          pushEntry({ label, patches, inversePatches });
+          const last = get().past.at(-1);
+          const now = Date.now();
+          const merge =
+            options?.mergeKey !== undefined &&
+            last?.mergeKey === options.mergeKey &&
+            last.time !== undefined &&
+            now - last.time < MERGE_WINDOW_MS &&
+            get().future.length === 0;
+          if (merge && last) {
+            const merged: HistoryEntry = {
+              ...last,
+              patches: [...last.patches, ...patches],
+              inversePatches: [...inversePatches, ...last.inversePatches],
+              time: now,
+            };
+            set({ doc: next, past: [...get().past.slice(0, -1), merged], revision: get().revision + 1 });
+          } else {
+            set({ doc: next });
+            pushEntry({ label, patches, inversePatches, mergeKey: options?.mergeKey, time: now });
+          }
         }
       },
 

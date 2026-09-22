@@ -167,3 +167,19 @@ describe('gros projets', () => {
     expect(state().doc!.objects[first!]).not.toBe(doc.objects[first!]);
   });
 });
+
+describe('fusion des modifications répétées', () => {
+  it('des flèches clavier rapprochées forment une seule action ; des clés différentes non', () => {
+    const zone = makeZone(zonesLayer, 0, 0);
+    state().update('ajout', (d) => addObject(d, zone));
+    const before = state().past.length;
+    for (let i = 0; i < 10; i++)
+      state().update('Déplacer', (d) => moveObject(d, zone.id, 1, 0), { mergeKey: `nudge:${zone.id}` });
+    expect(state().past.length).toBe(before + 1);
+    state().update('Nom', (d) => void (d.objects[zone.id]!.name = 'X'), { mergeKey: `name:${zone.id}` });
+    expect(state().past.length).toBe(before + 2);
+    state().undo();
+    state().undo();
+    expect(geometryOf(zone.id)).toMatchObject({ x: 0 });
+  });
+});

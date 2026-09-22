@@ -434,7 +434,9 @@ contenant les 8 catégories logiques ?
 
 **Mesure** (`bench/konva-layers.mjs`) : vraie photo de drone 4896 × 3672 (18 MP), Stage 1920 × 1080,
 300 objets répartis dans les catégories, déplacement continu de 120 images, médiane de 3 essais,
-Chromium 141 sans GPU (rendu logiciel : les temps absolus sont pessimistes, l'écart relatif est fiable).
+Chromium 141 sans GPU (rendu logiciel). Ce sont des mesures de référence dans cet environnement, pas une
+garantie : sur un poste réel, les résultats dépendront du GPU, du navigateur, de la résolution et de la
+densité de l'écran. L'écart relatif entre les options reste l'information utile.
 
 | Écran                           | 8 couches physiques      | 3 couches physiques      | Écart                       |
 | ------------------------------- | ------------------------ | ------------------------ | --------------------------- |
@@ -470,10 +472,12 @@ redessiner les autres), on pourra la déplacer temporairement dans `overlay` san
 - **Orientation EXIF** : appliquée au décodage d'affichage (`createImageBitmap`, `imageOrientation: 'from-image'`).
   L'original n'est pas réécrit. L'espace de coordonnées du projet est celui de l'image affichée ; ses
   dimensions sont vérifiées contre celles décodées par le navigateur.
-- **PDF** : pdf.js (build « legacy » pour les navigateurs non à jour), chargé à la demande. La page
-  choisie est rendue en PNG sans perte à la résolution choisie (défaut : la plus fine sous 50 MP). Le PDF
-  d'origine, sa page, sa résolution, son nombre de pages et son SHA-256 sont conservés : le rendu peut
-  être refait depuis l'original.
+- **PDF** : pdf.js (build « legacy » pour les navigateurs non à jour), chargé à la demande. Le PDF
+  original est conservé intact (octets, SHA-256). La page sélectionnée est **rastérisée** à une résolution
+  définie (défaut : la plus fine sous 50 MP), puis enregistrée en PNG à compression sans perte. Attention :
+  la rastérisation elle-même fige la page à cette résolution ; le fond n'est donc pas identique à la page
+  vectorielle, seulement à son rendu à cette résolution. Page, résolution, nombre de pages et SHA-256 du
+  PDF sont conservés : le rendu peut être refait depuis l'original.
 - **Affichage** : à ≥ 1 pixel écran par pixel image, lissage désactivé (pixels exacts ; à 100 % la
   position est arrondie au pixel entier → correspondance 1:1 vérifiée pixel par pixel en e2e). Au fort
   dézoom (< 25 %), une **pyramide d'affichage** (copies 1/4, 1/8… générées en mémoire, jamais enregistrées)

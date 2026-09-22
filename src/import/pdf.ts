@@ -18,7 +18,7 @@ export interface LoadedPdf {
   pageSize(page: number): Promise<PdfPageSize>;
   /** Vignette PNG (URL de données) dont le plus grand côté mesure `maxSide` pixels. */
   thumbnail(page: number, maxSide: number): Promise<string>;
-  /** Rendu sans perte (PNG) de la page à la résolution demandée. */
+  /** Rastérise la page à la résolution demandée, encodée en PNG (compression sans perte). */
   renderPng(page: number, dpi: number): Promise<ArrayBuffer>;
   destroy(): Promise<void>;
 }

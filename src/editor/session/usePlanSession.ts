@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { repository } from '@/app/repository.ts';
 import { t } from '@/i18n/index.ts';
 import { startAutosave } from '@/persistence/autosave.ts';
+import { clearRecovery, readRecovery, writeRecovery } from '@/persistence/recovery.ts';
 import { planStore, selectIsDirty } from '@/store/planStore.ts';
 
 export type SessionState = { status: 'loading' } | { status: 'ready' } | { status: 'error'; message: string };
@@ -17,7 +18,15 @@ export function usePlanSession(planId: string) {
   useEffect(() => {
     // Le composant appelant est remonté pour chaque plan : l'état initial est déjà « loading ».
     let cancelled = false;
-    repository.loadPlan(planId).then(
+    (async () => {
+      // Journal de récupération : modifications non encore écrites lors d'une fermeture brutale.
+      const recovered = readRecovery(planId);
+      if (recovered) {
+        await repository.savePlan(recovered);
+        clearRecovery(planId);
+      }
+      return repository.loadPlan(planId);
+    })().then(
       (doc) => {
         if (cancelled) return;
         if (!doc) return setState({ status: 'error', message: t('plans.notFound') });
@@ -35,12 +44,24 @@ export function usePlanSession(planId: string) {
       store: planStore,
       save: async (doc) => {
         await repository.savePlan(doc);
+        clearRecovery(doc.plan.id);
         setSaveError(null);
       },
       onError: (error) => setSaveError(error instanceof Error ? error.message : String(error)),
     });
-    const flush = () => void autosave.flush();
-    const onVisibility = () => document.visibilityState === 'hidden' && flush();
+    // Fermeture de page : l'écriture IndexedDB est asynchrone et peut ne pas aboutir. On écrit
+    // donc aussi, de façon synchrone, un journal de récupération relu à la prochaine ouverture.
+    const journal = () => {
+      const state = planStore.getState();
+      if (state.doc?.plan.id === planId && selectIsDirty(state)) writeRecovery(state.doc);
+    };
+    const flush = () => {
+      journal();
+      void autosave.flush();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       flush();
       if (selectIsDirty(planStore.getState())) event.preventDefault();

@@ -1,30 +1,48 @@
-import { useEffect } from 'react';
-import { Group, Layer, Stage } from 'react-konva';
+import Konva from 'konva';
+import { useEffect, useRef } from 'react';
+import { Stage } from 'react-konva';
 import { t } from '@/i18n/index.ts';
 import { useEditorStore } from '@/store/editorStore.ts';
 import { useViewportStore } from '@/store/viewportStore.ts';
 import { BackgroundLayer } from './BackgroundLayer.tsx';
-import { CONTENT_GROUPS } from './renderTiers.ts';
+import { ObjectsLayer } from './objects/ObjectsLayer.tsx';
+import { SelectionLayer } from './SelectionLayer.tsx';
 import { useCanvasNavigation } from './useCanvasNavigation.ts';
+import { useDrawingTools } from './useDrawingTools.ts';
 import { useElementSize } from './useElementSize.ts';
+
+// Un clic légèrement tremblé ne doit pas devenir un déplacement (ni une action d'historique).
+Konva.dragDistance = 3;
 
 /**
  * Zone de travail. Le Stage applique la transformation viewport (image → écran) ; tout ce qui est
- * dessiné dans les couches est exprimé en coordonnées image.
+ * dessiné dans les 3 couches physiques (fond, contenu, surcouche) est en coordonnées image.
  */
 export function CanvasStage() {
   const [containerRef, size] = useElementSize<HTMLDivElement>();
+  const stageRef = useRef<Konva.Stage>(null);
   const viewport = useViewportStore((s) => s.viewport);
   const setStageSize = useViewportStore((s) => s.setStageSize);
   const background = useEditorStore((s) => (s.background.kind === 'ready' ? s.background.background : null));
   const panning = useEditorStore((s) => s.isPanning);
-  const grabbable = useEditorStore((s) => s.tool === 'hand' || s.spaceHeld);
+  const tool = useEditorStore((s) => s.tool);
+  const spaceHeld = useEditorStore((s) => s.spaceHeld);
   const pixelRatio = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1;
+  const ready = background !== null && size.width > 0;
 
   useEffect(() => setStageSize(size), [size, setStageSize]);
   useCanvasNavigation(containerRef, background !== null);
+  useDrawingTools(stageRef, ready);
 
-  const cursor = background ? (panning ? 'cursor-grabbing' : grabbable ? 'cursor-grab' : '') : '';
+  const cursor = !background
+    ? ''
+    : panning
+      ? 'cursor-grabbing'
+      : tool === 'hand' || spaceHeld
+        ? 'cursor-grab'
+        : tool === 'select'
+          ? ''
+          : 'cursor-crosshair';
 
   return (
     <div
@@ -33,24 +51,21 @@ export function CanvasStage() {
       role="region"
       aria-label={t('canvas.label')}
       data-testid="canvas-container"
+      data-tool={tool}
     >
       {size.width > 0 && size.height > 0 && (
         <Stage
+          ref={stageRef}
           width={size.width}
           height={size.height}
           scaleX={viewport.scale}
           scaleY={viewport.scale}
           x={viewport.x}
           y={viewport.y}
-          listening={false}
         >
           <BackgroundLayer background={background} scale={viewport.scale} pixelRatio={pixelRatio} />
-          <Layer name="content">
-            {CONTENT_GROUPS.map((tier) => (
-              <Group key={tier} name={tier} />
-            ))}
-          </Layer>
-          <Layer name="overlay" />
+          <ObjectsLayer scale={viewport.scale} />
+          <SelectionLayer scale={viewport.scale} />
         </Stage>
       )}
     </div>

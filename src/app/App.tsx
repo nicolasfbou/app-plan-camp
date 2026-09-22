@@ -11,9 +11,11 @@ export function App() {
   const route = useRoute();
 
   return (
-    <div className="flex h-full w-full overflow-hidden">
+    // overflow-clip : l’interface ne défile jamais dans son ensemble (même par focus programmatique),
+    // sinon la zone de travail se décalerait sous le pointeur.
+    <div className="flex h-full w-full overflow-clip">
       <LeftSidebar showTools={route.name === 'plan'} />
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {route.name === 'camps' && <CampsPage />}
         {route.name === 'camp' && <CampPage key={route.siteId} siteId={route.siteId} />}
         {route.name === 'plan' && (

@@ -2,16 +2,13 @@ import type { ReactNode } from 'react';
 import { t } from '@/i18n/index.ts';
 import { BackgroundPanel } from '@/panels/BackgroundPanel.tsx';
 import { LayersPanel } from '@/panels/LayersPanel.tsx';
+import { PropertiesPanel } from '@/panels/PropertiesPanel.tsx';
 import { type RightTab, useUiStore } from '@/store/uiStore.ts';
 
 const TABS: { id: RightTab; label: () => string; content: () => ReactNode }[] = [
-  { id: 'background', label: () => t('panel.background'), content: () => <BackgroundPanel /> },
+  { id: 'properties', label: () => t('panel.properties'), content: () => <PropertiesPanel /> },
   { id: 'layers', label: () => t('panel.layers'), content: () => <LayersPanel /> },
-  {
-    id: 'properties',
-    label: () => t('panel.properties'),
-    content: () => <p className="text-sm text-slate-500">{t('panel.properties.empty')}</p>,
-  },
+  { id: 'background', label: () => t('panel.background'), content: () => <BackgroundPanel /> },
 ];
 
 export function RightPanel() {
@@ -21,7 +18,7 @@ export function RightPanel() {
 
   return (
     <aside
-      className="flex w-72 shrink-0 flex-col border-l border-slate-200 bg-panel"
+      className="flex h-full min-h-0 w-72 shrink-0 flex-col border-l border-slate-200 bg-panel"
       data-testid="right-panel"
     >
       <div role="tablist" className="flex border-b border-slate-200 bg-white">
@@ -48,7 +45,7 @@ export function RightPanel() {
         id="right-panel-content"
         role="tabpanel"
         aria-labelledby={`tab-${active.id}`}
-        className="overflow-y-auto p-4"
+        className="min-h-0 flex-1 overflow-y-auto p-4"
       >
         {active.content()}
       </div>
