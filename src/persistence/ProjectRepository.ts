@@ -3,6 +3,7 @@
  * IndexedDB (V1) pourra être complétée par un serveur (V3) sans toucher à l'éditeur.
  */
 import type { PlanDocument, PlanKind, Site } from '@/domain/model/types.ts';
+import type { ViewCenter } from '@/domain/viewport/viewport.ts';
 
 export interface PlanSummary {
   id: string;
@@ -37,4 +38,13 @@ export interface ProjectRepository {
   /** Stocke des octets tels quels et retourne leur empreinte. */
   putBlob(bytes: ArrayBuffer, mimeType: string): Promise<Omit<StoredBlob, 'bytes'>>;
   getBlob(id: string): Promise<StoredBlob | undefined>;
+  /** Supprime les fichiers qui ne sont plus référencés par aucun plan (ex. import annulé). */
+  deleteOrphanBlobs(): Promise<number>;
+
+  /**
+   * Préférence d'affichage (dernier zoom / centre de vue) : confort uniquement. Stockée à part,
+   * elle ne fait partie ni du document, ni de la géométrie des objets, ni du fichier `.campplan`.
+   */
+  getViewPrefs(planId: string): Promise<ViewCenter | undefined>;
+  saveViewPrefs(planId: string, view: ViewCenter): Promise<void>;
 }

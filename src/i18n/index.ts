@@ -26,3 +26,20 @@ export function t(key: MessageKey, vars?: Record<string, string | number>): stri
   if (!vars) return template;
   return template.replace(/\{(\w+)\}/g, (match, name: string) => (name in vars ? String(vars[name]) : match));
 }
+
+type PluralBase<K extends string> = K extends `${infer B}.one` ? B : never;
+
+/** Pluriel français : 0 → `.zero` si défini, sinon `.one` ; 1 → `.one` ; ≥ 2 → `.other`. */
+export function tPlural(base: PluralBase<MessageKey>, count: number): string {
+  const zero = `${base}.zero` as MessageKey;
+  if (count === 0 && zero in catalogs[currentLocale]) return t(zero, { count });
+  return t((count <= 1 ? `${base}.one` : `${base}.other`) as MessageKey, { count });
+}
+
+export function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('fr-CA', { dateStyle: 'long', timeStyle: 'short' });
+}
+
+export function formatInteger(value: number): string {
+  return value.toLocaleString('fr-CA');
+}

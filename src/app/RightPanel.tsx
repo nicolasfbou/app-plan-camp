@@ -1,9 +1,17 @@
+import type { ReactNode } from 'react';
 import { t } from '@/i18n/index.ts';
+import { BackgroundPanel } from '@/panels/BackgroundPanel.tsx';
+import { LayersPanel } from '@/panels/LayersPanel.tsx';
 import { type RightTab, useUiStore } from '@/store/uiStore.ts';
 
-const TABS: { id: RightTab; label: () => string; empty: () => string }[] = [
-  { id: 'properties', label: () => t('panel.properties'), empty: () => t('panel.properties.empty') },
-  { id: 'layers', label: () => t('panel.layers'), empty: () => t('panel.layers.empty') },
+const TABS: { id: RightTab; label: () => string; content: () => ReactNode }[] = [
+  { id: 'background', label: () => t('panel.background'), content: () => <BackgroundPanel /> },
+  { id: 'layers', label: () => t('panel.layers'), content: () => <LayersPanel /> },
+  {
+    id: 'properties',
+    label: () => t('panel.properties'),
+    content: () => <p className="text-sm text-slate-500">{t('panel.properties.empty')}</p>,
+  },
 ];
 
 export function RightPanel() {
@@ -26,7 +34,7 @@ export function RightPanel() {
             aria-selected={tab.id === rightTab}
             aria-controls="right-panel-content"
             onClick={() => setRightTab(tab.id)}
-            className={`flex-1 px-3 py-2 text-sm font-medium ${
+            className={`flex-1 px-2 py-2 text-sm font-medium ${
               tab.id === rightTab
                 ? 'border-b-2 border-accent text-accent'
                 : 'text-slate-600 hover:text-slate-900'
@@ -36,8 +44,13 @@ export function RightPanel() {
           </button>
         ))}
       </div>
-      <div id="right-panel-content" role="tabpanel" aria-labelledby={`tab-${active.id}`} className="p-4">
-        <p className="text-sm text-slate-500">{active.empty()}</p>
+      <div
+        id="right-panel-content"
+        role="tabpanel"
+        aria-labelledby={`tab-${active.id}`}
+        className="overflow-y-auto p-4"
+      >
+        {active.content()}
       </div>
     </aside>
   );

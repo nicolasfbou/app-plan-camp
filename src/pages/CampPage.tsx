@@ -1,0 +1,183 @@
+import { Copy, Map as MapIcon, Pencil, Plus, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { createPlanDocument, duplicatePlanDocument, nowIso } from '@/domain/model/factories.ts';
+import { PLAN_KINDS } from '@/domain/model/schema.ts';
+import type { PlanKind } from '@/domain/model/types.ts';
+import { formatDateTime, t } from '@/i18n/index.ts';
+import type { PlanSummary } from '@/persistence/ProjectRepository.ts';
+import { repository } from '@/app/repository.ts';
+import { navigate, routeHref } from '@/app/router.ts';
+import { Button } from '@/ui/Button.tsx';
+import { ConfirmDialog } from '@/ui/ConfirmDialog.tsx';
+import { IconButton } from '@/ui/IconButton.tsx';
+import { TextPromptDialog } from '@/ui/TextPromptDialog.tsx';
+import { ListRow } from './ListRow.tsx';
+import { Notice, PageLayout } from './PageLayout.tsx';
+import { useAsync } from './useAsync.ts';
+
+type Dialog = { kind: 'create' } | { kind: 'rename' | 'duplicate' | 'delete'; plan: PlanSummary } | null;
+
+async function requirePlan(id: string) {
+  const doc = await repository.loadPlan(id);
+  if (!doc) throw new Error(t('plans.notFound'));
+  return doc;
+}
+
+export function CampPage({ siteId }: { siteId: string }) {
+  const [state, reload] = useAsync(async () => {
+    const site = await repository.getSite(siteId);
+    return site ? { site, plans: await repository.listPlans(siteId) } : null;
+  }, siteId);
+  const [dialog, setDialog] = useState<Dialog>(null);
+  const [kind, setKind] = useState<PlanKind>('general');
+  const close = () => setDialog(null);
+
+  const breadcrumb = (
+    <a href={routeHref({ name: 'camps' })} className="hover:underline">
+      {t('nav.camps')}
+    </a>
+  );
+
+  if (state.status === 'loading') return null;
+  if (state.status === 'error' || state.value === null) {
+    return (
+      <PageLayout breadcrumb={breadcrumb} title={t('plans.title')}>
+        <Notice tone="error">{state.status === 'error' ? state.error.message : t('camps.notFound')}</Notice>
+      </PageLayout>
+    );
+  }
+  const { site, plans } = state.value;
+
+  return (
+    <PageLayout
+      breadcrumb={breadcrumb}
+      title={site.name}
+      subtitle={t('plans.title')}
+      action={
+        <Button
+          variant="primary"
+          onClick={() => {
+            setKind('general');
+            setDialog({ kind: 'create' });
+          }}
+        >
+          <Plus size={16} /> {t('plans.new')}
+        </Button>
+      }
+    >
+      {plans.length === 0 && <Notice>{t('plans.empty')}</Notice>}
+      {plans.length > 0 && (
+        <ul className="space-y-2" aria-label={t('plans.title')}>
+          {plans.map((plan) => (
+            <ListRow
+              key={plan.id}
+              testId="plan-row"
+              href={routeHref({ name: 'plan', siteId, planId: plan.id })}
+              icon={<MapIcon size={20} />}
+              title={plan.name}
+              subtitle={`${t(`planKind.${plan.kind}`)} · ${t('common.updatedAt', { date: formatDateTime(plan.updatedAt) })}`}
+              actions={
+                <>
+                  <IconButton
+                    label={`${t('common.rename')} ${plan.name}`}
+                    onClick={() => setDialog({ kind: 'rename', plan })}
+                  >
+                    <Pencil size={16} />
+                  </IconButton>
+                  <IconButton
+                    label={`${t('common.duplicate')} ${plan.name}`}
+                    onClick={() => setDialog({ kind: 'duplicate', plan })}
+                  >
+                    <Copy size={16} />
+                  </IconButton>
+                  <IconButton
+                    label={`${t('common.delete')} ${plan.name}`}
+                    onClick={() => setDialog({ kind: 'delete', plan })}
+                  >
+                    <Trash2 size={16} />
+                  </IconButton>
+                </>
+              }
+            />
+          ))}
+        </ul>
+      )}
+
+      {dialog?.kind === 'create' && (
+        <TextPromptDialog
+          title={t('plans.new')}
+          label={t('plans.name')}
+          initialValue={t(`planKind.${kind}`)}
+          confirmLabel={t('common.create')}
+          onCancel={close}
+          onConfirm={async (name) => {
+            const doc = createPlanDocument({ siteId, name, kind });
+            await repository.savePlan(doc);
+            await repository.saveSite({ ...site, updatedAt: nowIso() });
+            close();
+            navigate({ name: 'plan', siteId, planId: doc.plan.id });
+          }}
+        >
+          <label className="block">
+            <span className="mb-1 block font-medium text-slate-800">{t('plans.kind')}</span>
+            <select
+              value={kind}
+              onChange={(event) => setKind(event.target.value as PlanKind)}
+              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+            >
+              {PLAN_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {t(`planKind.${k}`)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </TextPromptDialog>
+      )}
+      {dialog?.kind === 'rename' && (
+        <TextPromptDialog
+          title={t('plans.rename.title')}
+          label={t('plans.name')}
+          initialValue={dialog.plan.name}
+          confirmLabel={t('common.save')}
+          onCancel={close}
+          onConfirm={async (name) => {
+            const doc = await requirePlan(dialog.plan.id);
+            await repository.savePlan({ ...doc, plan: { ...doc.plan, name, updatedAt: nowIso() } });
+            close();
+            reload();
+          }}
+        />
+      )}
+      {dialog?.kind === 'duplicate' && (
+        <TextPromptDialog
+          title={t('plans.duplicate.title')}
+          label={t('plans.duplicate.name')}
+          initialValue={t('plans.copyName', { name: dialog.plan.name })}
+          confirmLabel={t('common.duplicate')}
+          onCancel={close}
+          onConfirm={async (name) => {
+            await repository.savePlan(duplicatePlanDocument(await requirePlan(dialog.plan.id), name));
+            close();
+            reload();
+          }}
+        />
+      )}
+      {dialog?.kind === 'delete' && (
+        <ConfirmDialog
+          danger
+          title={t('plans.delete.title')}
+          confirmLabel={t('common.delete')}
+          onCancel={close}
+          onConfirm={async () => {
+            await repository.deletePlan(dialog.plan.id);
+            close();
+            reload();
+          }}
+        >
+          {t('plans.delete.body', { name: dialog.plan.name })}
+        </ConfirmDialog>
+      )}
+    </PageLayout>
+  );
+}

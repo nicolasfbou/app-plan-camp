@@ -38,6 +38,7 @@ async function withImage(doc: PlanDocument, bytes: ArrayBuffer): Promise<PlanDoc
         width: 8000,
         height: 6000,
         exifOrientation: 1,
+        importedAt: '2026-01-15T12:00:00.000Z',
         source: { kind: 'image' },
       },
     },
@@ -141,5 +142,48 @@ describe('robustesse', () => {
     await repo.deletePlan(good.plan.id);
     await repo.deletePlan(bad.plan.id);
     expect(await repo.listPlans('s')).toEqual([]);
+  });
+});
+
+describe('camps et plans', () => {
+  it('duplique un plan : nouveau plan indépendant, même photo d’origine partagée', async () => {
+    const { duplicatePlanDocument } = await import('@/domain/model/factories.ts');
+    const doc = await withImage(createPlanDocument({ siteId: 's', name: 'Plan général' }), randomBytes(4096));
+    await repo.savePlan(doc);
+    const copy = duplicatePlanDocument(doc, 'Plan général (copie)');
+    await repo.savePlan(copy);
+
+    expect(copy.plan.id).not.toBe(doc.plan.id);
+    expect(copy.plan.baseImage).toEqual(doc.plan.baseImage);
+    expect((await repo.listPlans('s')).map((p) => p.name)).toEqual(['Plan général', 'Plan général (copie)']);
+
+    await repo.savePlan({ ...copy, plan: { ...copy.plan, name: 'Renommé' } });
+    expect((await repo.loadPlan(doc.plan.id))!.plan.name).toBe('Plan général');
+  });
+
+  it('un plan sans image s’enregistre et se rouvre', async () => {
+    const doc = createPlanDocument({ siteId: 's', name: 'Vide' });
+    await repo.savePlan(doc);
+    const reopened = await repo.loadPlan(doc.plan.id);
+    expect(reopened!.plan.baseImage).toBeNull();
+  });
+
+  it('supprime les fichiers orphelins (import annulé) sans toucher aux fichiers utilisés', async () => {
+    const used = await withImage(createPlanDocument({ siteId: 's', name: 'A' }), randomBytes(1000));
+    await repo.savePlan(used);
+    const orphan = await repo.putBlob(randomBytes(500), 'image/png');
+    expect(await repo.deleteOrphanBlobs()).toBe(1);
+    expect(await repo.getBlob(orphan.id)).toBeUndefined();
+    expect(await repo.getBlob(used.plan.baseImage!.blobId)).toBeDefined();
+  });
+
+  it('la préférence de vue est stockée à part et supprimée avec le plan', async () => {
+    const doc = createPlanDocument({ siteId: 's', name: 'A' });
+    await repo.savePlan(doc);
+    await repo.saveViewPrefs(doc.plan.id, { centerX: 100, centerY: 50, scale: 0.5 });
+    expect(await repo.getViewPrefs(doc.plan.id)).toEqual({ centerX: 100, centerY: 50, scale: 0.5 });
+    expect(JSON.stringify(await repo.loadPlan(doc.plan.id))).not.toMatch(/centerX|scale/);
+    await repo.deletePlan(doc.plan.id);
+    expect(await repo.getViewPrefs(doc.plan.id)).toBeUndefined();
   });
 });

@@ -1,27 +1,35 @@
 import { useEffect } from 'react';
-import { Layer, Stage } from 'react-konva';
+import { Group, Layer, Stage } from 'react-konva';
 import { t } from '@/i18n/index.ts';
-import { usePlanStore } from '@/store/planStore.ts';
+import { useEditorStore } from '@/store/editorStore.ts';
 import { useViewportStore } from '@/store/viewportStore.ts';
-import { NON_INTERACTIVE_LAYERS, STAGE_LAYERS } from './renderTiers.ts';
+import { BackgroundLayer } from './BackgroundLayer.tsx';
+import { CONTENT_GROUPS } from './renderTiers.ts';
+import { useCanvasNavigation } from './useCanvasNavigation.ts';
 import { useElementSize } from './useElementSize.ts';
 
 /**
- * Zone de travail. Le Stage applique le viewport (projet → écran) ; tout ce qui est dessiné
- * dans les couches est exprimé en coordonnées image.
+ * Zone de travail. Le Stage applique la transformation viewport (image → écran) ; tout ce qui est
+ * dessiné dans les couches est exprimé en coordonnées image.
  */
 export function CanvasStage() {
   const [containerRef, size] = useElementSize<HTMLDivElement>();
   const viewport = useViewportStore((s) => s.viewport);
   const setStageSize = useViewportStore((s) => s.setStageSize);
-  const hasPlan = usePlanStore((s) => s.doc !== null);
+  const background = useEditorStore((s) => (s.background.kind === 'ready' ? s.background.background : null));
+  const panning = useEditorStore((s) => s.isPanning);
+  const grabbable = useEditorStore((s) => s.tool === 'hand' || s.spaceHeld);
+  const pixelRatio = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1;
 
   useEffect(() => setStageSize(size), [size, setStageSize]);
+  useCanvasNavigation(containerRef, background !== null);
+
+  const cursor = background ? (panning ? 'cursor-grabbing' : grabbable ? 'cursor-grab' : '') : '';
 
   return (
     <div
       ref={containerRef}
-      className="relative h-full w-full overflow-hidden bg-canvas"
+      className={`relative h-full w-full touch-none overflow-hidden bg-canvas select-none ${cursor}`}
       role="region"
       aria-label={t('canvas.label')}
       data-testid="canvas-container"
@@ -34,19 +42,16 @@ export function CanvasStage() {
           scaleY={viewport.scale}
           x={viewport.x}
           y={viewport.y}
+          listening={false}
         >
-          {STAGE_LAYERS.map((name) => (
-            <Layer key={name} name={name} listening={!NON_INTERACTIVE_LAYERS.has(name)} />
-          ))}
+          <BackgroundLayer background={background} scale={viewport.scale} pixelRatio={pixelRatio} />
+          <Layer name="content">
+            {CONTENT_GROUPS.map((tier) => (
+              <Group key={tier} name={tier} />
+            ))}
+          </Layer>
+          <Layer name="overlay" />
         </Stage>
-      )}
-      {!hasPlan && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-8">
-          <div className="max-w-md rounded-lg border border-slate-300 bg-white/90 p-6 text-center shadow-sm">
-            <h2 className="text-lg font-semibold text-slate-800">{t('canvas.empty.title')}</h2>
-            <p className="mt-2 text-sm text-slate-600">{t('canvas.empty.body')}</p>
-          </div>
-        </div>
       )}
     </div>
   );

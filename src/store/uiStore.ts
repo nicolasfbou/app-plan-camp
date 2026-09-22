@@ -1,7 +1,7 @@
 /** Préférences d'interface (panneaux réduits, onglet actif). Hors document et hors historique. */
 import { create } from 'zustand';
 
-export type RightTab = 'properties' | 'layers';
+export type RightTab = 'background' | 'layers' | 'properties';
 
 interface UiState {
   leftCollapsed: boolean;
@@ -15,7 +15,7 @@ interface UiState {
 export const useUiStore = create<UiState>()((set) => ({
   leftCollapsed: false,
   rightCollapsed: false,
-  rightTab: 'properties',
+  rightTab: 'background',
   toggleLeft: () => set((s) => ({ leftCollapsed: !s.leftCollapsed })),
   toggleRight: () => set((s) => ({ rightCollapsed: !s.rightCollapsed })),
   setRightTab: (rightTab) => set({ rightTab }),

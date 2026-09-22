@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
 import { t } from '@/i18n/index.ts';
 
@@ -12,12 +13,19 @@ export function PwaUpdateBanner() {
     updateServiceWorker,
   } = useRegisterSW();
 
+  // Simple information : elle disparaît d'elle-même.
+  useEffect(() => {
+    if (!offlineReady) return;
+    const timer = setTimeout(() => setOfflineReady(false), 6000);
+    return () => clearTimeout(timer);
+  }, [offlineReady, setOfflineReady]);
+
   if (!needRefresh && !offlineReady) return null;
 
   return (
     <div
       role="status"
-      className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-md bg-slate-900 px-4 py-2 text-sm text-white shadow-lg"
+      className="fixed bottom-4 left-4 z-50 flex max-w-sm items-center gap-3 rounded-md bg-slate-900 px-4 py-2 text-sm text-white shadow-lg"
     >
       <span>{needRefresh ? t('pwa.updateAvailable') : t('pwa.offlineReady')}</span>
       {needRefresh && (

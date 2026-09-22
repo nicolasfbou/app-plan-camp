@@ -40,3 +40,14 @@ export function createPlanDocument(params: { siteId: string; name: string; kind?
     objects: {},
   };
 }
+
+/**
+ * Copie d'un plan dans le même camp : nouvel identifiant et nouvelles dates. Les objets et
+ * calques sont copiés ; la photo d'origine est partagée (même fichier, même empreinte).
+ */
+export function duplicatePlanDocument(doc: PlanDocument, name: string): PlanDocument {
+  const now = nowIso();
+  const copy = structuredClone(doc);
+  copy.plan = { ...copy.plan, id: newId(), name, createdAt: now, updatedAt: now };
+  return copy;
+}

@@ -3,6 +3,7 @@ import { newId } from '@/domain/model/factories.ts';
 import type { PlanDocument, PlanKind, Site } from '@/domain/model/types.ts';
 import { sha256Hex } from '@/domain/image/hash.ts';
 import { parsePlanDocument } from '@/domain/schema/serialization.ts';
+import type { ViewCenter } from '@/domain/viewport/viewport.ts';
 import type { PlanSummary, ProjectRepository, StoredBlob } from './ProjectRepository.ts';
 
 /**
@@ -22,10 +23,15 @@ interface PlanRecord {
   document: unknown;
 }
 
+interface ViewPrefsRecord extends ViewCenter {
+  planId: string;
+}
+
 class CampPlannerDatabase extends Dexie {
   sites!: Table<Site, string>;
   plans!: Table<PlanRecord, string>;
   blobs!: Table<StoredBlob, string>;
+  viewPrefs!: Table<ViewPrefsRecord, string>;
 
   constructor(name: string) {
     super(name);
@@ -34,6 +40,7 @@ class CampPlannerDatabase extends Dexie {
       plans: 'id, siteId, updatedAt, *blobIds',
       blobs: 'id',
     });
+    this.version(2).stores({ viewPrefs: 'planId' });
   }
 }
 
@@ -68,11 +75,15 @@ export class IndexedDbRepository implements ProjectRepository {
   }
 
   async deleteSite(id: string): Promise<void> {
-    await this.db.transaction('rw', this.db.sites, this.db.plans, this.db.blobs, async () => {
-      const planIds = (await this.db.plans.where('siteId').equals(id).primaryKeys()) as string[];
-      for (const planId of planIds) await this.deletePlan(planId);
-      await this.db.sites.delete(id);
-    });
+    await this.db.transaction(
+      'rw',
+      [this.db.sites, this.db.plans, this.db.blobs, this.db.viewPrefs],
+      async () => {
+        const planIds = (await this.db.plans.where('siteId').equals(id).primaryKeys()) as string[];
+        for (const planId of planIds) await this.deletePlan(planId);
+        await this.db.sites.delete(id);
+      },
+    );
   }
 
   async listPlans(siteId: string): Promise<PlanSummary[]> {
@@ -100,10 +111,11 @@ export class IndexedDbRepository implements ProjectRepository {
   }
 
   async deletePlan(id: string): Promise<void> {
-    await this.db.transaction('rw', this.db.plans, this.db.blobs, async () => {
+    await this.db.transaction('rw', this.db.plans, this.db.blobs, this.db.viewPrefs, async () => {
       const record = await this.db.plans.get(id);
       if (!record) return;
       await this.db.plans.delete(id);
+      await this.db.viewPrefs.delete(id);
       // Un fichier peut être partagé par plusieurs plans (duplication) : on ne supprime
       // que ceux qui ne sont plus référencés par aucun plan restant.
       for (const blobId of record.blobIds) {
@@ -121,5 +133,30 @@ export class IndexedDbRepository implements ProjectRepository {
 
   async getBlob(id: string): Promise<StoredBlob | undefined> {
     return this.db.blobs.get(id);
+  }
+
+  async deleteOrphanBlobs(): Promise<number> {
+    return this.db.transaction('rw', this.db.plans, this.db.blobs, async () => {
+      const ids = (await this.db.blobs.toCollection().primaryKeys()) as string[];
+      let deleted = 0;
+      for (const id of ids) {
+        if ((await this.db.plans.where('blobIds').equals(id).count()) === 0) {
+          await this.db.blobs.delete(id);
+          deleted++;
+        }
+      }
+      return deleted;
+    });
+  }
+
+  async getViewPrefs(planId: string): Promise<ViewCenter | undefined> {
+    const record = await this.db.viewPrefs.get(planId);
+    if (!record) return undefined;
+    const { centerX, centerY, scale } = record;
+    return { centerX, centerY, scale };
+  }
+
+  async saveViewPrefs(planId: string, view: ViewCenter): Promise<void> {
+    await this.db.viewPrefs.put({ planId, ...view });
   }
 }

@@ -209,12 +209,20 @@ export const baseImageRefSchema = z.object({
   height: z.number().int().positive(),
   /** Orientation EXIF lue dans le fichier (1 = aucune). Appliquée à l'affichage seulement. */
   exifOrientation: z.number().int().min(1).max(8),
+  importedAt: isoDateSchema,
   source: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('image') }),
     z.object({
       kind: z.literal('pdf'),
-      /** PDF d'origine, conservé tel quel. L'image rastérisée en est un dérivé. */
+      /**
+       * PDF d'origine, conservé tel quel. L'image de fond (`blobId`) est un PNG sans perte rendu
+       * depuis ce PDF à `dpi` : elle peut être régénérée à tout moment depuis l'original.
+       */
       pdfBlobId: idSchema,
+      pdfFileName: z.string(),
+      pdfByteLength: z.number().int().nonnegative(),
+      pdfSha256: z.string().regex(/^[0-9a-f]{64}$/),
+      pageCount: z.number().int().positive(),
       page: z.number().int().positive(),
       dpi: z.number().positive(),
     }),
