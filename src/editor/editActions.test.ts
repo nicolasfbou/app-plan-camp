@@ -116,3 +116,80 @@ describe('commandes d’édition', () => {
     expect(doc().objects[text.id]).toMatchObject({ type: 'text', fontSize: 44 });
   });
 });
+
+describe('corrections de la revue', () => {
+  it('aucun objet créé dans un calque masqué ou verrouillé : refus avec message', () => {
+    const zonesLayer = doc().layers.find((l) => l.tier === 'zones')!;
+    planStore
+      .getState()
+      .update('lock', (d) => void (d.layers.find((l) => l.id === zonesLayer.id)!.locked = true));
+    const other = createAreaObject(
+      doc(),
+      { kind: 'rect', x: 0, y: 0, width: 10, height: 10, cornerRadius: 0 },
+      'zone.waste',
+    );
+    expect(editActions.create(other, 'Créer')).toBe(false);
+    expect(doc().objects[other.id]).toBeUndefined();
+    expect(useEditorStore.getState().notice).toMatch(/masqué ou verrouillé/);
+  });
+
+  it('dupliquer / coller vers un calque masqué : refusé', () => {
+    const zonesLayer = doc().layers.find((l) => l.tier === 'zones')!;
+    editActions.copySelected();
+    planStore
+      .getState()
+      .update('hide', (d) => void (d.layers.find((l) => l.id === zonesLayer.id)!.visible = false));
+    editActions.duplicateSelected();
+    editActions.paste();
+    expect(objects()).toHaveLength(1);
+  });
+
+  it('changer de calque : placé au-dessus des objets du nouveau calque ; calque verrouillé refusé', () => {
+    const buildings = doc().layers.find((l) => l.tier === 'buildings')!;
+    const b = createAreaObject(
+      doc(),
+      { kind: 'rect', x: 0, y: 0, width: 5, height: 5, cornerRadius: 0 },
+      'building.office',
+    );
+    editActions.create(b, 'Créer');
+    editActions.replace({ ...doc().objects[rect.id]!, layerId: buildings.id }, 'Changer de calque');
+    expect(doc().objects[rect.id]).toMatchObject({ layerId: buildings.id, zIndex: 1 });
+    const texts = doc().layers.find((l) => l.tier === 'texts')!;
+    planStore.getState().update('lock', (d) => void (d.layers.find((l) => l.id === texts.id)!.locked = true));
+    editActions.replace({ ...doc().objects[rect.id]!, layerId: texts.id }, 'Changer de calque');
+    expect(doc().objects[rect.id]!.layerId).toBe(buildings.id);
+  });
+
+  it('un 2e doigt annule le geste en cours : forme en cours effacée, glisser de sommet annulé, aucune action', () => {
+    const poly = createAreaObject(
+      doc(),
+      {
+        kind: 'polygon',
+        points: [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+          { x: 0, y: 10 },
+        ],
+      },
+      'zone.snow',
+    );
+    editActions.create(poly, 'Créer');
+    const before = planStore.getState().past.length;
+    editActions.beginVertexDrag();
+    editActions.moveVertex(poly.id, 0, { x: -50, y: -50 });
+    useEditorStore
+      .getState()
+      .setDraft({ kind: 'box', tool: 'rect', start: { x: 0, y: 0 }, end: { x: 5, y: 5 } });
+    let stopped = 0;
+    const fakeStage = { find: () => [{ isDragging: () => true, stopDrag: () => void stopped++ }] };
+    editActions.cancelActiveGesture(fakeStage);
+    editActions.endVertexDrag();
+    expect(stopped).toBe(1);
+    expect(useEditorStore.getState().draft).toBeNull();
+    expect(planStore.getState().past.length).toBe(before);
+    expect((doc().objects[poly.id]!.geometry as { points: { x: number }[] }).points[0]).toEqual({
+      x: 0,
+      y: 0,
+    });
+  });
+});

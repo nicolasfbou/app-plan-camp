@@ -140,7 +140,9 @@ export function createPlanStore() {
       },
 
       undo() {
-        get().commitTransaction();
+        // Pendant un geste (glisser un sommet…), Annuler / Rétablir sont ignorés : sinon la suite
+        // du geste produirait une action d'historique par mouvement de souris.
+        if (get().pending) return;
         const { past, future, doc, revision } = get();
         const entry = past.at(-1);
         if (!entry || !doc) return;
@@ -153,7 +155,9 @@ export function createPlanStore() {
       },
 
       redo() {
-        get().commitTransaction();
+        // Pendant un geste (glisser un sommet…), Annuler / Rétablir sont ignorés : sinon la suite
+        // du geste produirait une action d'historique par mouvement de souris.
+        if (get().pending) return;
         const { past, future, doc, revision } = get();
         const entry = future.at(-1);
         if (!entry || !doc) return;
@@ -179,7 +183,7 @@ export function usePlanStore<T>(selector: (state: PlanState) => T): T {
   return useStore(planStore, selector);
 }
 
-export const selectCanUndo = (s: PlanState) => s.past.length > 0 || s.pending !== null;
-export const selectCanRedo = (s: PlanState) => s.future.length > 0;
+export const selectCanUndo = (s: PlanState) => s.past.length > 0 && s.pending === null;
+export const selectCanRedo = (s: PlanState) => s.future.length > 0 && s.pending === null;
 export const selectIsDirty = (s: PlanState) =>
   s.doc !== null && (s.revision !== s.savedRevision || s.pending !== null);

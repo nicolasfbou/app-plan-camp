@@ -349,3 +349,33 @@ test('le canevas ne vole jamais les touches d’un champ : R, Suppr et flèches 
   await page.getByRole('button', { name: /Annuler \(Ctrl\+Z\)/ }).click();
   await expect(name).toHaveValue('Zone personnalisée');
 });
+
+test('champ numérique : virgule décimale acceptée, champ vidé ignoré (jamais remis à 0)', async ({
+  page,
+}) => {
+  await page.keyboard.press('r');
+  await dragOnCanvas(page, [300, 300], [450, 400]);
+  const x = page.getByLabel('X', { exact: true });
+  await x.fill('12,5');
+  await x.press('Enter');
+  await expect(x).toHaveValue('12.5');
+  await x.fill('');
+  await x.press('Tab');
+  await expect(x).toHaveValue('12.5');
+  const rotation = page.getByLabel('Rotation (°)');
+  await rotation.fill('45');
+  await rotation.press('Enter');
+  await rotation.fill('');
+  await rotation.press('Tab');
+  await expect(rotation).toHaveValue('45');
+});
+
+test('dessiner dans un calque masqué est refusé avec un message clair', async ({ page }) => {
+  await page.getByRole('tab', { name: 'Calques' }).click();
+  await page.getByRole('button', { name: 'Masquer le calque Zones' }).click();
+  await page.keyboard.press('r');
+  await dragOnCanvas(page, [300, 300], [450, 400]);
+  await expect(page.getByTestId('notice')).toContainText('masqué ou verrouillé');
+  expect(await planNodes(page)).toHaveLength(0);
+  expect(Object.keys(await storedObjects(page))).toHaveLength(0);
+});

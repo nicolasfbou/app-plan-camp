@@ -32,6 +32,14 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   );
 }
 
+/** Contrôle d'interface ayant le focus (bouton, onglet, choix…), hors champs de saisie. */
+function isControlTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    target.closest('button, a, [role="radio"], [role="tab"], [role="slider"]') !== null
+  );
+}
+
 export function useEditorShortcuts(): void {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -42,14 +50,16 @@ export function useEditorShortcuts(): void {
       const key = e.key.toLowerCase();
 
       if (mod && !e.shiftKey && !e.altKey) {
-        const actions: Record<string, () => void> = {
-          c: editActions.copySelected,
-          v: editActions.paste,
-          d: editActions.duplicateSelected,
+        // Le raccourci n'est intercepté que s'il agit : sinon la copie native du navigateur reste possible.
+        const actions: Record<string, { enabled: boolean; run(): void }> = {
+          c: { enabled: editor.selectedId !== null, run: editActions.copySelected },
+          v: { enabled: editor.clipboard !== null, run: editActions.paste },
+          d: { enabled: editor.selectedId !== null, run: editActions.duplicateSelected },
         };
-        if (actions[key]) {
+        const action = actions[key];
+        if (action?.enabled) {
           e.preventDefault();
-          actions[key]();
+          action.run();
         }
         return;
       }
@@ -83,7 +93,8 @@ export function useEditorShortcuts(): void {
         case 'ArrowRight':
         case 'ArrowUp':
         case 'ArrowDown': {
-          if (!editor.selectedId) return;
+          // Sur un bouton, un onglet ou une liste de choix, les flèches gardent leur rôle de navigation.
+          if (!editor.selectedId || isControlTarget(e.target)) return;
           e.preventDefault();
           const step = e.shiftKey ? 10 : 1;
           const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;

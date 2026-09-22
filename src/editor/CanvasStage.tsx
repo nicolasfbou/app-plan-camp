@@ -1,10 +1,11 @@
 import Konva from 'konva';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Stage } from 'react-konva';
 import { t } from '@/i18n/index.ts';
 import { useEditorStore } from '@/store/editorStore.ts';
 import { useViewportStore } from '@/store/viewportStore.ts';
 import { BackgroundLayer } from './BackgroundLayer.tsx';
+import { editActions } from './editActions.ts';
 import { ObjectsLayer } from './objects/ObjectsLayer.tsx';
 import { SelectionLayer } from './SelectionLayer.tsx';
 import { useCanvasNavigation } from './useCanvasNavigation.ts';
@@ -31,7 +32,10 @@ export function CanvasStage() {
   const ready = background !== null && size.width > 0;
 
   useEffect(() => setStageSize(size), [size, setStageSize]);
-  useCanvasNavigation(containerRef, background !== null);
+  const cancelGesture = useCallback(() => editActions.cancelActiveGesture(stageRef.current), []);
+  useCanvasNavigation(containerRef, background !== null, cancelGesture);
+  // Palier de zoom (puissance de 2) : la couche des objets ne se recalcule qu'en changeant de palier.
+  const scaleBucket = 2 ** Math.round(Math.log2(Math.max(viewport.scale, 1e-6)));
   useDrawingTools(stageRef, ready);
 
   const cursor = !background
@@ -64,7 +68,7 @@ export function CanvasStage() {
           y={viewport.y}
         >
           <BackgroundLayer background={background} scale={viewport.scale} pixelRatio={pixelRatio} />
-          <ObjectsLayer scale={viewport.scale} />
+          <ObjectsLayer scaleBucket={scaleBucket} />
           <SelectionLayer scale={viewport.scale} />
         </Stage>
       )}

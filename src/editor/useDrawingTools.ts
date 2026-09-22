@@ -133,8 +133,9 @@ export function useDrawingTools(stageRef: RefObject<Konva.Stage | null>, enabled
         });
         // Empêche le clic de retirer le focus du champ de saisie qui va s'ouvrir.
         e.evt.preventDefault();
-        editActions.create(object, drawing === 'label' ? 'Créer une étiquette' : 'Créer un texte');
-        setTimeout(() => useEditorStore.getState().setEditingText(object.id), 0);
+        if (editActions.create(object, drawing === 'label' ? 'Créer une étiquette' : 'Créer un texte')) {
+          setTimeout(() => useEditorStore.getState().setEditingText(object.id), 0);
+        }
         return;
       }
 
@@ -145,9 +146,19 @@ export function useDrawingTools(stageRef: RefObject<Konva.Stage | null>, enabled
           if (d?.kind === 'box')
             editor.setDraft({ ...d, end: constrain(d.start, imagePoint(element, ev), ev.shiftKey) });
         };
-        const onUp = (ev: PointerEvent) => {
+        const detach = () => {
           window.removeEventListener('pointermove', onMove);
           window.removeEventListener('pointerup', onUp);
+          window.removeEventListener('pointercancel', onCancel);
+        };
+        // Geste interrompu par le système : rien n'est créé.
+        const onCancel = () => {
+          detach();
+          useEditorStore.getState().setDraft(null);
+        };
+        // Si la forme a été annulée entre-temps (2e doigt, Échap), le brouillon est vide : rien n'est créé.
+        const onUp = (ev: PointerEvent) => {
+          detach();
           const d = useEditorStore.getState().draft;
           useEditorStore.getState().setDraft(null);
           if (d?.kind === 'box')
@@ -155,6 +166,7 @@ export function useDrawingTools(stageRef: RefObject<Konva.Stage | null>, enabled
         };
         window.addEventListener('pointermove', onMove);
         window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onCancel);
         return;
       }
 
@@ -174,8 +186,14 @@ export function useDrawingTools(stageRef: RefObject<Konva.Stage | null>, enabled
       editor.setDraft({ kind: 'path', tool: drawing, points: [at], cursor: at });
       if (drawing === 'line') {
         // Cliquer-glisser : la ligne est créée au relâchement si on a glissé.
+        const onCancel = () => {
+          window.removeEventListener('pointerup', onUp);
+          window.removeEventListener('pointercancel', onCancel);
+          useEditorStore.getState().setDraft(null);
+        };
         const onUp = (ev: PointerEvent) => {
           window.removeEventListener('pointerup', onUp);
+          window.removeEventListener('pointercancel', onCancel);
           const end = imagePoint(element, ev);
           const d = useEditorStore.getState().draft;
           if (d?.kind === 'path' && d.tool === 'line' && screenDistance(end, at) > MIN_DRAG_PX) {
@@ -184,6 +202,7 @@ export function useDrawingTools(stageRef: RefObject<Konva.Stage | null>, enabled
           }
         };
         window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onCancel);
       }
     };
 

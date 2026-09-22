@@ -26,7 +26,12 @@ function spaceMeansPan(target: EventTarget | null, element: HTMLElement): boolea
   return target === document.body || target === element || element.contains(target);
 }
 
-export function useCanvasNavigation(containerRef: RefObject<HTMLElement | null>, enabled: boolean): void {
+export function useCanvasNavigation(
+  containerRef: RefObject<HTMLElement | null>,
+  enabled: boolean,
+  /** Appelé quand un 2e doigt transforme le geste en pincement (annule le geste du 1er doigt). */
+  onTakeover?: () => void,
+): void {
   useEffect(() => {
     const element = containerRef.current;
     if (!element || !enabled) return;
@@ -91,7 +96,9 @@ export function useCanvasNavigation(containerRef: RefObject<HTMLElement | null>,
       if (e.pointerType === 'touch') {
         touches.set(e.pointerId, local(e));
         if (touches.size >= 2) {
-          // Deuxième doigt : on bascule en pincement avec les deux doigts.
+          // Deuxième doigt : on bascule en pincement avec les deux doigts, et ce que le premier
+          // doigt avait commencé (glisser d'objet, forme en cours) est annulé.
+          onTakeover?.();
           for (const [id, point] of touches) pointers.set(id, point);
           return startPan(e);
         }
@@ -162,5 +169,5 @@ export function useCanvasNavigation(containerRef: RefObject<HTMLElement | null>,
       window.removeEventListener('blur', onBlur);
       useEditorStore.getState().setPanning(false);
     };
-  }, [containerRef, enabled]);
+  }, [containerRef, enabled, onTakeover]);
 }

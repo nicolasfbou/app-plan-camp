@@ -35,6 +35,8 @@ export interface ProjectRepository {
   /** Charge, migre et valide un plan. Lève `ProjectFormatError` si les données sont corrompues. */
   loadPlan(id: string): Promise<PlanDocument | undefined>;
   savePlan(doc: PlanDocument): Promise<void>;
+  /** Date (ms) de la dernière écriture du plan, pour comparer avec un journal de récupération. */
+  getPlanSavedAt(id: string): Promise<number | undefined>;
   deletePlan(id: string): Promise<void>;
 
   /** Stocke des octets tels quels et retourne leur empreinte. */

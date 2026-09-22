@@ -8,7 +8,7 @@
  */
 import { translateGeometry } from './geometry.ts';
 import { newId, nowIso } from './factories.ts';
-import { topZIndex } from './objectFactory.ts';
+import { isLayerUsable, layerForTier, tierForType, topZIndex } from './objectFactory.ts';
 import type { Layer, PlanDocument, PlanObject } from './types.ts';
 
 export function addObject(doc: PlanDocument, object: PlanObject): void {
@@ -69,15 +69,32 @@ export function replaceObject(doc: PlanDocument, next: PlanObject, now = nowIso(
       JSON.stringify({ ...next, locked: 0, visible: 0, updatedAt: 0 });
     if (!onlyLockOrVisibility) return false;
   }
-  if (next.layerId !== current.layerId && !doc.layers.some((l) => l.id === next.layerId)) return false;
-  doc.objects[next.id] = { ...next, updatedAt: now };
+  let zIndex = next.zIndex;
+  if (next.layerId !== current.layerId) {
+    // Changement de calque : seulement vers un calque visible et déverrouillé, et au-dessus de ses objets.
+    const target = doc.layers.find((l) => l.id === next.layerId);
+    if (!target || !isLayerUsable(target)) return false;
+    zIndex = topZIndex(doc, target.id);
+  }
+  doc.objects[next.id] = { ...next, zIndex, updatedAt: now };
   doc.plan.updatedAt = now;
   return true;
 }
 
 /**
+ * Calque qui recevra la copie d'un objet : son calque d'origine s'il existe dans ce plan, sinon le
+ * calque du niveau naturel de son type. `null` si ce calque est masqué ou verrouillé.
+ */
+export function copyTargetLayer(doc: PlanDocument, source: PlanObject): Layer | null {
+  const layer =
+    doc.layers.find((l) => l.id === source.layerId) ?? layerForTier(doc, tierForType(source.type));
+  return isLayerUsable(layer) ? layer : null;
+}
+
+/**
  * Copie d'un objet (duplication ou collage) : nouvel identifiant, décalée de (dx, dy),
- * déverrouillée, placée au-dessus des objets de son calque. Retourne la copie ajoutée.
+ * déverrouillée, placée au-dessus des objets de son calque. Retourne la copie ajoutée, ou `null`
+ * si le calque cible est masqué ou verrouillé (rien n'est alors créé).
  */
 export function insertCopy(
   doc: PlanDocument,
@@ -85,8 +102,10 @@ export function insertCopy(
   dx: number,
   dy: number,
   now = nowIso(),
-): PlanObject {
-  const layerId = doc.layers.some((l) => l.id === source.layerId) ? source.layerId : doc.layers.at(-1)!.id;
+): PlanObject | null {
+  const target = copyTargetLayer(doc, source);
+  if (!target) return null;
+  const layerId = target.id;
   const copy = {
     ...structuredClone(source),
     id: newId(),

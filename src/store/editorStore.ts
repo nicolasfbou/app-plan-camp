@@ -48,6 +48,9 @@ interface EditorState {
   pasteCount: number;
   spaceHeld: boolean;
   isPanning: boolean;
+  /** Message bref à l'utilisateur (action refusée, etc.). */
+  notice: string | null;
+  notify(message: string | null): void;
   setBackground(status: BackgroundStatus): void;
   setTool(tool: Tool): void;
   setPreset(presetId: string): void;
@@ -74,6 +77,8 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   pasteCount: 0,
   spaceHeld: false,
   isPanning: false,
+  notice: null,
+  notify: (notice) => set({ notice }),
   setBackground(status) {
     const previous = get().background;
     if (previous.kind === 'ready' && (status.kind !== 'ready' || status.background !== previous.background)) {

@@ -64,6 +64,10 @@ export const ObjectNode = memo(function ObjectNode({
     onDblClick: () => onDoubleClick(object),
     onDblTap: () => onDoubleClick(object),
     onDragEnd: (e: Konva.KonvaEventObject<DragEvent>) => {
+      if (editActions.isGestureCancelled()) {
+        e.target.position(center); // geste annulé : l'objet revient à sa position enregistrée
+        return;
+      }
       editActions.commitNodeTransform(object.id, transformOf(e.target), 'Déplacer');
     },
     onTransformEnd: (e: Konva.KonvaEventObject<Event>) => {
@@ -71,6 +75,11 @@ export const ObjectNode = memo(function ObjectNode({
       const t = transformOf(node);
       // Le modèle reçoit l'échelle intégrée ; le nœud revient à l'échelle 1.
       node.scale({ x: 1, y: 1 });
+      if (editActions.isGestureCancelled()) {
+        node.position(center);
+        node.rotation(object.rotation);
+        return;
+      }
       editActions.commitNodeTransform(object.id, t, 'Transformer');
     },
   };

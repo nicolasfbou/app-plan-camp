@@ -6,7 +6,12 @@ import { useEffect, useState } from 'react';
 import { repository } from '@/app/repository.ts';
 import { t } from '@/i18n/index.ts';
 import { startAutosave } from '@/persistence/autosave.ts';
-import { clearRecovery, readRecovery, writeRecovery } from '@/persistence/recovery.ts';
+import {
+  clearRecovery,
+  clearRecoveryIfCovered,
+  readRecovery,
+  writeRecovery,
+} from '@/persistence/recovery.ts';
 import { planStore, selectIsDirty } from '@/store/planStore.ts';
 
 export type SessionState = { status: 'loading' } | { status: 'ready' } | { status: 'error'; message: string };
@@ -20,9 +25,11 @@ export function usePlanSession(planId: string) {
     let cancelled = false;
     (async () => {
       // Journal de récupération : modifications non encore écrites lors d'une fermeture brutale.
+      // Appliqué seulement s'il est plus récent que la dernière sauvegarde IndexedDB.
       const recovered = readRecovery(planId);
       if (recovered) {
-        await repository.savePlan(recovered);
+        const savedAt = await repository.getPlanSavedAt(planId);
+        if (savedAt === undefined || recovered.writtenAt > savedAt) await repository.savePlan(recovered.doc);
         clearRecovery(planId);
       }
       return repository.loadPlan(planId);
@@ -43,8 +50,9 @@ export function usePlanSession(planId: string) {
     const autosave = startAutosave({
       store: planStore,
       save: async (doc) => {
+        const startedAt = Date.now();
         await repository.savePlan(doc);
-        clearRecovery(doc.plan.id);
+        clearRecoveryIfCovered(doc.plan.id, startedAt);
         setSaveError(null);
       },
       onError: (error) => setSaveError(error instanceof Error ? error.message : String(error)),

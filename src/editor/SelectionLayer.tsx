@@ -18,6 +18,8 @@ export function SelectionLayer({ scale }: { scale: number }) {
   const vertexEditing = useEditorStore((s) => s.vertexEditing);
   const editingTextId = useEditorStore((s) => s.editingTextId);
   const draft = useEditorStore((s) => s.draft);
+  // Hors de l'outil Sélection, le cadre de transformation est retiré (pas de conflit avec le dessin).
+  const selectTool = useEditorStore((s) => s.tool === 'select');
   const object = usePlanStore((s) => (selectedId ? s.doc?.objects[selectedId] : undefined));
   const editable = usePlanStore((s) => (object && s.doc ? isEditable(s.doc, object) : false));
   const displayed = usePlanStore((s) => (object && s.doc ? isDisplayed(s.doc, object) : false));
@@ -32,12 +34,12 @@ export function SelectionLayer({ scale }: { scale: number }) {
     const tr = transformer.current;
     if (!tr) return;
     const node =
-      selectedId && displayed && !showVertices && editingTextId !== selectedId
+      selectTool && selectedId && displayed && !showVertices && editingTextId !== selectedId
         ? tr.getStage()?.findOne(`#${selectedId}`)
         : null;
     tr.nodes(node ? [node] : []);
     tr.getLayer()?.batchDraw();
-  }, [selectedId, object, displayed, showVertices, editingTextId]);
+  }, [selectedId, object, displayed, showVertices, editingTextId, selectTool]);
 
   const isText = object?.type === 'text';
 

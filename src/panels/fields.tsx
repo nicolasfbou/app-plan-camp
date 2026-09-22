@@ -1,5 +1,5 @@
 /** Contrôles de formulaire compacts du panneau de propriétés. */
-import { type ReactNode, useId, useState } from 'react';
+import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { t } from '@/i18n/index.ts';
 import { QUICK_COLORS } from './quickColors.ts';
 
@@ -90,12 +90,29 @@ export function NumberField({
   // Saisie en cours (null = on affiche la valeur actuelle de l'objet).
   const [draft, setDraft] = useState<string | null>(null);
   const text = draft ?? String(shown);
+
+  /** Valeur saisie, ou null si vide / invalide / hors limites (la saisie est alors ignorée). */
+  const parse = (raw: string): number | null => {
+    const cleaned = raw.trim().replace(/\s/g, '').replace(',', '.');
+    if (cleaned === '' || cleaned === '-' || cleaned === '.') return null;
+    const parsed = Number(cleaned);
+    if (!Number.isFinite(parsed) || (min !== undefined && parsed < min)) return null;
+    return parsed;
+  };
   const commit = () => {
     setDraft(null);
-    const parsed = Number(text.replace(',', '.'));
-    if (!Number.isFinite(parsed) || (min !== undefined && parsed < min)) return;
-    if (parsed !== shown) onCommit(parsed);
+    const parsed = draft === null ? null : parse(draft);
+    if (parsed !== null && parsed !== shown) onCommit(parsed);
   };
+
+  // Si le champ disparaît pendant la saisie (ex. clic sur un autre objet du plan), la valeur
+  // tapée est quand même appliquée à l'objet édité, au lieu d'être perdue en silence.
+  const pending = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    pending.current = draft === null ? null : commit;
+  });
+  useEffect(() => () => pending.current?.(), []);
+
   return (
     <div>
       <label htmlFor={id} className="mb-0.5 block text-xs text-slate-600">
@@ -103,10 +120,9 @@ export function NumberField({
       </label>
       <input
         id={id}
-        type="number"
+        // type « text » : un champ number du navigateur rejette la virgule décimale française.
+        type="text"
         inputMode="decimal"
-        step={step}
-        min={min}
         value={text}
         disabled={disabled}
         onChange={(e) => setDraft(e.target.value)}
@@ -114,6 +130,15 @@ export function NumberField({
         onKeyDown={(e) => {
           if (e.key === 'Enter') commit();
           if (e.key === 'Escape') setDraft(null);
+          if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            e.preventDefault();
+            const base = parse(text) ?? shown;
+            const next = base + (e.key === 'ArrowUp' ? step : -step);
+            if (min === undefined || next >= min) {
+              setDraft(null);
+              onCommit(Number(next.toFixed(digits)));
+            }
+          }
         }}
         className={inputClass}
       />

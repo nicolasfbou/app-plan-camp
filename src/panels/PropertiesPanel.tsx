@@ -69,7 +69,10 @@ function ObjectProperties({ object, doc }: { object: PlanObject; doc: PlanDocume
           label={t('props.layer')}
           value={object.layerId}
           disabled={disabled}
-          options={[...doc.layers].reverse().map((l) => ({ value: l.id, label: l.name }))}
+          options={[...doc.layers]
+            .reverse()
+            .filter((l) => l.id === object.layerId || (l.visible && !l.locked))
+            .map((l) => ({ value: l.id, label: l.name }))}
           onChange={(layerId) => set({ ...object, layerId }, 'Changer de calque')}
         />
       </Row>

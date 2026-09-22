@@ -19,6 +19,8 @@ interface PlanRecord {
   updatedAt: string;
   /** Fichiers binaires référencés (photo d'origine, PDF d'origine). */
   blobIds: string[];
+  /** Date (ms) de l'écriture de cet enregistrement. */
+  savedAt?: number;
   /** Document brut : relu via `parsePlanDocument`, donc migré et validé à chaque chargement. */
   document: unknown;
 }
@@ -106,8 +108,13 @@ export class IndexedDbRepository implements ProjectRepository {
       kind: doc.plan.kind,
       updatedAt: doc.plan.updatedAt,
       blobIds: blobIdsOf(doc),
+      savedAt: Date.now(),
       document: doc,
     });
+  }
+
+  async getPlanSavedAt(id: string): Promise<number | undefined> {
+    return (await this.db.plans.get(id))?.savedAt;
   }
 
   async deletePlan(id: string): Promise<void> {

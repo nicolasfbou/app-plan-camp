@@ -6,6 +6,7 @@ import { TopBar } from '@/app/TopBar.tsx';
 import { CanvasStage } from '@/editor/CanvasStage.tsx';
 import { ImportDialog } from '@/editor/ImportDialog.tsx';
 import { NavigationControls } from '@/editor/NavigationControls.tsx';
+import { NoticeBanner } from '@/editor/NoticeBanner.tsx';
 import { TextEditorOverlay } from '@/editor/TextEditorOverlay.tsx';
 import { useEditorShortcuts } from '@/editor/useEditorShortcuts.ts';
 import { useUiStore } from '@/store/uiStore.ts';
@@ -70,6 +71,18 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
   useNavigationShortcuts();
   useEditorShortcuts();
 
+  // Un objet disparu (annulation de sa création, suppression) ne reste ni sélectionné ni en édition.
+  useEffect(
+    () =>
+      planStore.subscribe((state) => {
+        const editor = useEditorStore.getState();
+        const objects = state.doc?.objects ?? {};
+        if (editor.selectedId && !objects[editor.selectedId]) editor.select(null);
+        if (editor.editingTextId && !objects[editor.editingTextId]) editor.setEditingText(null);
+      }),
+    [],
+  );
+
   // Sélectionner un objet affiche ses propriétés.
   useEffect(
     () =>
@@ -105,6 +118,7 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
           <CanvasStage />
           {background.kind === 'ready' && <NavigationControls />}
           <TextEditorOverlay />
+          <NoticeBanner />
           {state.status === 'ready' && !hasBaseImage && (
             <div className="absolute inset-0 flex items-center justify-center p-8">
               <div className="max-w-md rounded-lg border border-slate-300 bg-white p-6 text-center shadow-sm">

@@ -100,6 +100,10 @@ export const fr = {
 
   'text.editor': 'Texte de l’objet',
 
+  'notice.layerUnusable':
+    'Le calque « {name} » est masqué ou verrouillé : affichez-le et déverrouillez-le (onglet Calques) pour y ajouter des objets.',
+  'notice.close': 'Fermer le message',
+
   'props.title': 'Propriétés',
   'props.name': 'Nom',
   'props.type': 'Type',

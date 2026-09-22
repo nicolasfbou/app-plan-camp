@@ -99,7 +99,7 @@ describe('z-index à l’intérieur du calque', () => {
 describe('copie, duplication, suppression', () => {
   it('insertCopy : nouvel identifiant, décalée, au-dessus, déverrouillée', () => {
     doc.objects[a.id]!.locked = true;
-    const copy = insertCopy(doc, doc.objects[a.id]!, 16, 16);
+    const copy = insertCopy(doc, doc.objects[a.id]!, 16, 16)!;
     expect(copy.id).not.toBe(a.id);
     expect(copy.geometry).toMatchObject({ x: 16, y: 16 });
     expect(copy.locked).toBe(false);

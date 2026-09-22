@@ -98,14 +98,20 @@ describe('interaction continue = une seule action', () => {
     expect(state().past).toHaveLength(pastBefore);
   });
 
-  it('Ctrl+Z pendant un geste valide d’abord le geste puis l’annule', () => {
+  it('Ctrl+Z pendant un geste est ignoré : le geste reste une seule action', () => {
     const zone = makeZone(zonesLayer, 0, 0);
     state().update('ajout', (d) => addObject(d, zone));
+    const before = state().past.length;
     state().beginTransaction('Déplacer');
     state().update('drag', (d) => moveObject(d, zone.id, 50, 0));
     state().undo();
-    expect(geometryOf(zone.id)).toMatchObject({ x: 0, y: 0 });
-    expect(state().pending).toBeNull();
+    expect(state().pending).not.toBeNull();
+    for (let i = 0; i < 20; i++) state().update('drag', (d) => moveObject(d, zone.id, 1, 0));
+    state().commitTransaction();
+    expect(state().past.length).toBe(before + 1);
+    expect(geometryOf(zone.id)).toMatchObject({ x: 70 });
+    state().undo();
+    expect(geometryOf(zone.id)).toMatchObject({ x: 0 });
   });
 
   it('une transaction plusieurs opérations (ajout + suppression) s’annule en bloc', () => {

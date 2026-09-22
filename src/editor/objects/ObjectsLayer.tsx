@@ -1,3 +1,4 @@
+import { memo, useMemo } from 'react';
 import { Group, Layer } from 'react-konva';
 import { isDisplayed, isEditable, objectsInRenderOrder } from '@/domain/model/operations.ts';
 import type { PlanObject, RenderTier } from '@/domain/model/types.ts';
@@ -23,21 +24,23 @@ const openOnDoubleClick = (object: PlanObject) => {
  * Couche physique « content » : les 6 catégories logiques, chacune dans son groupe nommé,
  * objets triés par calque puis zIndex.
  */
-export function ObjectsLayer({ scale }: { scale: number }) {
+export const ObjectsLayer = memo(function ObjectsLayer({ scaleBucket }: { scaleBucket: number }) {
   const doc = usePlanStore((s) => s.doc);
   const interactiveTool = useEditorStore((s) => s.tool === 'select');
   const editingTextId = useEditorStore((s) => s.editingTextId);
-  // Paliers de zoom (puissances de 2) : les zones de clic ne sont recalculées qu'à ces paliers.
-  const scaleBucket = 2 ** Math.round(Math.log2(Math.max(scale, 1e-6)));
 
-  const byTier = new Map<RenderTier, PlanObject[]>(CONTENT_GROUPS.map((tier) => [tier, []]));
-  const tierOfLayer = new Map(doc?.layers.map((l) => [l.id, l]) ?? []);
-  if (doc) {
-    for (const object of objectsInRenderOrder(doc)) {
-      const layer = tierOfLayer.get(object.layerId);
-      if (layer) byTier.get(layer.tier)?.push(object);
+  // Tri et répartition par catégorie recalculés seulement quand le document change.
+  const { byTier, tierOfLayer } = useMemo(() => {
+    const byTier = new Map<RenderTier, PlanObject[]>(CONTENT_GROUPS.map((tier) => [tier, []]));
+    const tierOfLayer = new Map(doc?.layers.map((l) => [l.id, l]) ?? []);
+    if (doc) {
+      for (const object of objectsInRenderOrder(doc)) {
+        const layer = tierOfLayer.get(object.layerId);
+        if (layer) byTier.get(layer.tier)?.push(object);
+      }
     }
-  }
+    return { byTier, tierOfLayer };
+  }, [doc]);
 
   return (
     <Layer name="content">
@@ -64,4 +67,4 @@ export function ObjectsLayer({ scale }: { scale: number }) {
       ))}
     </Layer>
   );
-}
+});

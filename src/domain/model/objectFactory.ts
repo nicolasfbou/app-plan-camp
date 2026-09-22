@@ -29,11 +29,35 @@ export const TEXT_STYLE: Style = {
   pattern: 'none',
 };
 
-/** Premier calque (du dessus) du niveau demandé. */
+/** Un calque accepte de nouveaux objets s'il est visible et non verrouillé. */
+export function isLayerUsable(layer: Layer): boolean {
+  return layer.visible && !layer.locked;
+}
+
+/**
+ * Calque du niveau demandé qui recevra un nouvel objet : de préférence un calque visible et
+ * déverrouillé (le plus haut). S'il n'y en a aucun, le calque du dessus du niveau est retourné ;
+ * l'appelant doit alors refuser la création (voir `isLayerUsable`).
+ */
 export function layerForTier(doc: PlanDocument, tier: RenderTier): Layer {
-  const layer = [...doc.layers].reverse().find((l) => l.tier === tier) ?? doc.layers.at(-1);
+  const ofTier = [...doc.layers].reverse().filter((l) => l.tier === tier);
+  const layer = ofTier.find(isLayerUsable) ?? ofTier[0] ?? doc.layers.at(-1);
   if (!layer) throw new Error('Le plan ne contient aucun calque.');
   return layer;
+}
+
+/** Niveau de rendu naturel d'un type d'objet (pour coller dans un autre plan). */
+export function tierForType(type: PlanObject['type']): RenderTier {
+  const tiers: Record<PlanObject['type'], RenderTier> = {
+    zone: 'zones',
+    building: 'buildings',
+    line: 'circulation',
+    flow: 'circulation',
+    corridor: 'pedestrians',
+    text: 'texts',
+    icon: 'signage',
+  };
+  return tiers[type];
 }
 
 /** zIndex placé au-dessus de tous les objets du calque. */
