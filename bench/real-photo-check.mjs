@@ -80,6 +80,16 @@ await page
   .filter({ hasText: /^Enregistré$/ })
   .waitFor({ timeout: 30_000 });
 
+// Vue d'ensemble de l'application : adapter à l'écran, dernière annotation sélectionnée.
+await page.keyboard.press('0');
+const last = await page.evaluate(() => {
+  const r = window.Konva.stages[0].find('.plan-object').at(-1).getClientRect();
+  return [r.x + r.width / 2, r.y + r.height / 2];
+});
+await page.mouse.click(box.x + last[0], box.y + last[1]);
+await page.waitForTimeout(6500); // laisse disparaître la notification « hors ligne »
+await page.screenshot({ path: `${outDir}/application.png` });
+
 const stored = await page.evaluate(
   () =>
     new Promise((resolve) => {
