@@ -1,6 +1,6 @@
 # CampPlanner — Audit technique et proposition d'architecture
 
-> Statut : **architecture approuvée**. Phase 0 (fondations) livrée, voir [`ROADMAP.md`](ROADMAP.md).
+> Statut : **architecture approuvée**. Phases 0 et 1 livrées, voir [`ROADMAP.md`](ROADMAP.md).
 >
 > Principe directeur : **PHOTO ORIGINALE INTACTE + CALQUES ÉDITABLES AU-DESSUS.**
 
@@ -17,7 +17,7 @@
 | Langue            | Interface en français, textes centralisés dans `src/i18n` pour ajouter l'anglais sans refonte.                                                                                                                                                |
 | Design            | Professionnel, industriel, lisible : sidebar foncée, grande zone de travail, panneaux clairs, accent bleu, peu de décorations. La maquette est une direction, pas une contrainte.                                                             |
 | Écran             | Gauche : outils. Centre : plan (maximum d'espace). Droite : propriétés et calques. Haut : nom, annuler/rétablir, sauvegarde, import/export. Panneaux latéraux réductibles.                                                                    |
-| Konva             | Stage en 8 couches séparées : fond, zones, bâtiments, circulation, piétons, signalisation, textes, surcouche d'interaction.                                                                                                                   |
+| Konva             | 8 catégories LOGIQUES séparées (fond, zones, bâtiments, circulation, piétons, signalisation, textes, sélection/UI), rendues sur 3 couches PHYSIQUES seulement : décision mesurée, voir §11.                                                   |
 | Coordonnées       | `coordonnées projet → transformation viewport → coordonnées écran`. Le viewport ne modifie jamais les données et n'est jamais stocké dans les objets.                                                                                         |
 | Export            | Jamais une capture d'écran : rendu hors écran avec son propre viewport, à la résolution native de la photo ou plus.                                                                                                                           |
 | Annuler/rétablir  | ≥ 100 actions. Une interaction continue (déplacer, redimensionner, pivoter, déplacer un point, modifier un chemin) = une seule action.                                                                                                        |
@@ -416,7 +416,7 @@ géoréférencement réel.
 
 ---
 
-## 10. Questions ouvertes (à valider avant la phase 0)
+## 10. Questions ouvertes (réglées avant la phase 0, voir §0)
 
 1. **Web (navigateur/PWA) ou application installée** (Windows) ? Recommandation : web/PWA d'abord.
 2. **Local uniquement en V1** (pas de comptes, pas de serveur) : est-ce acceptable ?
@@ -424,3 +424,59 @@ géoréférencement réel.
    si le tuilage est nécessaire dès la V1.
 4. **Langue** : interface en français uniquement, ou français et anglais ?
 5. Avez-vous une **charte graphique** (logo, couleurs, cartouche client type) à respecter ?
+
+---
+
+## 11. Rendu Konva : mesure et décision (phase 1)
+
+**Question :** 8 `Konva.Layer` physiques (un canvas par catégorie), ou quelques couches physiques
+contenant les 8 catégories logiques ?
+
+**Mesure** (`bench/konva-layers.mjs`) : vraie photo de drone 4896 × 3672 (18 MP), Stage 1920 × 1080,
+300 objets répartis dans les catégories, déplacement continu de 120 images, médiane de 3 essais,
+Chromium 141 sans GPU (rendu logiciel : les temps absolus sont pessimistes, l'écart relatif est fiable).
+
+| Écran                           | 8 couches physiques      | 3 couches physiques      | Écart                       |
+| ------------------------------- | ------------------------ | ------------------------ | --------------------------- |
+| 1920 × 1080, densité 1x         | 1 344 Mo · 29,9 ms/image | 1 023 Mo · 17,0 ms/image | −320 Mo · 1,8 × plus fluide |
+| 1920 × 1080, densité 2x (HiDPI) | 2 619 Mo · 95,5 ms/image | 1 513 Mo · 37,4 ms/image | −1,1 Go · 2,6 × plus fluide |
+
+Chaque couche Konva alloue un canvas de la taille de l'écran (× densité²) plus un canvas de détection
+des clics : le coût croît avec le nombre de couches, même vides.
+
+**Décision : 3 couches physiques.**
+
+| Couche physique | Contenu                                                                                | Écoute les événements |
+| --------------- | -------------------------------------------------------------------------------------- | --------------------- |
+| `background`    | Photo d'origine (verrouillée)                                                          | Non                   |
+| `content`       | 6 `Konva.Group` nommés : zones, bâtiments, circulation, piétons, signalisation, textes | Oui (phase 2)         |
+| `overlay`       | Sélection, poignées, tracés en cours (phase 2)                                         | Oui                   |
+
+Les 8 catégories restent séparées **dans les données** (`Layer.tier`) et **dans l'arbre Konva**
+(groupes nommés). Si un jour une catégorie doit être isolée physiquement (ex. glisser un objet sans
+redessiner les autres), on pourra la déplacer temporairement dans `overlay` sans changer le modèle.
+
+## 12. Import, intégrité et affichage de la photo (phase 1)
+
+- **Format réel** détecté par les octets (pas l'extension). Dimensions et orientation EXIF lues dans
+  l'en-tête **avant tout décodage** (`src/domain/image/header.ts`).
+- **Seuils** (`sizeAssessment.ts`) : normal ≤ 50 MP et côtés ≤ 16 384 px ; grande jusqu'à 120 MP ou côté
+  > 16 384 px (avertissement, ouverture permise) ; potentiellement dangereuse au-delà de 120 MP ou d'un côté
+  > 32 767 px (confirmation explicite). Le message indique largeur, hauteur, mégapixels, taille du
+  > fichier, mémoire décodée et raison. Rien n'est jamais compressé ni réduit.
+- **Stockage** : les octets d'origine sont écrits tels quels avec leur SHA-256. À chaque ouverture,
+  l'empreinte est recalculée ; en cas d'écart, le fond n'est pas affiché. « Télécharger l'original »
+  restitue le fichier identique à l'octet près (vérifié par les tests e2e).
+- **Orientation EXIF** : appliquée au décodage d'affichage (`createImageBitmap`, `imageOrientation: 'from-image'`).
+  L'original n'est pas réécrit. L'espace de coordonnées du projet est celui de l'image affichée ; ses
+  dimensions sont vérifiées contre celles décodées par le navigateur.
+- **PDF** : pdf.js (build « legacy » pour les navigateurs non à jour), chargé à la demande. La page
+  choisie est rendue en PNG sans perte à la résolution choisie (défaut : la plus fine sous 50 MP). Le PDF
+  d'origine, sa page, sa résolution, son nombre de pages et son SHA-256 sont conservés : le rendu peut
+  être refait depuis l'original.
+- **Affichage** : à ≥ 1 pixel écran par pixel image, lissage désactivé (pixels exacts ; à 100 % la
+  position est arrondie au pixel entier → correspondance 1:1 vérifiée pixel par pixel en e2e). Au fort
+  dézoom (< 25 %), une **pyramide d'affichage** (copies 1/4, 1/8… générées en mémoire, jamais enregistrées)
+  évite le moiré et accélère le rendu ; l'original est utilisé dès qu'il apporte plus de détail.
+- **Préférence de vue** (centre + zoom) : table IndexedDB séparée `viewPrefs`, hors document, hors
+  `.campplan`, supprimée avec le plan.

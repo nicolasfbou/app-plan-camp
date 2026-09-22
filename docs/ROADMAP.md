@@ -20,14 +20,20 @@ Règle : le parcours complet doit être fiable avant toute fonction avancée.
 - Mise en page desktop : sidebar foncée, zone de travail maximale, panneau droit, panneaux réductibles
 - Tests unitaires (Vitest) + navigateur (Playwright) ; lint, format, typecheck, build en CI
 
-## Phase 1 — Plan de base (prochaine)
+## Phase 1 — Plan de base ✅
 
-- Écran camps / plans : créer, renommer, dupliquer, supprimer (avec confirmation)
-- Import PNG / JPG / WEBP / PDF (choix de la page), octets d'origine conservés, orientation EXIF
-- Détection des dimensions et avertissement au-delà d'une limite sûre du navigateur
-- Vérification de l'empreinte à la réouverture ; mode « image seule »
-- Zoom molette autour du curseur, pan, adapter à l'écran, 100 %, plein écran, pinch tactile
-- Branchement de la sauvegarde automatique et de la récupération après fermeture
+- Camps : créer, lister, renommer, supprimer (confirmation). Plans : créer (avec type), ouvrir,
+  renommer, dupliquer (photo partagée), supprimer (confirmation)
+- Import JPG / JPEG / PNG / WEBP : format réel, dimensions et orientation lues sans décodage, SHA-256,
+  original conservé à l'octet près ; import PDF avec choix de page et de résolution
+- Seuils normal / grande / potentiellement dangereuse, avec message détaillé avant décodage
+- Fond verrouillé ; vérification d'intégrité à chaque ouverture ; panneau « Fond » en lecture seule ;
+  téléchargement de l'original
+- Navigation : molette autour du curseur, trackpad (pincement et défilement), bouton du milieu,
+  Espace + glisser, outil main, écran tactile ; + / − / adapter / 100 % / recentrer ; raccourcis
+- Sauvegarde automatique branchée ; reprise par l'URL après rechargement ou plantage ;
+  préférence de vue séparée du projet
+- Rendu Konva : 3 couches physiques, 8 catégories logiques (mesure et décision : ARCHITECTURE §11)
 
 ## Phase 2 — Dessin de base
 
