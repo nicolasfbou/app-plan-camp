@@ -1,0 +1,23 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-sidebar: #0f172a;
+  --color-panel: #f8fafc;
+  --color-canvas: #e2e8f0;
+  --color-accent: #2563eb;
+  --font-sans: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-panel);
+  color: #0f172a;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
