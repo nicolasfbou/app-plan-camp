@@ -7,11 +7,11 @@
  * - disposition ILLUSTRATIVE, à valider sur le terrain : ce n'est pas un plan approuvé ;
  * - plan NON calibré : aucune distance réelle connue et vérifiable n'est disponible, donc aucune
  *   calibration n'est ajoutée ; les mesures restent en pixels et aucune échelle n'est imprimée ;
- * - la photo ne contient aucune donnée d'orientation (pas de cap de drone) : la flèche du nord est
- *   une flèche de DÉMONSTRATION à angle arbitraire, marquée « estimé — à vérifier ».
+ * - la photo ne contient aucune donnée d'orientation (pas de cap de drone) : le nord reste NON
+ *   défini et aucune flèche du nord n'est imprimée ; le statut reste « À valider sur le terrain ».
  *
  * Tout passe par l'interface : réimport du plan de la phase 4 (trajets, corridors, zones,
- * pictogrammes, étiquettes), génération de cases, cote, nord, cartouche, légende ; aperçu ;
+ * pictogrammes, étiquettes), génération de cases, lisibilité, cartouche, légende ; aperçu ;
  * export PDF Tabloïd 11 × 17 paysage, PNG haute résolution, JPG ; .campplan exporté puis réimporté.
  */
 import { createHash } from 'node:crypto';
@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { chromium } from '@playwright/test';
 import { unzipSync, strFromU8 } from 'fflate';
-import { inspectPdf } from './pdf-inspect.mjs';
+import { inspectPdf, layoutProblems } from './pdf-inspect.mjs';
 
 const [photo, phase4, outDir] = process.argv.slice(2);
 if (!photo || !phase4 || !outDir)
@@ -123,22 +123,40 @@ log('Cases générées', { texte: stallText });
 await page.keyboard.press('Escape');
 await waitSaved();
 
-// 3. Cote (outil Mesurer) le long de la zone de stationnement : en pixels (plan non calibré).
-await page.keyboard.press('m');
-await page.mouse.click(...(await toScreen([1690, 1080])));
-await page.mouse.click(...(await toScreen([1690, 1410])));
-await page.keyboard.press('Enter');
+// 3. Lisibilité (vérifiée plus bas sur le PDF : aucun chevauchement) :
+//    - noms des zones masqués : la légende les identifie (couleur, pictogramme) ;
+//    - pas de pictogramme au centre de la bande de stationnement (il recouvrait le corridor ;
+//      les cases l'identifient) ;
+//    - extincteur légèrement décalé (il touchait le pictogramme de la livraison alimentaire).
+//    Aucune cote : le plan n'est pas calibré, une longueur en pixels n'apporterait rien au lecteur.
+await page.getByRole('tab', { name: 'Calques' }).click();
+async function selectByName(name) {
+  await page.keyboard.press('Escape');
+  await page.getByRole('tab', { name: 'Calques' }).click();
+  await page.getByRole('button', { name, exact: true }).click();
+  await page.getByRole('tab', { name: 'Propriétés' }).click();
+}
+for (const zone of [
+  'Stationnement employés (exemple)',
+  'Débarquement des marchandises (exemple)',
+  'Livraison alimentaire (exemple)',
+  'Point de rassemblement (exemple)',
+]) {
+  await selectByName(zone);
+  const toggle = page.getByLabel('Afficher le nom dans la zone');
+  if (await toggle.isChecked()) await toggle.uncheck();
+}
+await selectByName('Stationnement employés (exemple)');
+await page.getByLabel('Pictogramme de la zone').selectOption({ label: 'Aucun' });
+await selectByName('Extincteur');
+await setField('X', 2030);
+await setField('Y', 990);
 await page.keyboard.press('Escape');
 await waitSaved();
 
-// 4. Nord : AUCUNE donnée d'orientation dans la photo. Flèche de démonstration « estimée — à
-//    vérifier », angle arbitraire (volontairement différent de 0 : le haut de l'image n'est pas
-//    présumé être le nord).
+// 4. Nord : AUCUNE donnée d'orientation dans la photo → nord non défini, aucune flèche imprimée.
+//    La fonction reste disponible (onglet Fond) pour qui connaît l'orientation réelle.
 await page.getByRole('tab', { name: 'Fond' }).click();
-await page.getByRole('button', { name: 'Orienter le nord (2 points)' }).click();
-await page.mouse.click(...(await toScreen([2600, 700])));
-await page.mouse.click(...(await toScreen([2680, 400])));
-await waitSaved();
 log('Nord', { statut: await page.getByTestId('north-status').textContent() });
 log('Calibration', { statut: await page.getByTestId('calibration-status').textContent() });
 
@@ -160,7 +178,7 @@ for (const [label, value] of Object.entries(fields))
 await settings
   .getByRole('textbox', { name: 'Notes', exact: true })
   .fill(
-    'EXEMPLE ILLUSTRATIF : disposition non validée, à valider sur le terrain. Plan NON calibré : aucune échelle, mesures en pixels de la photo. Flèche du nord de démonstration (angle arbitraire) : orientation réelle à déterminer.',
+    'EXEMPLE ILLUSTRATIF : trajets, corridors piétons, stationnements et zones de débarquement sont des exemples de planification, non des aménagements autorisés ; à valider sur le terrain. Plan NON calibré : aucune échelle ni mesure physique. Orientation du nord inconnue : aucune flèche du nord.',
   );
 await settings.getByRole('combobox', { name: 'Statut', exact: true }).selectOption('field-validation');
 await page.waitForTimeout(1500);
@@ -195,7 +213,35 @@ log('PDF', {
   textes: pdfInfo.operators.showText ?? 0,
   contientNonCalibre: pdfInfo.text.includes('non calibré'),
   contientIllustratif: /EXEMPLE ILLUSTRATIF/.test(pdfInfo.text),
-  contientNordAVerifier: pdfInfo.text.includes('à vérifier'),
+  aucuneFlecheDuNord: !pdfInfo.text.includes('Nord estimé') && !pdfInfo.texts.some((t) => t.str === 'N'),
+  nonApprouve: pdfInfo.text.includes('NON APPROUVÉ') && pdfInfo.text.includes('À valider sur le terrain'),
+  pasDApprouvePar: !pdfInfo.text.includes('APPROUVÉ PAR'),
+});
+// Vérifications de mise en page sur le PDF produit (boîtes des textes et des images).
+const problems = layoutProblems(pdfInfo);
+log('Vérification de la mise en page', {
+  chevauchements: problems.overlaps,
+  horsDeLaPage: problems.outside,
+  plusPetitTextePt: Math.round(problems.minTextPt * 10) / 10,
+});
+const stored = (await readStored(page)).document;
+const cartouche = [
+  'CAMP',
+  'TITRE',
+  'PRÉPARÉ PAR',
+  'DATE',
+  'N° DE PLAN',
+  'RÉVISION',
+  'ÉCHELLE',
+  'NORD',
+  'STATUT',
+  'NOTES',
+];
+log('Cartouche et légende', {
+  champsDuCartouche:
+    cartouche.filter((c) => !pdfInfo.texts.some((t) => t.str === c)).length === 0 ? 'complets' : 'MANQUANTS',
+  legendeAcoteDuPlan: stored.plan.legend.placement === 'side',
+  avertissementsBloquants: warnings.filter((w) => !/non calibré|Nord non défini/.test(w)),
 });
 const png = await exportAs('PNG', 'camp105-phase5-haute-resolution.png', async () => {
   await settings.getByLabel('Cadrage de l’image', { exact: true }).selectOption('image');
@@ -255,6 +301,9 @@ log('Réimport', {
   objetsIdentiques: same,
   reglagesIdentiques: sameSettings,
   photoOriginaleIdentique: originalSha === photoSha,
+  annotations: Object.keys(imported.objects).length,
+  nord: imported.plan.northStatus,
+  calibration: imported.plan.calibration,
   statut: imported.plan.titleBlock.status,
   approuve: imported.plan.titleBlock.status === 'approved',
 });
