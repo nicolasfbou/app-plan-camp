@@ -7,6 +7,7 @@ import { lazy, type ReactNode, Suspense, useEffect, useId, useMemo, useState } f
 import { repository } from '@/app/repository.ts';
 import { navigate } from '@/app/router.ts';
 import { saveNow } from '@/app/saveNow.ts';
+import { backupAfterRevision } from '@/backups/backupService.ts';
 import { newId, nowIso } from '@/domain/model/factories.ts';
 import type { PlanDocument } from '@/domain/model/types.ts';
 import { diffPlans, summarizeDiff } from '@/domain/revisions/diff.ts';
@@ -170,6 +171,7 @@ function CreateRevisionDialog({ onClose }: { onClose(): void }) {
       });
       await saveNow();
       await refresh();
+      backupAfterRevision(meta.planId, meta.label, false);
       useEditorStore.getState().notify(t('rev.created', { label: meta.label }));
       onClose();
     });
@@ -346,6 +348,8 @@ function StatusDialog({ meta, onClose }: { meta: RevisionMeta; onClose(): void }
       await repository.setRevisionStatus(meta.id, { to, by, comment, confirmed, approvalDate: date });
       forgetRevision(meta.id);
       await refresh();
+      // Une révision approuvée est sauvegardée à part (conservée hors rotation).
+      if (to === 'approved') backupAfterRevision(meta.planId, meta.label, true);
       useEditorStore
         .getState()
         .notify(t('rev.statusChanged', { label: meta.label, status: REVISION_STATUS_LABELS[to] }));

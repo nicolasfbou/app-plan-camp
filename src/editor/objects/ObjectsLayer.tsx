@@ -27,7 +27,7 @@ const select = (id: string, additive: boolean) => {
 const openOnDoubleClick = (object: PlanObject) => {
   const editor = useEditorStore.getState();
   const doc = planStore.getState().doc;
-  if (editor.tool !== 'select' || !doc || !isEditable(doc, object)) return;
+  if (editor.tool !== 'select' || !doc || planStore.getState().readOnly || !isEditable(doc, object)) return;
   if (object.type === 'text') editor.setEditingText(object.id);
   else if (object.geometry.kind === 'polygon' || object.geometry.kind === 'polyline') {
     editor.select(object.id);
@@ -43,6 +43,7 @@ const openOnDoubleClick = (object: PlanObject) => {
 export const ObjectsLayer = memo(function ObjectsLayer({ scaleBucket }: { scaleBucket: number }) {
   const doc = usePlanStore((s) => s.doc);
   const interactiveTool = useEditorStore((s) => s.tool === 'select');
+  const readOnly = usePlanStore((s) => s.readOnly);
   const editingTextId = useEditorStore((s) => s.editingTextId);
   const activeViewId = useEditorStore((s) => s.activeViewId);
   // Vue par public : calques et objets filtrés à l'affichage seulement (le plan n'est pas modifié).
@@ -77,7 +78,7 @@ export const ObjectsLayer = memo(function ObjectsLayer({ scaleBucket }: { scaleB
                   <ObjectNode
                     key={object.id}
                     object={object}
-                    editable={!object.locked && !layer.locked}
+                    editable={!readOnly && !object.locked && !layer.locked}
                     interactive={interactiveTool && !layer.locked}
                     hidden={editingTextId === object.id}
                     scale={scaleBucket}

@@ -46,6 +46,7 @@ export function SelectionLayer({ scale }: { scale: number }) {
   // Hors de l'outil Sélection, le cadre de transformation est retiré (pas de conflit avec le dessin).
   const selectTool = useEditorStore((s) => s.tool === 'select');
   const doc = usePlanStore((s) => s.doc);
+  const readOnly = usePlanStore((s) => s.readOnly);
   const transformer = useRef<Konva.Transformer>(null);
   const lockedFrames = useRef<Konva.Rect[]>([]);
 
@@ -54,8 +55,8 @@ export function SelectionLayer({ scale }: { scale: number }) {
         .map((id) => doc.objects[id])
         .filter((o): o is PlanObject => Boolean(o) && isShownInEditor(doc, o!))
     : [];
-  const movable = doc ? selected.filter((o) => isEditable(doc, o)) : [];
-  const locked = doc ? selected.filter((o) => !isEditable(doc, o)) : [];
+  const movable = doc && !readOnly ? selected.filter((o) => isEditable(doc, o)) : [];
+  const locked = doc ? selected.filter((o) => readOnly || !isEditable(doc, o)) : [];
   const single = selected.length === 1 ? selected[0]! : null;
   const hasVertices = single?.geometry.kind === 'polygon' || single?.geometry.kind === 'polyline';
   const showVertices = Boolean(single && vertexEditing && hasVertices);

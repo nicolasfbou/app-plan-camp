@@ -13,6 +13,8 @@ import {
   LayoutTemplate,
   GitBranch,
   Stamp,
+  HeartPulse,
+  LifeBuoy,
   Redo2,
   Undo2,
 } from 'lucide-react';
@@ -35,6 +37,8 @@ interface TopBarProps {
   onTemplates?(): void;
   onVariant?(): void;
   onRevision?(): void;
+  onHealth?(): void;
+  onEmergency?(): void;
 }
 
 export function TopBar({
@@ -48,6 +52,8 @@ export function TopBar({
   onTemplates,
   onVariant,
   onRevision,
+  onHealth,
+  onEmergency,
 }: TopBarProps) {
   const planName = usePlanStore((s) => s.doc?.plan.name ?? null);
   const hasBackground = usePlanStore((s) => s.doc?.plan.baseImage != null);
@@ -203,6 +209,17 @@ export function TopBar({
           <Download size={16} />
           <span className="hidden 2xl:inline">{t('campplan.export')}</span>
         </Button>
+      )}
+
+      {onHealth && (
+        <IconButton label={t('maint.title')} onClick={onHealth}>
+          <HeartPulse size={18} />
+        </IconButton>
+      )}
+      {onEmergency && planName !== null && (
+        <IconButton label={t('maint.emergency')} onClick={onEmergency}>
+          <LifeBuoy size={18} />
+        </IconButton>
       )}
 
       <IconButton label={t('topbar.toggleRight')} onClick={toggleRight} pressed={!rightCollapsed}>

@@ -28,6 +28,18 @@ export interface ImportedRevision extends FrozenRevision {
   blobMap: Record<string, string>;
 }
 
+/** Le plan enregistré a changé depuis son ouverture : conflit à résoudre par l'utilisateur. */
+export class PlanConflictError extends Error {
+  override name = 'PlanConflictError';
+  constructor(
+    readonly planId: string,
+    readonly storedVersion: number,
+    readonly expectedVersion: number,
+  ) {
+    super('Ce plan a été modifié ailleurs (autre onglet, import…) depuis son ouverture.');
+  }
+}
+
 /** Modèle d'entreprise enregistré sur cet ordinateur (avec les octets de son logo). */
 export interface StoredTemplate {
   template: PlanTemplate;
@@ -40,6 +52,13 @@ export interface PlanSummary {
   name: string;
   kind: PlanKind;
   updatedAt: string;
+}
+
+export interface OrphanBlob {
+  id: string;
+  byteLength: number;
+  mimeType: string;
+  createdAt?: string;
 }
 
 /** Fichier binaire conservé à l'octet près (photo d'origine, PDF d'origine, icône importée). */
@@ -63,7 +82,17 @@ export interface ProjectRepository {
   listPlans(siteId: string): Promise<PlanSummary[]>;
   /** Charge, migre et valide un plan. Lève `ProjectFormatError` si les données sont corrompues. */
   loadPlan(id: string): Promise<PlanDocument | undefined>;
-  savePlan(doc: PlanDocument): Promise<void>;
+  /** Plan et sa version d'enregistrement (lus ensemble), pour détecter les écritures concurrentes. */
+  openPlan(id: string): Promise<{ doc: PlanDocument; version: number } | undefined>;
+  /**
+   * Écrit le plan et retourne sa nouvelle version. Avec `expectedVersion`, l'écriture est REFUSÉE
+   * (`PlanConflictError`) si le plan enregistré a changé depuis (autre onglet, import…) : jamais
+   * d'écrasement silencieux.
+   */
+  savePlan(doc: PlanDocument, options?: { expectedVersion?: number }): Promise<number>;
+  getPlanVersion(id: string): Promise<number | undefined>;
+  /** Document brut d'un plan, SANS validation (export de secours d'un plan endommagé). */
+  getPlanRaw(id: string): Promise<unknown>;
   /** Date (ms) de la dernière écriture du plan, pour comparer avec un journal de récupération. */
   getPlanSavedAt(id: string): Promise<number | undefined>;
   deletePlan(id: string): Promise<void>;
@@ -116,6 +145,25 @@ export interface ProjectRepository {
    */
   getViewPrefs(planId: string): Promise<ViewCenter | undefined>;
   saveViewPrefs(planId: string, view: ViewCenter): Promise<void>;
+
+  /**
+   * Réglages locaux de l'application (clé → valeur clonable : dossier de sauvegarde autorisé,
+   * historique des sauvegardes externes). Hors des plans et des fichiers `.campplan`.
+   */
+  getSetting<T>(key: string): Promise<T | undefined>;
+  setSetting(key: string, value: unknown): Promise<void>;
+
+  // --- Maintenance (centre de santé, nettoyage) ---------------------------------------------
+  /** Fichiers stockés que plus aucun plan ni aucune révision ne référence (sans lire les octets inutiles). */
+  listOrphanBlobs(): Promise<OrphanBlob[]>;
+  /** Supprime ces fichiers s'ils sont TOUJOURS orphelins (vérifié dans la transaction). */
+  deleteBlobs(ids: readonly string[]): Promise<{ deleted: number; bytes: number }>;
+  /** Index secondaires d'un plan et de ses révisions (fichiers référencés) : cohérents ou non. */
+  checkPlanIndex(planId: string): Promise<{ consistent: boolean; details: string[] }>;
+  /** Recalcule ces index à partir des documents (aucun contenu modifié). */
+  reindexPlan(planId: string): Promise<void>;
+  deleteViewPrefs(planId: string): Promise<void>;
+  listViewPrefPlanIds(): Promise<string[]>;
 
   /** Modèles d'entreprise (validés à la lecture ; un modèle illisible est ignoré). */
   listTemplates(): Promise<StoredTemplate[]>;

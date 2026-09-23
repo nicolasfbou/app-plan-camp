@@ -48,6 +48,11 @@ export const approvalSchema = z.object({
   recordedAt: isoDateSchema,
   /** Personne ayant créé la révision (conservée avec l'approbation). */
   revisionAuthor: z.string(),
+  /**
+   * Identifiant vérifié de l'approbateur (futur serveur). Absent en usage local : le nom est
+   * DÉCLARÉ, jamais attribué à un faux utilisateur global.
+   */
+  approverUserId: z.string().min(1).optional(),
 });
 
 export const statusLogEntrySchema = z.object({
@@ -56,6 +61,8 @@ export const statusLogEntrySchema = z.object({
   at: isoDateSchema,
   by: z.string(),
   comment: z.string(),
+  /** Identifiant vérifié de la personne (futur serveur) ; absent en usage local. */
+  userId: z.string().min(1).optional(),
 });
 
 export const changeSummarySchema = z.object({
@@ -75,6 +82,8 @@ export const revisionMetaSchema = z
     label: z.string().trim().min(1).max(20),
     description: z.string(),
     author: z.string().trim().min(1),
+    /** Identifiant vérifié de l'auteur (futur serveur) ; absent en usage local. */
+    authorUserId: z.string().min(1).optional(),
     /** Date de la révision (AAAA-MM-JJ), imprimée au cartouche. */
     date: dateSchema,
     reason: z.string(),
@@ -148,6 +157,8 @@ function sealPayload(meta: Omit<RevisionMeta, 'seal'>): string {
     meta.status,
     meta.statusLog,
     meta.approval,
+    // Ajouté seulement s'il existe : les sceaux des révisions locales existantes restent valides.
+    ...(meta.authorUserId ? [meta.authorUserId] : []),
   ]);
 }
 
@@ -185,6 +196,8 @@ export interface NewRevisionInput {
   comments: string;
   /** Statut initial : jamais « Approuvé » (l'approbation est une action distincte, explicite). */
   status: Exclude<RevisionStatus, 'approved' | 'archived'>;
+  /** Identifiant vérifié de l'auteur, fourni plus tard par un serveur (jamais inventé localement). */
+  authorUserId?: string;
 }
 
 export interface FrozenRevision {
@@ -227,6 +240,7 @@ export async function freezeRevision(
     label,
     description: input.description.trim(),
     author: input.author.trim(),
+    ...(input.authorUserId ? { authorUserId: input.authorUserId } : {}),
     date: input.date,
     reason: input.reason.trim(),
     comments: input.comments.trim(),
@@ -252,7 +266,10 @@ export async function freezeRevision(
 
 export interface StatusChange {
   to: RevisionStatus;
+  /** Nom déclaré de la personne. */
   by: string;
+  /** Identifiant vérifié (futur serveur : fourni par l'authentification, jamais par le client). */
+  userId?: string;
   comment: string;
   /** Approbation : l'utilisateur atteste être autorisé à approuver. */
   confirmed?: boolean;
@@ -296,6 +313,7 @@ export async function changeRevisionStatus(
       comment: change.comment.trim(),
       recordedAt: now,
       revisionAuthor: meta.author,
+      ...(change.userId ? { approverUserId: change.userId } : {}),
     });
   }
   const next: Omit<RevisionMeta, 'seal'> = {
@@ -304,7 +322,14 @@ export async function changeRevisionStatus(
     approval,
     statusLog: [
       ...meta.statusLog,
-      { from: meta.status, to: change.to, at: now, by, comment: change.comment.trim() },
+      {
+        from: meta.status,
+        to: change.to,
+        at: now,
+        by,
+        comment: change.comment.trim(),
+        ...(change.userId ? { userId: change.userId } : {}),
+      },
     ],
   };
   delete (next as Partial<RevisionMeta>).seal;

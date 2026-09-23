@@ -219,8 +219,13 @@ export function CampPage({ siteId }: { siteId: string }) {
           confirmLabel={t('common.save')}
           onCancel={close}
           onConfirm={async (name) => {
-            const doc = await requirePlan(dialog.plan.id);
-            await repository.savePlan({ ...doc, plan: { ...doc.plan, name, updatedAt: nowIso() } });
+            // Version contrôlée : si le plan est ouvert et modifié ailleurs, conflit plutôt qu'écrasement.
+            const opened = await repository.openPlan(dialog.plan.id);
+            if (!opened) throw new Error(t('plans.notFound'));
+            await repository.savePlan(
+              { ...opened.doc, plan: { ...opened.doc.plan, name, updatedAt: nowIso() } },
+              { expectedVersion: opened.version },
+            );
             close();
             reload();
           }}

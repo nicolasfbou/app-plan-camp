@@ -42,6 +42,12 @@ export interface PlanState {
   pending: HistoryEntry | null;
   revision: number;
   savedRevision: number;
+  /**
+   * Lecture seule (plan ouvert en édition dans un autre onglet) : toute modification est ignorée,
+   * rien n'est écrit.
+   */
+  readOnly: boolean;
+  setReadOnly(readOnly: boolean): void;
 
   /** Ouvre un document : réinitialise l'historique, état « enregistré ». */
   load(doc: PlanDocument | null): void;
@@ -73,6 +79,12 @@ export function createPlanStore() {
       pending: null,
       revision: 0,
       savedRevision: 0,
+      readOnly: false,
+
+      setReadOnly(readOnly) {
+        if (readOnly && get().pending) get().cancelTransaction();
+        set({ readOnly });
+      },
 
       load(doc) {
         const revision = get().revision + 1;
@@ -80,8 +92,8 @@ export function createPlanStore() {
       },
 
       update(label, recipe, options) {
-        const { doc, pending } = get();
-        if (!doc) return;
+        const { doc, pending, readOnly } = get();
+        if (!doc || readOnly) return;
         // La valeur retournée par la recette est ignorée : seules les mutations du brouillon comptent.
         const [next, patches, inversePatches] = produceWithPatches(doc, (draft) => {
           recipe(draft);
@@ -122,6 +134,7 @@ export function createPlanStore() {
       },
 
       beginTransaction(label) {
+        if (get().readOnly) return;
         if (get().pending) get().commitTransaction();
         set({ pending: { label, patches: [], inversePatches: [] } });
       },
@@ -142,7 +155,7 @@ export function createPlanStore() {
       undo() {
         // Pendant un geste (glisser un sommet…), Annuler / Rétablir sont ignorés : sinon la suite
         // du geste produirait une action d'historique par mouvement de souris.
-        if (get().pending) return;
+        if (get().pending || get().readOnly) return;
         const { past, future, doc, revision } = get();
         const entry = past.at(-1);
         if (!entry || !doc) return;
@@ -157,7 +170,7 @@ export function createPlanStore() {
       redo() {
         // Pendant un geste (glisser un sommet…), Annuler / Rétablir sont ignorés : sinon la suite
         // du geste produirait une action d'historique par mouvement de souris.
-        if (get().pending) return;
+        if (get().pending || get().readOnly) return;
         const { past, future, doc, revision } = get();
         const entry = future.at(-1);
         if (!entry || !doc) return;
@@ -183,7 +196,7 @@ export function usePlanStore<T>(selector: (state: PlanState) => T): T {
   return useStore(planStore, selector);
 }
 
-export const selectCanUndo = (s: PlanState) => s.past.length > 0 && s.pending === null;
-export const selectCanRedo = (s: PlanState) => s.future.length > 0 && s.pending === null;
+export const selectCanUndo = (s: PlanState) => s.past.length > 0 && s.pending === null && !s.readOnly;
+export const selectCanRedo = (s: PlanState) => s.future.length > 0 && s.pending === null && !s.readOnly;
 export const selectIsDirty = (s: PlanState) =>
   s.doc !== null && (s.revision !== s.savedRevision || s.pending !== null);

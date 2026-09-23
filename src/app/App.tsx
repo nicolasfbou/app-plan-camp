@@ -3,12 +3,15 @@ import { CampsPage } from '@/pages/CampsPage.tsx';
 import { EditorPage } from '@/pages/EditorPage.tsx';
 import { LeftSidebar } from './LeftSidebar.tsx';
 import { PwaUpdateBanner } from './PwaUpdateBanner.tsx';
+import { BackupReminder, MaintenanceDialog } from '@/maintenance/MaintenanceDialog.tsx';
+import { useMaintenanceStore } from '@/maintenance/maintenanceStore.ts';
 import { useRoute } from './router.ts';
 import { useGlobalShortcuts } from './useGlobalShortcuts.ts';
 
 export function App() {
   useGlobalShortcuts();
   const route = useRoute();
+  const maintenance = useMaintenanceStore();
 
   return (
     // overflow-clip : l’interface ne défile jamais dans son ensemble (même par focus programmatique),
@@ -23,6 +26,14 @@ export function App() {
         )}
       </div>
       <PwaUpdateBanner />
+      <BackupReminder onOpen={() => maintenance.show('backups')} />
+      {maintenance.open && (
+        <MaintenanceDialog
+          planId={route.name === 'plan' ? route.planId : null}
+          initialTab={maintenance.tab}
+          onClose={maintenance.hide}
+        />
+      )}
     </div>
   );
 }

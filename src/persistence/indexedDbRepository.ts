@@ -20,9 +20,11 @@ import {
   type StatusChange,
   withLocalBlobs,
 } from '@/domain/revisions/revision.ts';
+import { PlanConflictError } from './ProjectRepository.ts';
 import type {
   ImportedRevision,
   LoadedRevision,
+  OrphanBlob,
   PlanSummary,
   ProjectRepository,
   RevisionEntry,
@@ -45,6 +47,8 @@ interface PlanRecord {
   blobIds: string[];
   /** Date (ms) de l'écriture de cet enregistrement. */
   savedAt?: number;
+  /** Version d'enregistrement (augmente à chaque écriture ; absente = 0). */
+  version?: number;
   /** Document brut : relu via `parsePlanDocument`, donc migré et validé à chaque chargement. */
   document: unknown;
 }
@@ -91,6 +95,7 @@ class CampPlannerDatabase extends Dexie {
   templates!: Table<TemplateRecord, string>;
   revisions!: Table<RevisionRecord, string>;
   revisionSnapshots!: Table<RevisionSnapshotRecord, string>;
+  settings!: Table<{ key: string; value: unknown }, string>;
 
   constructor(name: string) {
     super(name);
@@ -104,6 +109,7 @@ class CampPlannerDatabase extends Dexie {
     this.version(4).stores({ revisions: 'id, planId, *blobIds', revisionSnapshots: 'id' });
     // Index des empreintes : un fichier déjà stocké (même SHA-256) est réutilisé, jamais dupliqué.
     this.version(5).stores({ blobs: 'id, sha256' });
+    this.version(6).stores({ settings: 'key' });
   }
 }
 
@@ -164,17 +170,40 @@ export class IndexedDbRepository implements ProjectRepository {
     return record ? parsePlanDocument(record.document) : undefined;
   }
 
-  async savePlan(doc: PlanDocument): Promise<void> {
-    await this.db.plans.put({
-      id: doc.plan.id,
-      siteId: doc.plan.siteId,
-      name: doc.plan.name,
-      kind: doc.plan.kind,
-      updatedAt: doc.plan.updatedAt,
-      blobIds: blobIdsOf(doc),
-      savedAt: Date.now(),
-      document: doc,
+  async openPlan(id: string): Promise<{ doc: PlanDocument; version: number } | undefined> {
+    const record = await this.db.plans.get(id);
+    return record ? { doc: parsePlanDocument(record.document), version: record.version ?? 0 } : undefined;
+  }
+
+  async savePlan(doc: PlanDocument, options: { expectedVersion?: number } = {}): Promise<number> {
+    // Lecture de la version et écriture dans UNE transaction : aucune écriture ne s'intercale.
+    return this.db.transaction('rw', this.db.plans, async () => {
+      const current = await this.db.plans.get(doc.plan.id);
+      const version = current?.version ?? 0;
+      if (current && options.expectedVersion !== undefined && options.expectedVersion !== version)
+        throw new PlanConflictError(doc.plan.id, version, options.expectedVersion);
+      await this.db.plans.put({
+        id: doc.plan.id,
+        siteId: doc.plan.siteId,
+        name: doc.plan.name,
+        kind: doc.plan.kind,
+        updatedAt: doc.plan.updatedAt,
+        blobIds: blobIdsOf(doc),
+        savedAt: Date.now(),
+        version: version + 1,
+        document: doc,
+      });
+      return version + 1;
     });
+  }
+
+  async getPlanVersion(id: string): Promise<number | undefined> {
+    const record = await this.db.plans.get(id);
+    return record ? (record.version ?? 0) : undefined;
+  }
+
+  async getPlanRaw(id: string): Promise<unknown> {
+    return (await this.db.plans.get(id))?.document;
   }
 
   async getPlanSummary(id: string): Promise<PlanSummary | undefined> {
@@ -431,6 +460,102 @@ export class IndexedDbRepository implements ProjectRepository {
       }
       return deleted;
     });
+  }
+
+  async getSetting<T>(key: string): Promise<T | undefined> {
+    return (await this.db.settings.get(key))?.value as T | undefined;
+  }
+
+  async setSetting(key: string, value: unknown): Promise<void> {
+    await this.db.settings.put({ key, value });
+  }
+
+  // --- Maintenance ---------------------------------------------------------------------------
+
+  async listOrphanBlobs(): Promise<OrphanBlob[]> {
+    const ids = (await this.db.blobs.toCollection().primaryKeys()) as string[];
+    const out: OrphanBlob[] = [];
+    for (const id of ids) {
+      if (await this.blobInUse(id)) continue;
+      const blob = await this.db.blobs.get(id); // seuls les orphelins sont lus
+      if (blob)
+        out.push({ id, byteLength: blob.byteLength, mimeType: blob.mimeType, createdAt: blob.createdAt });
+    }
+    return out;
+  }
+
+  async deleteBlobs(ids: readonly string[]): Promise<{ deleted: number; bytes: number }> {
+    return this.db.transaction('rw', this.db.plans, this.db.blobs, this.db.revisions, async () => {
+      let deleted = 0;
+      let bytes = 0;
+      for (const id of ids) {
+        // Jamais un fichier référencé par un plan ou une révision (revérifié ici).
+        if (await this.blobInUse(id)) continue;
+        const blob = await this.db.blobs.get(id);
+        if (!blob) continue;
+        await this.db.blobs.delete(id);
+        deleted++;
+        bytes += blob.byteLength;
+      }
+      return { deleted, bytes };
+    });
+  }
+
+  private async expectedIndexes(planId: string) {
+    const record = await this.db.plans.get(planId);
+    const plan = record ? { record, blobIds: blobIdsOf(parsePlanDocument(record.document)) } : null;
+    const revisions = [];
+    for (const r of await this.db.revisions.where('planId').equals(planId).toArray()) {
+      const snapshot = await this.db.revisionSnapshots.get(r.id);
+      if (!snapshot) continue;
+      try {
+        revisions.push({
+          record: r,
+          blobIds: referencedBlobIds(withLocalBlobs(parsePlanDocument(snapshot.json), r.blobMap)),
+        });
+      } catch {
+        // Instantané illisible : signalé par le contrôle des révisions, pas ici.
+      }
+    }
+    return { plan, revisions };
+  }
+
+  async checkPlanIndex(planId: string): Promise<{ consistent: boolean; details: string[] }> {
+    const same = (a: readonly string[], b: readonly string[]) =>
+      [...a].sort().join() === [...b].sort().join();
+    const { plan, revisions } = await this.expectedIndexes(planId);
+    const details: string[] = [];
+    if (plan && !same(plan.record.blobIds, plan.blobIds))
+      details.push('Index des fichiers du plan incohérent.');
+    for (const r of revisions)
+      if (!same(r.record.blobIds, r.blobIds))
+        details.push(
+          `Index des fichiers de la révision ${(r.record.meta as RevisionMeta).label ?? r.record.id} incohérent.`,
+        );
+    return { consistent: details.length === 0, details };
+  }
+
+  async reindexPlan(planId: string): Promise<void> {
+    const { plan, revisions } = await this.expectedIndexes(planId);
+    await this.db.transaction('rw', this.db.plans, this.db.revisions, async () => {
+      if (plan) {
+        const current = await this.db.plans.get(planId);
+        // Seul l'index change (le document et sa version restent identiques).
+        if (current) await this.db.plans.put({ ...current, blobIds: plan.blobIds });
+      }
+      for (const r of revisions) {
+        const current = await this.db.revisions.get(r.record.id);
+        if (current) await this.db.revisions.put({ ...current, blobIds: r.blobIds });
+      }
+    });
+  }
+
+  async deleteViewPrefs(planId: string): Promise<void> {
+    await this.db.viewPrefs.delete(planId);
+  }
+
+  async listViewPrefPlanIds(): Promise<string[]> {
+    return (await this.db.viewPrefs.toCollection().primaryKeys()) as string[];
   }
 
   async getViewPrefs(planId: string): Promise<ViewCenter | undefined> {

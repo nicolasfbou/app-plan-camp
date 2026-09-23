@@ -30,6 +30,7 @@ import { AREA_PRESETS, type ZonePreset } from '@/domain/presets/zonePresets.ts';
 import { ProjectFormatError } from '@/domain/schema/migrations.ts';
 import { parsePlanDocument, serializePlanDocument } from '@/domain/schema/serialization.ts';
 import { checkSymbolFile } from '@/domain/symbols/importSymbol.ts';
+import { salvagePlanDocument } from '@/domain/schema/salvage.ts';
 import {
   isSealIntact,
   referencedBlobIds,
@@ -90,6 +91,10 @@ const manifestSchema = z.object({
   counts: z.object({ objects: z.number().int().nonnegative(), layers: z.number().int().positive() }),
   /** Révisions figées (format 3), dans l'ordre de création. */
   revisions: z.array(revisionEntrySchema),
+  /** Copie de secours : ce qui manque (absent pour un export normal). */
+  emergency: z
+    .object({ createdAt: z.string(), complete: z.boolean(), problems: z.array(z.string()) })
+    .optional(),
 });
 
 export type CampplanManifest = z.infer<typeof manifestSchema>;
@@ -111,6 +116,8 @@ export interface CampplanContent {
   files: Map<string, CampplanFile>;
   /** Révisions vérifiées (empreinte, sceau, plan valide, fichiers présents). */
   revisions: CampplanRevision[];
+  /** Mode récupération : tout ce qui n'a pas pu être lu (vide = fichier complet). */
+  problems: string[];
 }
 
 export interface CampplanRevision {
@@ -274,148 +281,314 @@ const FORMAT_MIGRATIONS: Record<number, (manifest: Record<string, unknown>) => R
   2: (manifest) => ({ revisions: [], ...manifest }),
 };
 
-export async function readCampplan(bytes: Uint8Array): Promise<CampplanContent> {
+/**
+ * Décompresse l'archive élément par élément (mode récupération) : un élément endommagé n'empêche
+ * pas de lire les autres.
+ */
+function unzipEach(
+  bytes: Uint8Array,
+  accept: (name: string, size: number) => boolean,
+  problems: string[],
+): Record<string, Uint8Array> {
+  const names: string[] = [];
+  try {
+    unzipSync(bytes, {
+      filter: ({ name, originalSize }) => {
+        if (accept(name, originalSize)) names.push(name);
+        return false;
+      },
+    });
+  } catch {
+    return {};
+  }
+  const out: Record<string, Uint8Array> = {};
+  for (const wanted of names) {
+    try {
+      Object.assign(out, unzipSync(bytes, { filter: ({ name }) => name === wanted }));
+    } catch {
+      problems.push(`Élément illisible dans l’archive : ${wanted}.`);
+    }
+  }
+  return out;
+}
+
+const MIME_BY_EXTENSION: Record<string, string> = Object.fromEntries(
+  Object.entries(EXTENSIONS).map(([mime, ext]) => [ext, mime]),
+);
+
+export interface ReadOptions {
+  /**
+   * Mode récupération : un fichier partiellement endommagé est lu malgré tout ; chaque partie
+   * perdue est décrite dans `problems` (jamais présenté comme complet).
+   */
+  recovery?: boolean;
+}
+
+export async function readCampplan(bytes: Uint8Array, options: ReadOptions = {}): Promise<CampplanContent> {
+  const recovery = Boolean(options.recovery);
+  const problems: string[] = [];
+  /** Problème : bloquant en lecture normale ; noté (et contourné) en récupération. */
+  const fail = (message: string) => {
+    if (!recovery) throw new CampplanError(message);
+    problems.push(message);
+  };
+  const accept = (name: string, originalSize: number) => {
+    const json = name === 'manifest.json' || name === 'plan.json' || /^revisions\/[\w.-]+\.json$/.test(name);
+    if (!json && !name.startsWith('fichiers/')) return false;
+    if (originalSize > (json ? MAX_JSON_BYTES : MAX_FILE_BYTES))
+      throw new CampplanError(`Fichier refusé : l’élément « ${name} » dépasse la taille autorisée.`);
+    return true;
+  };
   let entries: Record<string, Uint8Array>;
   try {
     // Seules les entrées attendues sont décompressées, et jamais au-delà d'une taille plafond
     // (taille déclarée vérifiée AVANT décompression) : un fichier piégé ne peut pas saturer la mémoire.
-    entries = unzipSync(bytes, {
-      filter: ({ name, originalSize }) => {
-        const json =
-          name === 'manifest.json' || name === 'plan.json' || /^revisions\/[\w.-]+\.json$/.test(name);
-        if (!json && !name.startsWith('fichiers/')) return false;
-        if (originalSize > (json ? MAX_JSON_BYTES : MAX_FILE_BYTES))
-          throw new CampplanError(`Fichier refusé : l’élément « ${name} » dépasse la taille autorisée.`);
-        return true;
-      },
-    });
+    entries = unzipSync(bytes, { filter: ({ name, originalSize }) => accept(name, originalSize) });
   } catch (error) {
     if (error instanceof CampplanError) throw error;
-    throw new CampplanError(
-      'Fichier illisible : ce n’est pas un fichier .campplan valide, ou il est corrompu.',
-    );
-  }
-  const manifestBytes = entries['manifest.json'];
-  const planBytes = entries['plan.json'];
-  if (!manifestBytes || !planBytes)
-    throw new CampplanError('Fichier incomplet : manifeste ou plan manquant.');
-
-  let rawManifest: Record<string, unknown>;
-  try {
-    rawManifest = JSON.parse(strFromU8(manifestBytes)) as Record<string, unknown>;
-  } catch {
-    throw new CampplanError('Manifeste illisible (JSON invalide).');
-  }
-  if (rawManifest.format !== 'campplan')
-    throw new CampplanError('Ce fichier n’est pas un projet CampPlanner.');
-  const version = rawManifest.formatVersion;
-  if (typeof version !== 'number' || version < 1)
-    throw new CampplanError('Version du format absente ou invalide.');
-  if (version > CAMPPLAN_FORMAT_VERSION) {
-    throw new CampplanError(
-      `Ce projet a été créé par une version plus récente de CampPlanner (format ${version}, format supporté ${CAMPPLAN_FORMAT_VERSION}). Mettez l’application à jour pour l’ouvrir.`,
-    );
-  }
-  for (let v = version; v < CAMPPLAN_FORMAT_VERSION; v++) {
-    const migrate = FORMAT_MIGRATIONS[v];
-    if (!migrate) throw new CampplanError(`Migration du format ${v} vers ${v + 1} manquante.`);
-    rawManifest = { ...migrate(rawManifest), formatVersion: v + 1 };
-  }
-  const parsedManifest = manifestSchema.safeParse(rawManifest);
-  if (!parsedManifest.success) throw new CampplanError('Manifeste invalide : structure inattendue.');
-  const manifest = parsedManifest.data;
-
-  if ((await sha256Hex(planBytes.slice().buffer)) !== manifest.planSha256) {
-    throw new CampplanError('Le plan contenu dans le fichier est corrompu (empreinte SHA-256 différente).');
-  }
-  let doc: PlanDocument;
-  try {
-    doc = parsePlanDocument(strFromU8(planBytes)); // validation + migrations du schéma
-  } catch (error) {
-    throw new CampplanError(error instanceof ProjectFormatError ? error.message : 'Plan invalide.');
-  }
-
-  const files = new Map<string, CampplanFile>();
-  for (const entry of manifest.files) {
-    const data = entries[entry.path];
-    if (!data) throw new CampplanError(`Fichier manquant dans l’archive : ${entry.path}.`);
-    if (data.byteLength !== entry.byteLength || (await sha256Hex(data.slice().buffer)) !== entry.sha256) {
+    if (!recovery)
       throw new CampplanError(
-        `Le fichier ${roleLabel(entry.role)} est corrompu (empreinte SHA-256 différente).`,
+        'Fichier illisible : ce n’est pas un fichier .campplan valide, ou il est corrompu.',
       );
+    entries = unzipEach(bytes, accept, problems);
+    if (!Object.keys(entries).length)
+      throw new CampplanError(
+        'Fichier illisible : aucun élément récupérable (ce n’est pas une archive valide).',
+      );
+  }
+
+  // --- Manifeste ---
+  let manifest: CampplanManifest | null = null;
+  const manifestBytes = entries['manifest.json'];
+  if (!manifestBytes) fail('Fichier incomplet : manifeste manquant.');
+  else {
+    let rawManifest: Record<string, unknown> | null = null;
+    try {
+      rawManifest = JSON.parse(strFromU8(manifestBytes)) as Record<string, unknown>;
+    } catch {
+      fail('Manifeste illisible (JSON invalide).');
     }
-    files.set(entry.blobId, {
-      bytes: data,
-      mimeType: entry.mimeType,
-      sha256: entry.sha256,
-      role: entry.role,
-    });
+    if (rawManifest) {
+      if (rawManifest.format !== 'campplan' && !recovery)
+        throw new CampplanError('Ce fichier n’est pas un projet CampPlanner.');
+      const version = rawManifest.formatVersion;
+      if (typeof version === 'number' && version > CAMPPLAN_FORMAT_VERSION)
+        // Jamais « récupéré » : une version plus récente se lit avec une application à jour.
+        throw new CampplanError(
+          `Ce projet a été créé par une version plus récente de CampPlanner (format ${version}, format supporté ${CAMPPLAN_FORMAT_VERSION}). Mettez l’application à jour pour l’ouvrir.`,
+        );
+      if (typeof version !== 'number' || version < 1) fail('Version du format absente ou invalide.');
+      else {
+        for (let v = version; v < CAMPPLAN_FORMAT_VERSION; v++) {
+          const migrate = FORMAT_MIGRATIONS[v];
+          if (!migrate) throw new CampplanError(`Migration du format ${v} vers ${v + 1} manquante.`);
+          rawManifest = { ...migrate(rawManifest), formatVersion: v + 1 };
+        }
+        const parsed = manifestSchema.safeParse(rawManifest);
+        if (parsed.success) manifest = parsed.data;
+        else fail('Manifeste invalide : structure inattendue.');
+      }
+    }
   }
-  // Le plan doit référencer exactement les fichiers fournis, avec les mêmes empreintes.
-  for (const needed of referencedFiles(doc)) {
-    const file = files.get(needed.blobId);
-    if (!file || file.sha256 !== needed.sha256)
-      throw new CampplanError(`Le fichier ${needed.label} ne correspond pas aux fichiers de l’archive.`);
+  // Copie de secours incomplète : jamais importée comme un projet complet.
+  if (manifest?.emergency && !manifest.emergency.complete) {
+    if (!recovery)
+      throw new CampplanError(
+        'Copie de secours INCOMPLÈTE : importez-la en mode récupération (les parties manquantes seront listées).',
+      );
+    problems.push(...manifest.emergency.problems.map((p) => `Copie de secours : ${p}`));
   }
-  // Révisions : empreinte de l'instantané, sceau, plan valide, fichiers présents et identiques.
+
+  // --- Plan ---
+  let doc: PlanDocument | null = null;
+  const planBytes = entries['plan.json'];
+  if (!planBytes) fail('Fichier incomplet : plan manquant.');
+  else {
+    if (manifest && (await sha256Hex(planBytes.slice().buffer)) !== manifest.planSha256)
+      fail('Le plan contenu dans le fichier est corrompu (empreinte SHA-256 différente).');
+    try {
+      doc = parsePlanDocument(strFromU8(planBytes)); // validation + migrations du schéma
+    } catch (error) {
+      const message = error instanceof ProjectFormatError ? error.message : 'Plan invalide.';
+      if (!recovery) throw new CampplanError(message);
+      const salvaged = salvagePlanDocument(strFromU8(planBytes));
+      if (salvaged) {
+        doc = salvaged.doc;
+        problems.push(
+          `Plan partiellement illisible (${message}) :`,
+          ...salvaged.problems.map((p) => `— ${p}`),
+        );
+      } else problems.push(`Plan illisible : ${message}`);
+    }
+  }
+
+  // --- Fichiers (photo, PDF d'origine, pictogrammes) ---
+  const files = new Map<string, CampplanFile>();
+  /** Fichiers vérifiés, par empreinte (récupération sans manifeste). */
+  const bySha = new Map<string, CampplanFile>();
+  if (manifest) {
+    for (const entry of manifest.files) {
+      const data = entries[entry.path];
+      if (!data) {
+        fail(`Fichier manquant dans l’archive : ${entry.path}.`);
+        continue;
+      }
+      if (data.byteLength !== entry.byteLength || (await sha256Hex(data.slice().buffer)) !== entry.sha256) {
+        fail(`Le fichier ${roleLabel(entry.role)} est corrompu (empreinte SHA-256 différente).`);
+        continue;
+      }
+      const file = { bytes: data, mimeType: entry.mimeType, sha256: entry.sha256, role: entry.role };
+      files.set(entry.blobId, file);
+      bySha.set(entry.sha256, file);
+    }
+  } else
+    for (const [path, data] of Object.entries(entries)) {
+      if (!path.startsWith('fichiers/')) continue;
+      const role = (path.split('/')[1]!.split('-')[0] ?? 'background') as FileRole;
+      const sha = await sha256Hex(data.slice().buffer);
+      bySha.set(sha, {
+        bytes: data,
+        mimeType: MIME_BY_EXTENSION[path.split('.').pop() ?? ''] ?? 'application/octet-stream',
+        sha256: sha,
+        role: ['background', 'pdf', 'symbol'].includes(role) ? role : 'background',
+      });
+    }
+  /** Fichier attendu par un document : par identifiant, sinon (récupération) par empreinte. */
+  const resolve = (blobId: string, sha: string) => {
+    const direct = files.get(blobId);
+    if (direct && direct.sha256 === sha) return direct;
+    if (!recovery) return undefined;
+    const found = bySha.get(sha);
+    if (found) files.set(blobId, found);
+    return found;
+  };
+
+  // --- Révisions ---
   const revisions: CampplanRevision[] = [];
-  const revisionAssets: { blobId: string; asset: PlanDocument['assets'][string] }[] = [];
+  const revisionAssets: { blobId: string; asset: PlanDocument['assets'][string]; label: string }[] = [];
   const revisionIds = new Set<string>();
-  for (const entry of manifest.revisions) {
+  const snapshots = new Map<string, PlanDocument>();
+  if (!manifest && Object.keys(entries).some((p) => p.startsWith('revisions/')))
+    problems.push('Révisions présentes mais leurs métadonnées (manifeste) sont perdues : non récupérées.');
+  for (const entry of manifest?.revisions ?? []) {
     const parsedMeta = revisionMetaSchema.safeParse(entry.meta);
-    if (!parsedMeta.success)
-      throw new CampplanError('Révision invalide dans le fichier : structure inattendue.');
+    if (!parsedMeta.success) {
+      fail('Révision invalide dans le fichier : structure inattendue.');
+      continue;
+    }
     const meta = parsedMeta.data;
     const where = `Révision ${meta.label}`;
-    if (revisionIds.has(meta.id)) throw new CampplanError(`${where} : présente deux fois.`);
-    revisionIds.add(meta.id);
+    if (revisionIds.has(meta.id)) {
+      fail(`${where} : présente deux fois.`);
+      continue;
+    }
     const data = entries[entry.path];
-    if (!data) throw new CampplanError(`${where} : instantané manquant dans l’archive.`);
+    if (!data) {
+      fail(`${where} : instantané manquant dans l’archive.`);
+      continue;
+    }
     const json = strFromU8(data);
     if (
       entry.sha256 !== meta.snapshot.sha256 ||
       data.byteLength !== entry.byteLength ||
       (await sha256OfText(json)) !== meta.snapshot.sha256
-    )
-      throw new CampplanError(`${where} : instantané corrompu (empreinte SHA-256 différente).`);
-    if (!(await isSealIntact(meta)))
-      throw new CampplanError(`${where} : métadonnées altérées (sceau non conforme).`);
+    ) {
+      fail(`${where} : instantané corrompu (empreinte SHA-256 différente).`);
+      continue;
+    }
+    if (!(await isSealIntact(meta))) {
+      fail(`${where} : métadonnées altérées (sceau non conforme).`);
+      continue;
+    }
     let snapshot: PlanDocument;
     try {
       snapshot = parsePlanDocument(json);
     } catch (error) {
-      throw new CampplanError(
-        `${where} : ${error instanceof ProjectFormatError ? error.message : 'plan invalide.'}`,
-      );
+      fail(`${where} : ${error instanceof ProjectFormatError ? error.message : 'plan invalide.'}`);
+      continue;
     }
-    for (const needed of referencedFiles(snapshot)) {
-      const file = files.get(entry.blobMap[needed.blobId] ?? needed.blobId);
-      if (!file || file.sha256 !== needed.sha256)
-        throw new CampplanError(
-          `${where} : le fichier ${needed.label} ne correspond pas aux fichiers de l’archive.`,
-        );
+    const missing = referencedFiles(snapshot).find(
+      (needed) => !resolve(entry.blobMap[needed.blobId] ?? needed.blobId, needed.sha256),
+    );
+    if (missing) {
+      fail(`${where} : le fichier ${missing.label} ne correspond pas aux fichiers de l’archive.`);
+      continue;
     }
+    revisionIds.add(meta.id);
+    snapshots.set(meta.id, snapshot);
     for (const asset of Object.values(snapshot.assets))
-      revisionAssets.push({ blobId: entry.blobMap[asset.blobId] ?? asset.blobId, asset });
+      revisionAssets.push({ blobId: entry.blobMap[asset.blobId] ?? asset.blobId, asset, label: meta.label });
     revisions.push({ meta, json, blobMap: entry.blobMap });
+  }
+
+  // Plan illisible mais révision valide : le brouillon repart de la dernière révision (signalé).
+  if (!doc && revisions.length) {
+    const last = revisions.at(-1)!;
+    doc = structuredClone(snapshots.get(last.meta.id)!);
+    doc.plan.draftBase = { revisionId: last.meta.id, label: last.meta.label, at: nowIso() };
+    problems.push(
+      `Brouillon perdu : reconstitué à partir de la révision ${last.meta.label} (les modifications faites depuis sont perdues).`,
+    );
+  }
+  if (!doc) throw new CampplanError(`Aucune donnée de plan récupérable. ${problems.join(' ')}`);
+
+  // Le plan doit référencer exactement les fichiers fournis, avec les mêmes empreintes.
+  for (const needed of referencedFiles(doc)) {
+    if (resolve(needed.blobId, needed.sha256)) continue;
+    fail(`Le fichier ${needed.label} ne correspond pas aux fichiers de l’archive.`);
+    // Récupération : photo absente → plan SANS photo ; pictogramme absent → retiré.
+    if (needed.role === 'symbol')
+      for (const [id, asset] of Object.entries(doc.assets))
+        if (asset.blobId === needed.blobId) delete doc.assets[id];
+        else if (doc.plan.baseImage) {
+          doc.plan.baseImage = null;
+          problems.push('Plan importé SANS sa photo (photo absente ou endommagée).');
+        }
   }
 
   // Pictogrammes importés : mêmes vérifications qu'à l'import depuis l'éditeur (un fichier
   // .campplan fabriqué ne doit pas faire entrer un SVG actif ou une image démesurée), et type MIME
   // imposé par le plan (jamais celui, libre, du manifeste).
-  for (const { blobId, asset } of [
-    ...Object.values(doc.assets).map((asset) => ({ blobId: asset.blobId, asset })),
-    ...revisionAssets,
-  ]) {
-    const file = files.get(blobId)!;
+  const checked = new Map<string, boolean>();
+  const checkAsset = (blobId: string, asset: PlanDocument['assets'][string]) => {
+    const file = files.get(blobId);
+    if (!file) return false;
+    if (checked.has(blobId)) return checked.get(blobId)!;
     const check = checkSymbolFile(file.bytes, asset.mimeType === 'image/svg+xml' ? 'x.svg' : 'x.png');
-    if (!check.ok || check.mimeType !== asset.mimeType)
-      throw new CampplanError(
+    const ok = check.ok && check.mimeType === asset.mimeType;
+    if (ok) files.set(blobId, { ...file, mimeType: asset.mimeType, role: 'symbol' });
+    else
+      fail(
         `Le pictogramme importé « ${asset.name} » est refusé : ${check.ok ? 'type de fichier incohérent' : check.reason}`,
       );
-    files.set(blobId, { ...file, mimeType: asset.mimeType, role: 'symbol' });
-  }
-  return { manifest, doc, files, revisions };
+    checked.set(blobId, ok);
+    return ok;
+  };
+  for (const [id, asset] of Object.entries(doc.assets))
+    if (!checkAsset(asset.blobId, asset)) {
+      delete doc.assets[id];
+      if (doc.plan.titleBlock.logoAssetId === id) doc.plan.titleBlock.logoAssetId = null;
+    }
+  const refused = new Set(revisionAssets.filter((r) => !checkAsset(r.blobId, r.asset)).map((r) => r.label));
+  // Une révision figée n'est jamais modifiée : si l'un de ses pictogrammes est refusé, elle est écartée.
+  const keptRevisions = revisions.filter((r) => !refused.has(r.meta.label));
+  for (const label of refused) problems.push(`Révision ${label} écartée (pictogramme refusé).`);
+
+  const finalManifest: CampplanManifest = manifest ?? {
+    format: 'campplan',
+    formatVersion: CAMPPLAN_FORMAT_VERSION,
+    application: 'CampPlanner',
+    exportedAt: '',
+    schemaVersion: doc.schemaVersion,
+    site: { name: '', notes: '' },
+    plan: { id: doc.plan.id, name: doc.plan.name, kind: doc.plan.kind },
+    planSha256: '0'.repeat(64),
+    files: [],
+    presets: [],
+    counts: { objects: Object.keys(doc.objects).length, layers: doc.layers.length },
+    revisions: [],
+  };
+  return { manifest: finalManifest, doc, files, revisions: keptRevisions, problems };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -441,6 +614,14 @@ export async function importCampplan(
   options: ImportOptions,
 ): Promise<{ siteId: string; planId: string }> {
   const doc = structuredClone(content.doc);
+  // Projet récupéré partiellement : toujours importé comme COPIE, marqué incomplet, jamais approuvé.
+  if (content.problems.length) {
+    if (options.mode === 'replace')
+      throw new CampplanError('Un projet récupéré partiellement s’importe toujours comme une copie.');
+    doc.plan.metadata = { ...doc.plan.metadata, recovery: { at: nowIso(), problems: content.problems } };
+    if (doc.plan.titleBlock.status === 'approved')
+      doc.plan.titleBlock = { ...doc.plan.titleBlock, status: 'draft', approvedAt: null };
+  }
   // Existence lue sans validation : un plan présent mais illisible n'est jamais écrasé en silence.
   const existing = await repo.getPlanSummary(doc.plan.id);
   if (existing && options.mode === 'copy') doc.plan.id = newId();

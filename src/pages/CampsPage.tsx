@@ -1,4 +1,5 @@
-import { FolderInput, Pencil, Plus, TentTree, Trash2 } from 'lucide-react';
+import { FolderInput, HeartPulse, Pencil, Plus, TentTree, Trash2 } from 'lucide-react';
+import { useMaintenanceStore } from '@/maintenance/maintenanceStore.ts';
 import { useRef, useState } from 'react';
 import { ImportProjectDialog } from './ImportProjectDialog.tsx';
 import { createSite, nowIso } from '@/domain/model/factories.ts';
@@ -44,6 +45,12 @@ export function CampsPage() {
         <div className="flex gap-2">
           <Button onClick={() => importInput.current?.click()}>
             <FolderInput size={16} /> {t('campplan.importButton')}
+          </Button>
+          <Button
+            onClick={() => useMaintenanceStore.getState().show('backups')}
+            data-testid="open-maintenance"
+          >
+            <HeartPulse size={16} /> {t('maint.title')}
           </Button>
           <Button variant="primary" onClick={() => setDialog({ kind: 'create' })}>
             <Plus size={16} /> {t('camps.new')}

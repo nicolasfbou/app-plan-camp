@@ -7,6 +7,7 @@ import { DEFAULT_AREA_PRESET_ID } from '@/domain/presets/zonePresets.ts';
 import { DEFAULT_FLOW_CATEGORY } from '@/domain/presets/flowPresets.ts';
 import type { FlowCategory, PlanObject, Point } from '@/domain/model/types.ts';
 import { type LoadedBackground, releaseBackground } from '@/editor/backgroundImage.ts';
+import { planStore } from './planStore.ts';
 
 /** Nouvel emplacement proposé pour une étiquette ou un nom de zone (pixels image). */
 export interface LabelProposal {
@@ -181,11 +182,17 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
     }
     set({ background: status });
   },
-  setTool: (tool) => set({ tool, draft: null, vertexEditing: false, editingTextId: null }),
+  setTool: (tool) => {
+    // Lecture seule : ni dessin ni modification ; seuls la sélection et la main restent.
+    if (planStore.getState().readOnly && tool !== 'select' && tool !== 'hand') return;
+    set({ tool, draft: null, vertexEditing: false, editingTextId: null });
+  },
   setPreset: (presetId) => set({ presetId }),
   setFlowCategory: (flowCategory) => set({ flowCategory }),
   pickSymbol: (symbolId) =>
-    set({ symbolId, tool: 'symbol', draft: null, vertexEditing: false, editingTextId: null }),
+    planStore.getState().readOnly
+      ? set({ symbolId })
+      : set({ symbolId, tool: 'symbol', draft: null, vertexEditing: false, editingTextId: null }),
   setShowCrossings: (showCrossings) => set({ showCrossings }),
   setShowVerifiedCrossings: (showVerifiedCrossings) => set({ showVerifiedCrossings }),
   selectCrossing: (selectedCrossing) => set({ selectedCrossing }),

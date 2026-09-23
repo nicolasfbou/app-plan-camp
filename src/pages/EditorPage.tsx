@@ -8,6 +8,7 @@ import { ImportDialog } from '@/editor/ImportDialog.tsx';
 import { NavigationControls } from '@/editor/NavigationControls.tsx';
 import { NoticeBanner } from '@/editor/NoticeBanner.tsx';
 import { ViewBanner } from '@/editor/ViewBanner.tsx';
+import { ConflictDialog, LockBanner, RecoveredBanner } from '@/editor/SessionBanner.tsx';
 import { TextEditorOverlay } from '@/editor/TextEditorOverlay.tsx';
 import { CalibrationDialog } from '@/panels/ScalePanel.tsx';
 import { useEditorShortcuts } from '@/editor/useEditorShortcuts.ts';
@@ -32,6 +33,10 @@ import { navigate } from '@/app/router.ts';
 import { RevisionDialogsHost } from '@/revisions/RevisionDialogs.tsx';
 import { useRevisionsStore } from '@/revisions/revisionsStore.ts';
 import { saveNow } from '@/app/saveNow.ts';
+import { backupOnClose } from '@/backups/backupService.ts';
+import { logEvent } from '@/diagnostics/errorLog.ts';
+import { downloadEmergencyCopy } from '@/maintenance/emergencyDownload.ts';
+import { useMaintenanceStore } from '@/maintenance/maintenanceStore.ts';
 import { Notice, PageLayout } from './PageLayout.tsx';
 import { useAsync } from './useAsync.ts';
 
@@ -83,6 +88,19 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
 
   useBackgroundLoader();
   useViewPersistence(planId);
+
+  // Sauvegarde externe « à la fermeture » : sortie du plan, onglet masqué (si modifié depuis).
+  useEffect(() => {
+    const onHidden = () => {
+      if (document.visibilityState === 'hidden') setTimeout(() => backupOnClose(planId), 2000);
+    };
+    document.addEventListener('visibilitychange', onHidden);
+    return () => {
+      document.removeEventListener('visibilitychange', onHidden);
+      // Après l'écriture finale du plan (autosave vidé à la sortie).
+      setTimeout(() => backupOnClose(planId), 2000);
+    };
+  }, [planId]);
 
   // Révisions figées du plan (métadonnées seulement).
   useEffect(() => {
@@ -182,6 +200,23 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
         onPrint={() => setPrinting(true)}
         onTemplates={() => setTemplatesOpen(true)}
         onVariant={() => void saveNow().then(() => setVariantOpen(true))}
+        onHealth={() => useMaintenanceStore.getState().show('health')}
+        onEmergency={() =>
+          void downloadEmergencyCopy(planId).then(
+            (r) =>
+              useEditorStore
+                .getState()
+                .notify(
+                  r.complete
+                    ? t('maint.emergency.complete', { file: r.fileName })
+                    : t('maint.emergency.partial', { file: r.fileName, list: r.problems.join(' ; ') }),
+                ),
+            (e: unknown) => {
+              logEvent('export', e, { context: 'copie de secours' });
+              useEditorStore.getState().notify(e instanceof Error ? e.message : String(e));
+            },
+          )
+        }
         onRevision={() => {
           useUiStore.getState().setRightTab('revisions');
           useRevisionsStore.getState().open({ kind: 'create' });
@@ -195,6 +230,8 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
           {pendingCalibration && <CalibrationDialog {...pendingCalibration} />}
           <NoticeBanner />
           <ViewBanner />
+          <LockBanner />
+          <RecoveredBanner />
           {state.status === 'ready' && !hasBaseImage && (
             <div className="absolute inset-0 flex items-center justify-center p-8">
               <div className="max-w-md rounded-lg border border-slate-300 bg-white p-6 text-center shadow-sm">
@@ -250,6 +287,7 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
           />
         </Suspense>
       )}
+      <ConflictDialog />
       {templatesOpen && <TemplatesDialog onClose={() => setTemplatesOpen(false)} />}
       {damagedExport && (
         <ConfirmDialog
