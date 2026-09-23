@@ -26,7 +26,12 @@ const TYPES: Record<string, string> = {
 export function registerStatic(app: FastifyInstance, dir: string) {
   const root = resolve(dir);
   app.get('/*', async (request, reply) => {
-    const path = decodeURIComponent(request.url.split('?')[0]!);
+    let path: string;
+    try {
+      path = decodeURIComponent(request.url.split('?')[0]!);
+    } catch {
+      return reply.status(400).send();
+    }
     if (path.startsWith('/api/')) return reply.callNotFound();
     let file = resolve(join(root, path === '/' ? 'index.html' : path));
     if (!file.startsWith(root + sep) && file !== root) return reply.status(404).send();

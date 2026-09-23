@@ -11,7 +11,7 @@ import pg from 'pg';
 import { buildApp } from '../src/app.ts';
 import { addUser, createOrganization } from '../src/bootstrap.ts';
 import { loadConfig } from '../src/config.ts';
-import { createPool } from '../src/db.ts';
+import { assertRowSecurityApplies, createPool } from '../src/db.ts';
 import { migrate } from '../src/migrate.ts';
 import { FsStorage } from '../src/storage/fsStorage.ts';
 import { startCluster } from '../test/pgCluster.ts';
@@ -49,7 +49,9 @@ const config = loadConfig({
   PORT: String(port),
   PUBLIC_ORIGIN: `http://localhost:${port}`,
 });
-const app = await buildApp({ config, pool: createPool(config.databaseUrl), storage: new FsStorage(files) });
+const pool = createPool(config.databaseUrl);
+await assertRowSecurityApplies(pool);
+const app = await buildApp({ config, pool, storage: new FsStorage(files) });
 await app.listen({ host: '127.0.0.1', port });
 console.log(`Serveur de test CampPlanner : http://localhost:${port} (base ${ownerUrl})`);
 const stop = async () => {

@@ -34,7 +34,8 @@ export interface EngineStatus {
 }
 
 export interface SyncMessage {
-  type: 'server-updated' | 'pull-applied' | 'status' | 'kick' | 'apply-pull';
+  /** `space-closed` : espace purgé dans un autre onglet (déconnexion d'un poste partagé). */
+  type: 'server-updated' | 'pull-applied' | 'status' | 'kick' | 'apply-pull' | 'space-closed';
   planId?: string;
   status?: EngineStatus;
   /** Relance demandée explicitement (retour du réseau, « Synchroniser maintenant ») : sans délai. */
@@ -129,6 +130,7 @@ export class SyncEngine {
         continue;
       }
       try {
+        if (!op.attempted) await this.outbox.update(op.seq!, { attempted: true });
         const outcome = await this.execute(op);
         if (outcome === 'done') await this.outbox.remove(op.seq!);
         else waiting.add(own);
@@ -172,6 +174,30 @@ export class SyncEngine {
 
   /** `done` : opération terminée (retirée) ; `wait` : bloquée (conflit) ou reportée. */
   private async execute(op: SyncOperationRecord): Promise<'done' | 'wait'> {
+    try {
+      return await this.executeOnce(op);
+    } catch (error) {
+      if (!(error instanceof ApiError && error.code === 'idempotency-key-reused' && error.body.previous))
+        throw error;
+      // Premier envoi reçu par le serveur (réponse perdue), puis contenu modifié ici depuis : le
+      // serveur a gardé le PREMIER contenu. Sa version devient la base (c'était la nôtre), et le
+      // contenu actuel repart sous une nouvelle clé. Sans cela, l'appareil croirait envoyé un
+      // contenu que le serveur n'a jamais enregistré.
+      const previous = error.body.previous as { status: number; body?: { serverVersion?: unknown } };
+      const version = previous.body?.serverVersion;
+      if (
+        previous.status < 300 &&
+        typeof version === 'number' &&
+        (op.entityType === 'plan' || op.entityType === 'camp' || op.entityType === 'template')
+      )
+        await this.setLink({ entityType: op.entityType, entityId: op.entityId, serverVersion: version });
+      const operationId = `op-${newId()}-${newId()}`;
+      await this.outbox.update(op.seq!, { operationId });
+      return this.executeOnce({ ...op, operationId });
+    }
+  }
+
+  private async executeOnce(op: SyncOperationRecord): Promise<'done' | 'wait'> {
     const headers = (ifMatch: number) => ({ 'If-Match': String(ifMatch), 'Idempotency-Key': op.operationId });
     const enc = encodeURIComponent;
     switch (op.kind) {
@@ -190,14 +216,19 @@ export class SyncEngine {
         const site = await this.deps.raw.getSite(op.entityId);
         if (!site) return 'done'; // supprimé depuis : la suppression suit
         const link = await this.link('camp', site.id);
-        const r = await this.deps.api.request<{ serverVersion: number }>(
-          'PUT',
-          `/api/camps/${enc(site.id)}`,
-          {
+        const r = await this.deps.api
+          .request<{ serverVersion: number }>('PUT', `/api/camps/${enc(site.id)}`, {
             body: { name: site.name, notes: site.notes },
             headers: headers(link?.serverVersion ?? 0),
-          },
-        );
+          })
+          .catch((error: unknown) => {
+            if (error instanceof ApiError && error.status === 409 && error.code === 'version')
+              throw new Error(
+                'Camp modifié sur le serveur depuis votre dernière synchronisation : votre changement n’est PAS envoyé. « Réessayer » l’enverra quand même (il remplacera celui du serveur) ; « Abandonner » reprendra la version du serveur.',
+                { cause: error },
+              );
+            throw error;
+          });
         await this.setLink({ entityType: 'camp', entityId: site.id, serverVersion: r.serverVersion });
         return 'done';
       }
@@ -222,7 +253,18 @@ export class SyncEngine {
       case 'plan.upsert':
         return this.pushPlan(op);
       case 'plan.delete': {
-        const link = await this.link('plan', op.entityId);
+        let link = await this.link('plan', op.entityId);
+        if (!link && op.mayExistOnServer) {
+          // Première création peut-être arrivée (réponse perdue) : on vérifie sur le serveur.
+          const state = await this.serverState('plan', op.entityId);
+          if (state && !state.deleted)
+            await this.setLink({
+              entityType: 'plan',
+              entityId: op.entityId,
+              serverVersion: state.serverVersion,
+            });
+          link = await this.link('plan', op.entityId);
+        }
         if (!link) return 'done';
         try {
           const r = await this.deps.api.request<{ serverVersion: number }>(
@@ -268,14 +310,19 @@ export class SyncEngine {
           });
         }
         const link = await this.link('template', op.entityId);
-        const r = await this.deps.api.request<{ serverVersion: number }>(
-          'PUT',
-          `/api/templates/${enc(op.entityId)}`,
-          {
+        const r = await this.deps.api
+          .request<{ serverVersion: number }>('PUT', `/api/templates/${enc(op.entityId)}`, {
             body: { template: entry.template },
             headers: headers(link?.serverVersion ?? 0),
-          },
-        );
+          })
+          .catch((error: unknown) => {
+            if (error instanceof ApiError && error.status === 409 && error.code === 'version')
+              throw new Error(
+                'Modèle modifié sur le serveur : votre changement n’est PAS envoyé. « Réessayer » l’enverra quand même ; « Abandonner » reprendra la version du serveur.',
+                { cause: error },
+              );
+            throw error;
+          });
         await this.setLink({ entityType: 'template', entityId: op.entityId, serverVersion: r.serverVersion });
         return 'done';
       }
@@ -471,10 +518,13 @@ export class SyncEngine {
     const pending = (await this.outbox.list()).some(
       (o) => o.entityId === change.id && o.entityType === 'camp',
     );
+    // Changement local en attente : la version de base reste celle d'avant. L'envoi recevra un
+    // refus de version (jamais un écrasement silencieux du changement de l'autre personne).
+    if (pending) return;
     if (change.deleted) {
       const plans = await this.deps.raw.listPlans(change.id);
-      if (!plans.length && !pending) await this.deps.raw.deleteSite(change.id);
-    } else if (camp && !pending) {
+      if (!plans.length) await this.deps.raw.deleteSite(change.id);
+    } else if (camp) {
       const local = await this.deps.raw.getSite(change.id);
       await this.deps.raw.saveSite({
         id: camp.id,
@@ -603,6 +653,22 @@ export class SyncEngine {
       pendingPull: undefined,
       deleted: false,
     });
+    // Première réception : ses révisions déjà passées dans le flux (plan alors absent) sont
+    // récupérées maintenant — aucune n'est sautée.
+    if (current === undefined) {
+      const list = await this.deps.api.request<{
+        revisions: { id: string; deleted: boolean; meta: unknown }[];
+      }>('GET', `/api/plans/${encodeURIComponent(planId)}/revisions`);
+      for (const r of list.revisions)
+        if (!r.deleted)
+          await this.pullRevision({
+            seq: 0,
+            kind: 'revision',
+            id: r.id,
+            serverVersion: revisionMetaSchema.parse(r.meta).statusLog.length,
+            deleted: false,
+          });
+    }
     this.post({ type: 'pull-applied', planId });
   }
 
@@ -694,6 +760,8 @@ export class SyncEngine {
       const logo = template.logo
         ? new Uint8Array(await this.deps.api.bytes(`/api/files/${template.logo.sha256}`))
         : null;
+      if (template.logo && logo && (await sha256Hex(logo.buffer)) !== template.logo.sha256)
+        throw new Error('Logo de modèle reçu altéré (SHA-256 différent) : refusé.');
       await this.deps.raw.saveTemplate({ template, logo });
     }
     await this.setLink({ entityType: 'template', entityId: change.id, serverVersion: change.serverVersion });
@@ -794,18 +862,99 @@ export class SyncEngine {
 
   /** Opération en échec : nouvel essai demandé explicitement. */
   async retry(seq: number) {
+    const op = (await this.outbox.list()).find((o) => o.seq === seq);
+    // Refus de version déjà expliqué à la personne : « Réessayer » = envoyer quand même, donc
+    // sur la version serveur ACTUELLE (sinon le même refus reviendrait indéfiniment).
+    if (op && op.status === 'failed' && ['plan.delete', 'camp.upsert', 'template.upsert'].includes(op.kind)) {
+      const state = await this.serverState(op.entityType as 'plan' | 'camp' | 'template', op.entityId);
+      if (state && !state.deleted)
+        await this.setLink({
+          entityType: op.entityType,
+          entityId: op.entityId,
+          serverVersion: state.serverVersion,
+        });
+    }
     await this.outbox.update(seq, { status: 'pending', nextAttemptAt: 0, lastError: null });
   }
 
-  /** Abandon explicite d'une opération (la donnée locale reste sur l'appareil). */
+  /**
+   * Abandon explicite d'une opération. La donnée locale reste sur l'appareil ; pour une
+   * suppression ou une modification refusée, la version du serveur est reprise tout de suite.
+   */
   async abandon(seq: number) {
     const op = (await this.outbox.list()).find((o) => o.seq === seq);
     await this.outbox.remove(seq);
-    // Suppression abandonnée : le plan redeviendra celui du serveur au prochain cycle.
-    if (op?.kind === 'plan.delete') {
-      const link = await this.link('plan', op.entityId);
-      if (link) await this.setLink({ ...link, serverVersion: 0 });
+    if (!op) return;
+    const type = op.entityType;
+    if (!['plan.delete', 'camp.upsert', 'template.upsert'].includes(op.kind)) return;
+    if (type !== 'plan' && type !== 'camp' && type !== 'template') return;
+    const state = await this.serverState(type, op.entityId);
+    if (!state) return;
+    const link = await this.link(type, op.entityId);
+    if (link) await this.setLink({ ...link, serverVersion: 0, syncedLocalVersion: undefined });
+    const change: Change = {
+      seq: 0,
+      kind: type,
+      id: op.entityId,
+      serverVersion: state.serverVersion,
+      deleted: state.deleted,
+    };
+    if (type === 'plan') await this.applyServerPlanChange(change);
+    else if (type === 'camp') {
+      const camps = await this.deps.api.request<{
+        camps: { id: string; name: string; notes: string; createdAt: string; updatedAt: string }[];
+      }>('GET', '/api/camps');
+      await this.pullCamp(
+        change,
+        camps.camps.find((c) => c.id === op.entityId),
+      );
+    } else await this.pullTemplate(change);
+    this.post({ type: 'pull-applied' });
+  }
+
+  /** Plan repris du serveur après un abandon (sans détection de « changement local »). */
+  private async applyServerPlanChange(change: Change) {
+    if (change.deleted) {
+      if (await this.deps.raw.getPlanVersion(change.id)) await this.deps.raw.deletePlan(change.id);
+      await this.setLink({
+        entityType: 'plan',
+        entityId: change.id,
+        serverVersion: change.serverVersion,
+        deleted: true,
+      });
+      return;
     }
+    await this.applyServerPlan(change.id);
+  }
+
+  /** État actuel d'un élément sur le serveur (null : inexistant ou inaccessible). */
+  private async serverState(
+    type: 'plan' | 'camp' | 'template',
+    id: string,
+  ): Promise<{ serverVersion: number; deleted: boolean } | null> {
+    if (type === 'plan') {
+      const r = await this.deps.api
+        .request<ServerPlan>('GET', `/api/plans/${encodeURIComponent(id)}`)
+        .catch((error: unknown) => {
+          if (error instanceof ApiError && error.status === 404) return null;
+          throw error;
+        });
+      return r ? { serverVersion: r.serverVersion, deleted: r.deleted } : null;
+    }
+    const list =
+      type === 'camp'
+        ? (
+            await this.deps.api.request<{
+              camps: { id: string; serverVersion: number; deletedAt: string | null }[];
+            }>('GET', '/api/camps')
+          ).camps
+        : (
+            await this.deps.api.request<{
+              templates: { id: string; serverVersion: number; deletedAt: string | null }[];
+            }>('GET', '/api/templates')
+          ).templates;
+    const found = list.find((e) => e.id === id);
+    return found ? { serverVersion: found.serverVersion, deleted: found.deletedAt !== null } : null;
   }
 }
 

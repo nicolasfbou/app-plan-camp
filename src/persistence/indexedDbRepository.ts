@@ -156,6 +156,11 @@ export class IndexedDbRepository implements ProjectRepository {
     this.db.close();
   }
 
+  /** Fermeture définitive : aucune requête ultérieure ne rouvre (ni ne recrée) la base. */
+  shutdown(): void {
+    this.db.close({ disableAutoOpen: true });
+  }
+
   /** Nom de la base (espace de travail). */
   get databaseName(): string {
     return this.db.name;
@@ -176,7 +181,7 @@ export class IndexedDbRepository implements ProjectRepository {
 
   /** Supprime TOUTE la base de cet espace (déconnexion d'un appareil partagé). */
   async destroy(): Promise<void> {
-    this.db.close();
+    this.db.close({ disableAutoOpen: true });
     await Dexie.delete(this.db.name);
   }
 

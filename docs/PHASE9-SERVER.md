@@ -121,7 +121,15 @@ l'empêche d'appartenir à deux comptes.
 - Pas d'inscription libre : l'accès passe par une invitation d'un administrateur.
 - Un échec donne la même réponse pour un compte inconnu et pour un mauvais mot de passe. Un
   calcul argon2 factice égalise le temps de réponse.
-- Limitation des tentatives : 8 échecs par compte et 50 par adresse IP, sur 15 minutes.
+- Limitation des tentatives, sur 15 minutes :
+  - 8 échecs pour un même compte depuis une même adresse ;
+  - 30 pour un même compte, toutes adresses confondues ;
+  - 50 pour une même adresse.
+    Le titulaire d'un compte attaqué depuis ailleurs peut donc encore se connecter. Derrière un
+    proxy, `TRUST_PROXY=true` est indispensable pour voir la vraie adresse.
+- Invitation d'un compte existant : même limitation, et l'invitation est **annulée** après 5 mots
+  de passe faux. Elle ne peut pas servir à deviner le mot de passe d'un compte d'une autre
+  organisation.
 - Mot de passe : 12 caractères minimum.
 - Plusieurs organisations : la réponse `409 choose-organization` propose la liste, puis
   l'utilisateur choisit.
@@ -146,6 +154,13 @@ l'empêche d'appartenir à deux comptes.
 L'interface masque ce qui est interdit, mais **le serveur revérifie tout**. Suspendre un membre
 révoque ses sessions. Le dernier administrateur est protégé.
 
+Un éditeur ne dépose une révision que **telle que créée** : un seul statut initial, aucune
+approbation. Un historique plus riche (statuts successifs, approbation locale déclarée) n'est
+accepté que d'un rôle autorisé à publier, et reste « non vérifié ».
+
+Un utilisateur limité à certains camps (`camp_access`) ne lit que les fichiers d'un plan ou d'une
+révision de ces camps, ou d'un modèle de l'organisation.
+
 ### Type d'appareil
 
 La question est posée à chaque connexion. Le poste n'est jamais supposé personnel.
@@ -168,6 +183,14 @@ La question est posée à chaque connexion. Le poste n'est jamais supposé perso
     de les exporter (`.campplan`) ou de les abandonner explicitement.
   - Navigateur fermé sans déconnexion : écran verrouillé ; le bouton « Effacer les données de
     cet espace sur ce poste » fonctionne sans session.
+  - Serveur injoignable au moment de la déconnexion : la déconnexion est **suspendue**, car la
+    session resterait valable sur le serveur. Effacer quand même demande un second choix
+    explicite.
+  - Autres onglets du même espace : ils ferment la base pour de bon et se rechargent. Une base
+    recréée par une écriture tardive est effacée de nouveau au démarrage suivant, grâce à la
+    liste des bases purgées.
+  - Aucune sauvegarde externe automatique sur un poste partagé : des copies hors du navigateur
+    survivraient à la purge.
 
 L'espace **« Local (sans compte) »** des phases 1 à 8 reste intact : base `campplanner`, sans
 serveur.
@@ -236,6 +259,14 @@ porte :
     mémorisée sans rien refaire : une réponse perdue puis renvoyée ne crée ni deuxième version,
     ni deuxième révision, ni deuxième fichier.
   - Une clé réutilisée pour une autre route ou par un autre utilisateur est refusée (422).
+  - Le serveur garde l'empreinte de la requête d'origine (version attendue et corps). Même clé
+    avec un **autre contenu** : aucun enregistrement, réponse 422 accompagnée de la réponse
+    d'origine. C'est le cas d'une réponse perdue suivie de nouvelles modifications. Le client
+    prend alors la version reçue comme base et renvoie le contenu actuel sous une nouvelle clé.
+    L'appareil ne croit donc jamais envoyé un contenu que le serveur n'a pas enregistré.
+  - Suppression d'un élément dont la création a peut-être atteint le serveur (réponse perdue ou
+    envoi en cours) : la suppression est envoyée quand même, après vérification sur le
+    serveur.
 - **Regroupement.**
   - Plusieurs enregistrements hors ligne du même plan deviennent **une** opération, qui envoie le
     dernier état.
@@ -251,7 +282,14 @@ porte :
     l'utilisatrice ou l'utilisateur décide de réessayer ou d'abandonner. Les opérations
     indépendantes continuent.
 - **Réception (`pull`).**
-  - Suit `change_log` depuis le curseur.
+  - Suit `change_log` depuis le curseur. Les inscriptions au journal d'une organisation sont
+    sérialisées jusqu'à la validation (verrou transactionnel). L'ordre des numéros est donc
+    l'ordre de validation : aucun changement ne peut être sauté par un curseur.
+  - Première réception d'un plan : ses révisions sont récupérées aussi, même celles déjà passées
+    dans le flux.
+  - Camp ou modèle modifié des deux côtés : l'envoi local est refusé et affiché, jamais
+    d'écrasement. « Réessayer » envoie quand même, sur la version actuelle du serveur ;
+    « Abandonner » reprend immédiatement la version du serveur.
   - Un plan ouvert dans un onglet n'est pas remplacé sous les yeux de la personne : la mise à
     jour est différée et proposée par un bandeau.
   - Un plan avec des changements locaux non envoyés n'est **jamais** écrasé : c'est un conflit.
@@ -355,19 +393,31 @@ Le stockage S3 fonctionne aussi avec MinIO sur un serveur PAMM.
 
 ## 7. Tests
 
-| Suite                          | Contenu                                                                                                                                                                                                                                                                                                                        |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `server/test/migrate.test.ts`  | migrations rejouables, schéma                                                                                                                                                                                                                                                                                                  |
-| `server/test/auth.test.ts`     | cookie, poste partagé, échecs indiscernables, CSRF, révocation, limitation, invitations, compte existant, suspension                                                                                                                                                                                                           |
-| `server/test/plans.test.ts`    | version périmée (409), requête rejouée, création concurrente, suppression logique, `If-Match`                                                                                                                                                                                                                                  |
-| `server/test/security.test.ts` | organisation A contre B (lecture, écriture, historique, révisions, fichiers, audit), faux `organizationId`, RLS SQL brute, lecteur, éditeur, faux `userId`, fausse approbation, sceau altéré, approbation immuable, approbation locale publiée, SVG dangereux, envoi surdimensionné, SHA menteur, type déguisé, fichier absent |
-| `server/test/sync.test.ts`     | deux postes simulés (vrai moteur client, fausse IndexedDB, vrai serveur et vraie base) : publication et SHA, hors ligne, conflit (garder la mienne, garder le serveur, copie), serveur indisponible, envoi de photo interrompu, réponse perdue, suppression hors ligne, révision hors ligne, refus serveur                     |
-| `e2e/phase9.spec.ts`           | navigateur réel : type d'appareil obligatoire, hors ligne → en ligne, conflit entre deux ordinateurs, poste partagé (verrouillage, purge), approbation et audit, publication d'un projet local, refus serveur visible                                                                                                          |
+| Suite                          | Contenu                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `server/test/migrate.test.ts`  | migrations rejouables, schéma                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `server/test/auth.test.ts`     | cookie, poste partagé, échecs indiscernables, CSRF, révocation, limitation, invitations, compte existant, suspension                                                                                                                                                                                                                                                                                                           |
+| `server/test/plans.test.ts`    | version périmée (409), requête rejouée, création concurrente, suppression logique, `If-Match`                                                                                                                                                                                                                                                                                                                                  |
+| `server/test/security.test.ts` | organisation A contre B (lecture, écriture, historique, révisions, fichiers, audit), faux `organizationId`, RLS SQL brute, lecteur, éditeur, faux `userId`, fausse approbation, sceau altéré, approbation immuable, approbation locale publiée, SVG dangereux, envoi surdimensionné, SHA menteur, type déguisé, fichier absent                                                                                                 |
+| `server/test/sync.test.ts`     | deux postes simulés (vrai moteur client, fausse IndexedDB, vrai serveur et vraie base) : publication et SHA, hors ligne, conflit (garder la mienne, garder le serveur, copie), serveur indisponible, envoi de photo interrompu, réponse perdue, suppression hors ligne, révision hors ligne, refus serveur ; réponse perdue puis nouvelles modifications, suppression pendant une création en vol, camp renommé des deux côtés |
+| `server/test/review.test.ts`   | corrections de la revue indépendante : même clé et autre contenu, journal des changements sans trou, éditeur et révision « approuvée », instantané d'un autre plan, libellés concurrents, invitation et devinette de mot de passe, restriction par camp des fichiers, refus d'un rôle qui contourne la RLS                                                                                                                     |
+| `e2e/phase9.spec.ts`           | navigateur réel : type d'appareil obligatoire, hors ligne → en ligne, conflit entre deux ordinateurs, poste partagé (verrouillage, purge), approbation et audit, publication d'un projet local, refus serveur visible                                                                                                                                                                                                          |
 
 Lancement : `npm run test:server`, qui démarre un PostgreSQL temporaire (binaires
 `/usr/lib/postgresql/16/bin` ou `PG_BIN`), puis `npx playwright test --project serveur`.
 
 ## 8. Limites connues
+
+- **Démarrage** : le serveur refuse un rôle superutilisateur ou `BYPASSRLS` dans
+  `DATABASE_URL`. Le propriétaire du schéma ne sert qu'aux migrations
+  (`MIGRATION_DATABASE_URL`). La RLS reste la barrière principale : la plupart des requêtes ne
+  répètent pas le filtre d'organisation. Le flux des changements et les jointures sensibles le
+  font.
+- **Nettoyage** : les clés d'idempotence et les invitations expirées restent en base (aucune
+  purge planifiée). Il n'existe pas encore de révocation manuelle d'une invitation par un
+  administrateur, hors expiration et annulation automatique après 5 échecs.
+- **Invitation** : l'aperçu d'une invitation indique à son détenteur si le courriel correspond à
+  un compte existant, pour adapter le formulaire.
 
 - **Microsoft Entra ID** : le modèle d'identité est prêt (`user_identities`), le flux OIDC n'est
   pas écrit.

@@ -1068,6 +1068,7 @@ export const fr = {
   'account.lockedBody':
     'Cet espace de {org} est sur un appareil partagé : reconnectez-vous pour accéder aux projets.',
   'account.backToLocal': 'Utiliser l’espace local',
+  'account.logoutOffline': 'Effacer quand même (session serveur non fermée)',
   'account.eraseDevice': 'Effacer les données de cet espace sur ce poste',
   'account.eraseDeviceConfirm':
     'Effacer de ce poste toutes les données de {org} (plans, révisions, file de synchronisation) ? Ce qui est déjà sur le serveur n’est pas touché.',

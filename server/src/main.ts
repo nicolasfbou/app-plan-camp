@@ -4,7 +4,7 @@
  */
 import { buildApp } from './app.ts';
 import { loadConfig } from './config.ts';
-import { createPool } from './db.ts';
+import { assertRowSecurityApplies, createPool } from './db.ts';
 import { migrate } from './migrate.ts';
 import { createStorage } from './storage/storage.ts';
 
@@ -14,9 +14,11 @@ if (!config.databaseUrl) {
   process.exit(1);
 }
 await migrate(config.migrationDatabaseUrl, (m) => console.log(m));
+const pool = createPool(config.databaseUrl);
+await assertRowSecurityApplies(pool);
 const app = await buildApp({
   config,
-  pool: createPool(config.databaseUrl),
+  pool,
   storage: await createStorage(config.storage),
 });
 await app.listen({ host: config.host, port: config.port });

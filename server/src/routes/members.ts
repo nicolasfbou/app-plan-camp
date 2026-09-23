@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { type Deps, requireAuth } from '../app.ts';
 import { audit } from '../audit.ts';
 import { checkPasswordPolicy, hashPassword, verifyPassword } from '../auth/passwords.ts';
-import { newToken, sha256 } from '../auth/sessions.ts';
+import { LoginThrottle, newToken, sha256 } from '../auth/sessions.ts';
 import { tx } from '../db.ts';
 import { badRequest, HttpError, notFound } from '../errors.ts';
 import { requirePermission, ROLES } from '../permissions.ts';
@@ -74,13 +74,14 @@ export function registerMemberRoutes(app: FastifyInstance, deps: Deps) {
       name: string;
       expires_at: Date;
       accepted_at: Date | null;
+      revoked_at: Date | null;
     }>(
-      `SELECT i.organization_id, i.email, i.role, o.name, i.expires_at, i.accepted_at
+      `SELECT i.organization_id, i.email, i.role, o.name, i.expires_at, i.accepted_at, i.revoked_at
          FROM invitations i JOIN organizations o ON o.id = i.organization_id WHERE i.token_hash = $1`,
       [sha256(token)],
     );
     const inv = r.rows[0];
-    if (!inv || inv.accepted_at || inv.expires_at.getTime() < Date.now())
+    if (!inv || inv.accepted_at || inv.revoked_at || inv.expires_at.getTime() < Date.now())
       throw new HttpError(404, 'invitation-invalid', 'Invitation invalide, expirée ou déjà utilisée.');
     return inv;
   };
@@ -115,8 +116,21 @@ export function registerMemberRoutes(app: FastifyInstance, deps: Deps) {
     let newAccount: { displayName: string; hash: string } | null = null;
     if (existing) {
       // Compte existant (autre organisation) : il prouve son identité, aucun second compte.
-      if (!(await verifyPassword(existing.secret_hash, body.password)))
+      // Mêmes limites que la connexion, et l'invitation est annulée après 5 échecs : l'invitation
+      // ne doit pas servir à deviner le mot de passe d'un compte d'une autre organisation.
+      const keys = LoginThrottle.keys(request.ip, inv.email.toLowerCase());
+      if (deps.throttle.blocked(...keys))
+        throw new HttpError(429, 'throttled', 'Trop de tentatives. Réessayez dans quelques minutes.');
+      if (!(await verifyPassword(existing.secret_hash, body.password))) {
+        deps.throttle.fail(...keys);
+        await deps.pool.query(
+          `UPDATE invitations SET failed_attempts = failed_attempts + 1,
+                  revoked_at = CASE WHEN failed_attempts + 1 >= 5 THEN now() ELSE revoked_at END
+            WHERE token_hash = $1`,
+          [sha256(request.params.token)],
+        );
         throw new HttpError(401, 'invalid-credentials', 'Mot de passe du compte existant incorrect.');
+      }
     } else {
       const policy = checkPasswordPolicy(body.password);
       if (policy) throw badRequest(policy);
@@ -139,7 +153,7 @@ export function registerMemberRoutes(app: FastifyInstance, deps: Deps) {
         );
       }
       const used = await c.query(
-        'UPDATE invitations SET accepted_at = now(), accepted_by = $2 WHERE token_hash = $1 AND accepted_at IS NULL',
+        'UPDATE invitations SET accepted_at = now(), accepted_by = $2 WHERE token_hash = $1 AND accepted_at IS NULL AND revoked_at IS NULL',
         [sha256(request.params.token), userId],
       );
       if (!used.rowCount) throw new HttpError(409, 'invitation-invalid', 'Invitation déjà utilisée.');

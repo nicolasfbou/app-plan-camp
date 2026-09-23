@@ -26,11 +26,11 @@ export function registerSyncRoutes(app: FastifyInstance, deps: Deps) {
         `SELECT l.seq, l.kind, l.entity_id, l.server_version, l.deleted,
                 CASE l.kind WHEN 'camp' THEN l.entity_id WHEN 'plan' THEN p.camp_id WHEN 'revision' THEN rp.camp_id END AS camp_id
            FROM change_log l
-           LEFT JOIN plans p ON l.kind = 'plan' AND p.id = l.entity_id
-           LEFT JOIN revisions r ON l.kind = 'revision' AND r.id = l.entity_id
-           LEFT JOIN plans rp ON rp.id = r.plan_id
-          WHERE l.seq > $1 ORDER BY l.seq LIMIT $2`,
-        [since, limit],
+           LEFT JOIN plans p ON l.kind = 'plan' AND p.organization_id = l.organization_id AND p.id = l.entity_id
+           LEFT JOIN revisions r ON l.kind = 'revision' AND r.organization_id = l.organization_id AND r.id = l.entity_id
+           LEFT JOIN plans rp ON rp.organization_id = r.organization_id AND rp.id = r.plan_id
+          WHERE l.organization_id = $3 AND l.seq > $1 ORDER BY l.seq LIMIT $2`,
+        [since, limit, auth.orgId],
       );
       const allowed = await allowedCampIds(c, auth);
       const changes = rows.rows

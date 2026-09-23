@@ -37,3 +37,19 @@ export async function tx<T>(pool: pg.Pool, ctx: Context, fn: (client: Client) =>
     client.release();
   }
 }
+
+/**
+ * L'isolation des organisations repose sur la RLS : un rôle superutilisateur ou `BYPASSRLS`
+ * verrait toutes les organisations. Le serveur refuse de démarrer avec un tel rôle.
+ */
+export async function assertRowSecurityApplies(pool: pg.Pool): Promise<void> {
+  const r = await pool.query<{ rolsuper: boolean; rolbypassrls: boolean; rolname: string }>(
+    'SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user',
+  );
+  const role = r.rows[0];
+  if (!role || role.rolsuper || role.rolbypassrls)
+    throw new Error(
+      `DATABASE_URL utilise le rôle « ${role?.rolname ?? '?'} », qui contourne la sécurité par ligne (RLS). ` +
+        'Utilisez le rôle applicatif (campplanner_app) ; le propriétaire ne sert qu’aux migrations (MIGRATION_DATABASE_URL).',
+    );
+}

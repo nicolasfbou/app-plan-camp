@@ -76,10 +76,13 @@ export async function buildApp(
   });
 
   app.setErrorHandler((error, request, reply) => {
-    if (error instanceof HttpError)
+    if (error instanceof HttpError) {
+      // Corps d'envoi trop gros laissé non lu : la connexion est fermée APRÈS la réponse.
+      if (error.status === 413) reply.header('Connection', 'close');
       return reply
         .status(error.status)
         .send({ error: error.code, message: error.message, ...(error.details ?? {}) });
+    }
     if (error instanceof ZodError)
       return reply.status(400).send({
         error: 'bad-request',
@@ -96,7 +99,7 @@ export async function buildApp(
     // Violation d'un garde-fou de la base (RLS, révision immuable, ajout seul) : refus, pas 500.
     const pgCode = (error as { code?: string }).code;
     // Écriture concurrente (même nouvel élément créé deux fois en même temps) : conflit, jamais 500.
-    if (pgCode === '23505' || pgCode === '40001')
+    if (pgCode === '23505' || pgCode === '40001' || pgCode === '40P01')
       return reply.status(409).send({
         error: 'concurrent',
         message: 'Modifié en même temps ailleurs : resynchronisez puis réessayez.',

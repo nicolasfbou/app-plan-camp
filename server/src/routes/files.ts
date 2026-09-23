@@ -17,7 +17,7 @@ import { audit } from '../audit.ts';
 import { tx } from '../db.ts';
 import { HttpError, notFound } from '../errors.ts';
 import { ALLOWED_TYPES, sniffType, unsafeSvg } from '../files/validate.ts';
-import { requirePermission } from '../permissions.ts';
+import { allowedCampIds, requirePermission } from '../permissions.ts';
 import { fileKey } from '../storage/storage.ts';
 
 const SHA = /^[0-9a-f]{64}$/;
@@ -33,7 +33,10 @@ async function receive(stream: Readable, limit: number) {
       stream.on('data', (chunk: Buffer) => {
         size += chunk.length;
         if (size > limit) {
-          stream.destroy();
+          // Ne plus lire (sans couper la connexion avant la réponse) : le client reçoit bien le 413,
+          // erreur définitive, au lieu d'une coupure réseau qu'il réessaierait indéfiniment.
+          stream.removeAllListeners('data');
+          stream.pause();
           reject(
             new HttpError(
               413,
@@ -153,14 +156,29 @@ export function registerFileRoutes(app: FastifyInstance, deps: Deps) {
   app.get<{ Params: { sha256: string } }>('/api/files/:sha256', async (request, reply) => {
     const auth = requireAuth(request);
     if (!SHA.test(request.params.sha256)) throw notFound('Fichier');
-    const row = (
-      await tx(deps.pool, { orgId: auth.orgId, userId: auth.userId }, (c) =>
-        c.query<{ storage_key: string; mime_type: string; byte_length: number }>(
+    const row = await tx(deps.pool, { orgId: auth.orgId, userId: auth.userId }, async (c) => {
+      const file = (
+        await c.query<{ storage_key: string; mime_type: string; byte_length: number }>(
           'SELECT storage_key, mime_type, byte_length FROM files WHERE sha256 = $1',
           [request.params.sha256],
-        ),
-      )
-    ).rows[0];
+        )
+      ).rows[0];
+      const allowed = await allowedCampIds(c, auth);
+      if (!file || !allowed) return file;
+      // Accès restreint à certains camps : seulement les fichiers d'un plan ou d'une révision de
+      // ces camps, ou d'un modèle de l'organisation.
+      const reachable = await c.query(
+        `SELECT 1 FROM file_refs f
+           LEFT JOIN plans p ON f.owner_kind = 'plan' AND p.organization_id = f.organization_id AND p.id = f.owner_id
+           LEFT JOIN revisions r ON f.owner_kind = 'revision' AND r.organization_id = f.organization_id AND r.id = f.owner_id
+           LEFT JOIN plans rp ON rp.organization_id = r.organization_id AND rp.id = r.plan_id
+          WHERE f.sha256 = $1
+            AND (f.owner_kind = 'template' OR p.camp_id = ANY($2) OR rp.camp_id = ANY($2))
+          LIMIT 1`,
+        [request.params.sha256, [...allowed]],
+      );
+      return reachable.rowCount ? file : undefined;
+    });
     // Fichier d'une autre organisation : même réponse qu'un fichier inexistant.
     if (!row) throw notFound('Fichier');
     const stream = await deps.storage.get(row.storage_key);

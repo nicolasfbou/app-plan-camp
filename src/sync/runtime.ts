@@ -14,6 +14,13 @@ import { SyncEngine } from './engine.ts';
 import { refreshSyncStore, useSyncStore } from './syncStore.ts';
 
 let engine: SyncEngine | null = null;
+let stopCurrent: (() => void) | null = null;
+
+/** Arrête la synchronisation de cet onglet (avant la purge d'un espace). */
+export function stopSync() {
+  stopCurrent?.();
+  stopCurrent = null;
+}
 
 /** Moteur de CET onglet (null si un autre onglet l'exécute). */
 export const localEngine = () => engine;
@@ -81,13 +88,15 @@ export function startSync(profile: Profile): () => void {
     });
   else release = lead();
 
-  return () => {
+  const stop = () => {
     stopped = true;
     release();
     clearInterval(poll);
     offMessages();
     window.removeEventListener('online', onOnline);
     window.removeEventListener('offline', onOnline);
-    raw.close();
+    raw.shutdown();
   };
+  stopCurrent = stop;
+  return stop;
 }

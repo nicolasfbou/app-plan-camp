@@ -86,30 +86,50 @@ export async function revokeSession(pool: pg.Pool, sessionHash: string) {
 }
 
 /**
- * Limitation des tentatives de connexion (mémoire du processus) : par compte (8 échecs / 15 min)
- * et par adresse (50 : plusieurs personnes d'un même camp partagent souvent une adresse).
+ * Limitation des tentatives de mot de passe (mémoire du processus), sur 15 minutes :
+ * - par compte ET adresse (`pair:`) : 8 échecs — bloque l'essai répété depuis un poste sans
+ *   empêcher le vrai titulaire de se connecter depuis ailleurs ;
+ * - par compte, toutes adresses (`email:`) : 30 — plafonne l'essai distribué ;
+ * - par adresse (`ip:`) : 50 — plusieurs personnes d'un même camp partagent souvent une adresse
+ *   (derrière un proxy, `TRUST_PROXY=true` est indispensable pour voir la vraie adresse).
+ * Les entrées expirées sont purgées : la mémoire ne grossit pas sans limite.
  */
 export class LoginThrottle {
   private readonly failures = new Map<string, number[]>();
+  private calls = 0;
   constructor(
-    private readonly maxPerAccount = 8,
+    private readonly maxPerPair = 8,
     private readonly maxPerAddress = 50,
     private readonly windowMs = 15 * 60_000,
+    private readonly maxPerAccount = 30,
   ) {}
+  /** Clés d'une tentative : adresse, compte, compte + adresse. */
+  static keys(ip: string, email: string) {
+    return [`ip:${ip}`, `email:${email}`, `pair:${email}|${ip}`];
+  }
   private max(key: string) {
-    return key.startsWith('ip:') ? this.maxPerAddress : this.maxPerAccount;
+    if (key.startsWith('ip:')) return this.maxPerAddress;
+    if (key.startsWith('email:')) return this.maxPerAccount;
+    return this.maxPerPair;
   }
   private recent(key: string) {
     const now = Date.now();
     const list = (this.failures.get(key) ?? []).filter((t) => now - t < this.windowMs);
-    this.failures.set(key, list);
+    if (list.length) this.failures.set(key, list);
+    else this.failures.delete(key);
     return list;
   }
+  private sweep() {
+    if (++this.calls % 1000) return;
+    for (const key of [...this.failures.keys()]) this.recent(key);
+  }
   blocked(...keys: string[]) {
+    this.sweep();
     return keys.some((k) => this.recent(k).length >= this.max(k));
   }
   fail(...keys: string[]) {
-    for (const k of keys) this.recent(k).push(Date.now());
+    const now = Date.now();
+    for (const k of keys) this.failures.set(k, [...this.recent(k), now]);
   }
   reset(...keys: string[]) {
     for (const k of keys) this.failures.delete(k);

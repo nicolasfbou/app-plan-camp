@@ -47,15 +47,19 @@ export class Outbox {
       if (UPSERTS.has(input.kind) && open.some((o) => o.kind === input.kind && o.status === 'pending'))
         return;
       const link = await this.tables.syncLinks.get(own);
+      let mayExistOnServer = false;
       if (input.kind.endsWith('.delete')) {
+        // Un envoi déjà commencé a peut-être atteint le serveur (réponse perdue ou en cours) :
+        // la suppression est alors envoyée quand même, après vérification sur le serveur.
+        mayExistOnServer = open.some((o) => o.kind !== input.kind && o.attempted);
         // Suppression : les envois en attente de cet élément deviennent inutiles.
         for (const o of open)
           if (o.kind !== input.kind && o.status !== 'blocked') await this.tables.outbox.delete(o.seq!);
-        // Jamais envoyé au serveur : rien à supprimer là-bas (ni ses révisions en attente).
-        if (!link) {
+        // Jamais envoyé au serveur : rien à supprimer là-bas (ni ses révisions jamais envoyées).
+        if (!link && !mayExistOnServer) {
           if (input.entityType === 'plan') {
             const orphans = await this.tables.outbox
-              .filter((o) => o.planId === input.entityId && o.status !== 'done')
+              .filter((o) => o.planId === input.entityId && o.status !== 'done' && !o.attempted)
               .toArray();
             for (const o of orphans) await this.tables.outbox.delete(o.seq!);
           }
@@ -79,6 +83,7 @@ export class Outbox {
         ...(input.origin ? { origin: input.origin } : {}),
         ...(input.planId ? { planId: input.planId } : {}),
         ...(input.campId ? { campId: input.campId } : {}),
+        ...(mayExistOnServer ? { mayExistOnServer } : {}),
       };
       await this.tables.outbox.add(op);
     });

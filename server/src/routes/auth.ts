@@ -7,6 +7,7 @@ import { burnPasswordCheck, verifyPassword } from '../auth/passwords.ts';
 import {
   cookieOptions,
   createSession,
+  LoginThrottle,
   resolveSession,
   revokeSession,
   SESSION_COOKIE,
@@ -39,7 +40,8 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps) {
   app.post('/api/auth/login', async (request, reply) => {
     const body = loginBody.parse(request.body);
     const email = body.email.toLowerCase();
-    if (deps.throttle.blocked(`ip:${request.ip}`, `email:${email}`))
+    const keys = LoginThrottle.keys(request.ip, email);
+    if (deps.throttle.blocked(...keys))
       throw new HttpError(429, 'throttled', 'Trop de tentatives. Réessayez dans quelques minutes.');
     const user = (
       await deps.pool.query<{ id: string; status: string; secret_hash: string | null }>(
@@ -53,11 +55,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps) {
       ? await verifyPassword(user.secret_hash, body.password)
       : (await burnPasswordCheck(body.password), false);
     if (!user || !ok || user.status !== 'active') {
-      deps.throttle.fail(`ip:${request.ip}`, `email:${email}`);
+      deps.throttle.fail(...keys);
       // Même réponse que le compte existe ou non (pas d'énumération).
       throw new HttpError(401, 'invalid-credentials', 'Courriel ou mot de passe incorrect.');
     }
-    deps.throttle.reset(`email:${email}`);
+    deps.throttle.reset(keys[2]!);
     const orgs = (
       await deps.pool.query<{ id: string; name: string; slug: string }>(
         `SELECT o.id, o.name, o.slug FROM memberships m JOIN organizations o ON o.id = m.organization_id

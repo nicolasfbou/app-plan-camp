@@ -307,3 +307,77 @@ describe('synchronisation hors ligne / en ligne', () => {
     editor.close();
   });
 });
+
+describe('revue indépendante : aucune perte silencieuse', () => {
+  const ready = async (d: Device) => {
+    for (const op of await d.engine.outbox.list())
+      await d.engine.outbox.update(op.seq!, { nextAttemptAt: 0 });
+  };
+
+  it('réponse perdue PUIS nouvelles modifications : le serveur reçoit bien la dernière version', async () => {
+    const a = await device(h, 'gestion@pamm.test', h.orgA.id);
+    const b = await device(h, 'edition@pamm.test', h.orgA.id);
+    const { doc } = await newLocalPlan(a);
+    await a.sync();
+    await edit(a, doc.plan.id, 'modif 1');
+    a.net.loseNextResponse = (m, u) => m === 'PUT' && u.startsWith('/api/plans/');
+    await a.sync(); // le serveur a enregistré « modif 1 », l'appareil ne le sait pas
+    await edit(a, doc.plan.id, 'modif 2'); // même opération en file (regroupement)
+    await ready(a);
+    await a.sync();
+    expect(await a.engine.outbox.list()).toHaveLength(0);
+    expect(await serverVersions(doc.plan.id)).toEqual([1, 2, 3]);
+    const server = await h.db.owner.query(
+      'SELECT document FROM plan_versions WHERE plan_id = $1 ORDER BY version DESC LIMIT 1',
+      [doc.plan.id],
+    );
+    expect(server.rows[0].document.plan.titleBlock.notes).toBe('modif 2');
+    // Un changement de l'autre poste arrive ensuite : reçu normalement, rien d'écrasé.
+    await b.sync();
+    await edit(b, doc.plan.id, 'poste 2');
+    await b.sync();
+    await a.sync();
+    expect((await a.repo.openPlan(doc.plan.id))!.doc.plan.titleBlock.notes).toBe('poste 2');
+    a.close();
+    b.close();
+  });
+
+  it('plan supprimé pendant que sa création était en vol (réponse perdue) : supprimé aussi sur le serveur', async () => {
+    const a = await device(h, 'gestion@pamm.test', h.orgA.id);
+    const { doc } = await newLocalPlan(a);
+    a.net.loseNextResponse = (m, u) => m === 'PUT' && u.startsWith('/api/plans/');
+    await a.sync();
+    expect(await serverVersions(doc.plan.id)).toEqual([1]);
+    await a.repo.deletePlan(doc.plan.id);
+    expect((await a.engine.outbox.list()).map((o) => o.kind)).toContain('plan.delete');
+    await ready(a);
+    await a.sync();
+    const row = await h.db.owner.query('SELECT deleted_at FROM plans WHERE id = $1', [doc.plan.id]);
+    expect(row.rows[0].deleted_at).not.toBeNull();
+    a.close();
+  });
+
+  it('camp renommé des deux côtés : refus visible (jamais d’écrasement) ; « Abandonner » reprend le serveur', async () => {
+    const a = await device(h, 'gestion@pamm.test', h.orgA.id);
+    const b = await device(h, 'admin@pamm.test', h.orgA.id);
+    const { site } = await newLocalPlan(a);
+    await a.sync();
+    await b.sync();
+    a.net.online = false;
+    await a.repo.saveSite({ ...(await a.repo.getSite(site.id))!, name: 'Nom du poste 1' });
+    await b.repo.saveSite({ ...(await b.repo.getSite(site.id))!, name: 'Nom du poste 2' });
+    await b.sync();
+    a.net.online = true;
+    await ready(a);
+    await a.sync();
+    const camp = await h.db.owner.query('SELECT name FROM camps WHERE id = $1', [site.id]);
+    expect(camp.rows[0].name).toBe('Nom du poste 2');
+    const failed = (await a.engine.outbox.list()).find((o) => o.kind === 'camp.upsert')!;
+    expect(failed.status).toBe('failed');
+    expect(failed.lastError).toMatch(/modifié sur le serveur/);
+    await a.engine.abandon(failed.seq!);
+    expect((await a.repo.getSite(site.id))!.name).toBe('Nom du poste 2');
+    a.close();
+    b.close();
+  });
+});

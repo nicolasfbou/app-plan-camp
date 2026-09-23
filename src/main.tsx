@@ -5,7 +5,8 @@ import { repository } from './app/repository.ts';
 import { startBackupScheduler } from './backups/backupService.ts';
 import { installGlobalErrorLogging, logEvent } from './diagnostics/errorLog.ts';
 import { recoveryJournalTexts } from './persistence/recovery.ts';
-import { checkSession } from './account/session.ts';
+import { checkSession, isClosingHere, sweepPurgedDatabases } from './account/session.ts';
+import { onSync } from './sync/bus.ts';
 import { ACTIVE_PROFILE, isUnlocked, lockProfile } from './app/profile.ts';
 import { startSync } from './sync/runtime.ts';
 import './index.css';
@@ -13,10 +14,20 @@ import './index.css';
 // Demande au navigateur de ne pas purger les données locales en cas de manque d'espace.
 void navigator.storage?.persist?.().catch(() => undefined);
 installGlobalErrorLogging();
+// Bases d'espaces purgés qu'un onglet tardif aurait recréées : effacées de nouveau.
+void sweepPurgedDatabases().catch(() => undefined);
+// Espace purgé dans un autre onglet (déconnexion d'un poste partagé) : plus aucun accès ici.
+onSync((message) => {
+  if (message.type !== 'space-closed' || isClosingHere()) return;
+  repository.shutdown();
+  window.location.reload();
+});
 // Espace verrouillé (appareil partagé sans authentification) : aucune donnée n'est ouverte.
 if (isUnlocked(ACTIVE_PROFILE)) {
-  // Sauvegardes externes automatiques (un seul onglet planifie) : dans tous les espaces.
-  void startBackupScheduler().catch((error: unknown) => logEvent('backup', error));
+  // Sauvegardes externes automatiques (un seul onglet planifie). Jamais sur un appareil partagé :
+  // des copies hors du navigateur survivraient à la purge de la déconnexion.
+  if (ACTIVE_PROFILE.deviceMode !== 'shared')
+    void startBackupScheduler().catch((error: unknown) => logEvent('backup', error));
   // Nettoie les fichiers devenus orphelins (ex. import annulé avant la dernière fermeture) — sauf
   // si un plan est ouvert dans un autre onglet (il peut référencer un fichier pas encore enregistré).
   void (async () => {

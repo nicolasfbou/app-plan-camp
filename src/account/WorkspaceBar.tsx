@@ -16,7 +16,7 @@ import { SyncIndicator } from '@/sync/ui/SyncIndicator.tsx';
 import { Button } from '@/ui/Button.tsx';
 import { Modal } from '@/ui/Modal.tsx';
 import { useSubmit } from '@/ui/useSubmit.ts';
-import { logout, pendingChanges, purgeProfile } from './session.ts';
+import { logout, pendingChanges, purgeProfile, ServerUnreachableError } from './session.ts';
 
 const profileLabel = (p: Profile) =>
   p.kind === 'local'
@@ -112,6 +112,9 @@ function LogoutDialog({
   const { busy, error, submit } = useSubmit();
   const destructive = kind === 'remove' || profile.deviceMode === 'shared';
   const [confirmed, setConfirmed] = useState(!destructive || pending === 0);
+  // Poste partagé hors ligne : la session serveur ne peut pas être fermée ; effacer quand même
+  // demande un second choix explicite.
+  const [unreachable, setUnreachable] = useState(false);
   return (
     <Modal
       open
@@ -129,16 +132,24 @@ function LogoutDialog({
                 if (kind === 'remove') {
                   await purgeProfile(profile);
                   setActiveProfile('local');
-                } else await logout(profile);
+                } else
+                  try {
+                    await logout(profile, { force: unreachable });
+                  } catch (error) {
+                    if (error instanceof ServerUnreachableError) setUnreachable(true);
+                    throw error;
+                  }
                 reloadHome();
               })
             }
           >
-            {destructive && pending > 0
-              ? t('account.logoutAnyway')
-              : kind === 'remove'
-                ? t('account.removeSpace')
-                : t('account.logout')}
+            {unreachable
+              ? t('account.logoutOffline')
+              : destructive && pending > 0
+                ? t('account.logoutAnyway')
+                : kind === 'remove'
+                  ? t('account.removeSpace')
+                  : t('account.logout')}
           </Button>
         </>
       }

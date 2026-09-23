@@ -25,7 +25,7 @@ import { audit } from '../audit.ts';
 import { type Client, tx } from '../db.ts';
 import { referencedShas, sha256Text, validatePlanDocument } from '../documents.ts';
 import { HttpError, notFound } from '../errors.ts';
-import { type Auth, requireCampAccess, requirePermission } from '../permissions.ts';
+import { type Auth, can, requireCampAccess, requirePermission } from '../permissions.ts';
 import { logChange } from '../sync.ts';
 import { ID } from './camps.ts';
 
@@ -60,7 +60,7 @@ interface RevisionRow {
 const SELECT = `SELECT r.id, r.plan_id, r.meta, r.status, r.verification_type, r.approved_at, r.approved_by,
        a.display_name AS approver_name, r.chain_hash, r.parent_id, r.created_at, cb.display_name AS created_by_name,
        r.deleted_at, p.camp_id
-  FROM revisions r JOIN plans p ON p.id = r.plan_id
+  FROM revisions r JOIN plans p ON p.organization_id = r.organization_id AND p.id = r.plan_id
   JOIN users cb ON cb.id = r.created_by LEFT JOIN users a ON a.id = r.approved_by`;
 
 const view = (r: RevisionRow) => ({
@@ -96,6 +96,29 @@ function rejectClientIdentity(meta: RevisionMeta, auth: Auth) {
       422,
       'forged-approval',
       'Une approbation authentifiée ne peut être faite que par le serveur (compte connecté).',
+    );
+}
+
+/**
+ * Historique de statut apporté par le client. Sans droit de publication (éditeur) : seule une
+ * révision TELLE QUE CRÉÉE est acceptée (brouillon, en revue ou validation terrain ; une seule
+ * entrée d'historique ; aucune approbation). Les historiques plus riches (approbations locales
+ * déclarées) ne viennent que de la publication d'un projet local, par un rôle autorisé, et
+ * restent « non vérifiés ».
+ */
+function rejectUnauthorizedHistory(meta: RevisionMeta, auth: Auth) {
+  if (can(auth.role, 'publish')) return;
+  if (
+    meta.approval ||
+    meta.status === 'approved' ||
+    meta.status === 'archived' ||
+    meta.statusLog.length !== 1 ||
+    meta.statusLog[0]!.to !== meta.status
+  )
+    throw new HttpError(
+      403,
+      'forbidden',
+      'Votre rôle permet de créer une révision, pas de lui donner un statut ou une approbation.',
     );
 }
 
@@ -153,10 +176,19 @@ export function registerRevisionRoutes(app: FastifyInstance, deps: Deps) {
           'snapshot-mismatch',
           'Instantané différent de son empreinte : révision refusée.',
         );
-      const { doc } = validatePlanDocument(JSON.parse(body.snapshot));
+      let raw: unknown;
+      try {
+        raw = JSON.parse(body.snapshot);
+      } catch {
+        throw new HttpError(422, 'invalid-revision', 'Instantané illisible : révision refusée.');
+      }
+      const { doc } = validatePlanDocument(raw);
+      if (doc.plan.id !== body.planId)
+        throw new HttpError(422, 'invalid-revision', 'L’instantané ne correspond pas à ce plan.');
       if (!(await isSealIntact(meta)))
         throw new HttpError(422, 'seal-broken', 'Sceau de la révision invalide : refusée.');
       rejectClientIdentity(meta, auth);
+      rejectUnauthorizedHistory(meta, auth);
       const status = await tx(deps.pool, ctx(auth), async (c) => {
         const existing = await revisionRow(c, auth, meta.id, true);
         if (existing) {
@@ -167,8 +199,10 @@ export function registerRevisionRoutes(app: FastifyInstance, deps: Deps) {
             throw new HttpError(409, 'revision-exists', 'Une autre révision porte déjà cet identifiant.');
           return 200;
         }
+        // Verrou du plan : deux révisions simultanées ne choisissent ni le même libellé ni le même
+        // parent (la chaîne reste linéaire). Index unique en dernier rempart.
         const plan = await c.query<{ camp_id: string; deleted_at: Date | null }>(
-          'SELECT camp_id, deleted_at FROM plans WHERE id = $1',
+          'SELECT camp_id, deleted_at FROM plans WHERE id = $1 FOR UPDATE',
           [body.planId],
         );
         if (!plan.rows[0])

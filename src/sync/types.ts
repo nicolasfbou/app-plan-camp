@@ -45,6 +45,10 @@ export interface SyncOperationRecord {
   label: string;
   planId?: string;
   campId?: string;
+  /** Au moins un envoi commencé (le serveur a peut-être reçu l'opération, réponse perdue). */
+  attempted?: boolean;
+  /** Suppression d'un élément dont la création a peut-être atteint le serveur : à vérifier. */
+  mayExistOnServer?: boolean;
 }
 
 /** Lien d'un élément local avec le serveur. */
