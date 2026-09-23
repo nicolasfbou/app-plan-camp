@@ -28,6 +28,8 @@ import {
   TextField,
   Toggle,
 } from './fields.tsx';
+import { MeasureSection, ParkingGenerator, StallSection } from './MeasureProperties.tsx';
+import { findZonePreset } from '@/domain/presets/zonePresets.ts';
 import {
   CorridorProperties,
   DisplayLimits,
@@ -135,6 +137,12 @@ function MultiProperties({ objects, doc }: { objects: PlanObject[]; doc: PlanDoc
       </div>
     </div>
   );
+}
+
+/** Zone de stationnement (modèle du groupe Stationnement, sauf « interdit »). */
+function isParkingZone(object: PlanObject): boolean {
+  const preset = object.presetId ? findZonePreset(object.presetId) : undefined;
+  return preset?.group === 'parking' && object.presetId !== 'zone.no-parking';
 }
 
 function typeLabel(object: PlanObject): string {
@@ -282,7 +290,9 @@ function ObjectProperties({ object, doc }: { object: PlanObject; doc: PlanDocume
       </Section>
 
       {object.type === 'flow' && <FlowProperties object={object} disabled={disabled} set={set} />}
-      {object.type === 'corridor' && <CorridorProperties object={object} disabled={disabled} set={set} />}
+      {object.type === 'corridor' && (
+        <CorridorProperties object={object} doc={doc} disabled={disabled} set={set} />
+      )}
       {object.type === 'icon' && <IconProperties object={object} doc={doc} disabled={disabled} set={set} />}
 
       {hasFill && (
@@ -306,6 +316,16 @@ function ObjectProperties({ object, doc }: { object: PlanObject; doc: PlanDocume
       {object.type === 'zone' && (
         <ZoneMarkerProperties object={object} doc={doc} disabled={disabled} set={set} />
       )}
+      {object.type === 'zone' && isParkingZone(object) && (
+        <ParkingGenerator
+          key={doc.plan.calibration ? 'm' : 'px'}
+          zone={object}
+          doc={doc}
+          disabled={disabled}
+        />
+      )}
+      {object.type === 'stall' && <StallSection stall={object} doc={doc} disabled={disabled} set={set} />}
+      <MeasureSection object={object} doc={doc} />
 
       {hasStroke && (
         <Section

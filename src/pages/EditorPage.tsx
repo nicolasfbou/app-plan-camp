@@ -1,5 +1,5 @@
 import { ImageUp } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { repository } from '@/app/repository.ts';
 import { RightPanel } from '@/app/RightPanel.tsx';
 import { TopBar } from '@/app/TopBar.tsx';
@@ -8,6 +8,7 @@ import { ImportDialog } from '@/editor/ImportDialog.tsx';
 import { NavigationControls } from '@/editor/NavigationControls.tsx';
 import { NoticeBanner } from '@/editor/NoticeBanner.tsx';
 import { TextEditorOverlay } from '@/editor/TextEditorOverlay.tsx';
+import { CalibrationDialog } from '@/panels/ScalePanel.tsx';
 import { useEditorShortcuts } from '@/editor/useEditorShortcuts.ts';
 import { isTypingTarget } from '@/ui/keyboard.ts';
 import { useUiStore } from '@/store/uiStore.ts';
@@ -25,6 +26,11 @@ import { Button } from '@/ui/Button.tsx';
 import { TextPromptDialog } from '@/ui/TextPromptDialog.tsx';
 import { Notice, PageLayout } from './PageLayout.tsx';
 import { useAsync } from './useAsync.ts';
+
+// Mise en page et export : chargés seulement à l'ouverture (jsPDF, polices, moteur d'export).
+const PrintDialog = lazy(() =>
+  import('@/export/ui/PrintDialog.tsx').then((m) => ({ default: m.PrintDialog })),
+);
 
 export const ACCEPTED_FILES = '.jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf';
 
@@ -57,8 +63,10 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
   const [site] = useAsync(() => repository.getSite(siteId), siteId);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [renaming, setRenaming] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const background = useEditorStore((s) => s.background);
+  const pendingCalibration = useEditorStore((s) => s.pendingCalibration);
   const hasBaseImage = usePlanStore((s) => s.doc?.plan.baseImage != null);
   const planName = usePlanStore((s) => s.doc?.plan.name ?? '');
 
@@ -91,6 +99,18 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
       }),
     [],
   );
+
+  // Ctrl+P : la mise en page du plan (et non l'impression de l'écran par le navigateur).
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        if (planStore.getState().doc) setPrinting(true);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   const openFilePicker = useCallback(() => fileInput.current?.click(), []);
 
@@ -129,12 +149,14 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
         onRename={() => setRenaming(true)}
         onImport={openFilePicker}
         onExport={() => void exportPlan()}
+        onPrint={() => setPrinting(true)}
       />
       <div className="flex min-h-0 flex-1">
         <main className="relative min-w-0 flex-1">
           <CanvasStage />
           {background.kind === 'ready' && <NavigationControls />}
           <TextEditorOverlay />
+          {pendingCalibration && <CalibrationDialog {...pendingCalibration} />}
           <NoticeBanner />
           {state.status === 'ready' && !hasBaseImage && (
             <div className="absolute inset-0 flex items-center justify-center p-8">
@@ -183,6 +205,14 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
           if (file) setImportFile(file);
         }}
       />
+      {printing && (
+        <Suspense fallback={null}>
+          <PrintDialog
+            siteName={site.status === 'ready' ? (site.value?.name ?? '') : ''}
+            onClose={() => setPrinting(false)}
+          />
+        </Suspense>
+      )}
       {importFile && <ImportDialog file={importFile} planId={planId} onClose={closeImport} />}
       {renaming && (
         <TextPromptDialog

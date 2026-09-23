@@ -4,6 +4,7 @@
  * non détecté n'est pas une garantie, un croisement détecté n'est pas un verdict.
  */
 import { newId, nowIso } from './factories.ts';
+import { corridorWidthPx } from './measure.ts';
 import { segmentsClosest } from './paths.ts';
 import { worldVertices } from './shapes.ts';
 import type { CorridorObject, CrossingReview, FlowObject, PlanDocument, PlanObject, Point } from './types.ts';
@@ -60,7 +61,8 @@ export function detectCrossings(
   for (const flow of flows) {
     const fb = bounds(flow.pts, 0);
     for (const corridor of corridors) {
-      const half = corridor.o.width / 2;
+      const width = corridorWidthPx(corridor.o, doc.plan.calibration);
+      const half = width / 2;
       if (!overlaps(fb, bounds(corridor.pts, half))) continue;
       const found: { point: Point; kind: Crossing['kind'] }[] = [];
       for (let i = 1; i < flow.pts.length; i++) {
@@ -68,7 +70,7 @@ export function detectCrossings(
           const c = segmentsClosest(flow.pts[i - 1]!, flow.pts[i]!, corridor.pts[j - 1]!, corridor.pts[j]!);
           if (c.distance > half) continue;
           const merge = found.find(
-            (f) => Math.hypot(f.point.x - c.point.x, f.point.y - c.point.y) < Math.max(corridor.o.width, 1),
+            (f) => Math.hypot(f.point.x - c.point.x, f.point.y - c.point.y) < Math.max(width, 1),
           );
           if (merge) {
             if (c.distance === 0) merge.kind = 'crossing';
@@ -94,7 +96,10 @@ export function detectCrossings(
 /** Distance au-delà de laquelle une décision enregistrée ne s'applique plus à un croisement. */
 export function reviewTolerance(doc: PlanDocument, crossing: Crossing): number {
   const corridor = doc.objects[crossing.corridorId];
-  return Math.max(40, corridor?.type === 'corridor' ? corridor.width * 1.5 : 0);
+  return Math.max(
+    40,
+    corridor?.type === 'corridor' ? corridorWidthPx(corridor, doc.plan.calibration) * 1.5 : 0,
+  );
 }
 
 /**

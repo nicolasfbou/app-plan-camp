@@ -28,6 +28,7 @@ export const TOOL_KEYS: Record<string, Tool> = {
   f: 'flow',
   c: 'corridor',
   s: 'symbol',
+  m: 'measure',
 };
 
 /** Contrôle d'interface ayant le focus (bouton, onglet, choix…), hors champs de saisie. */

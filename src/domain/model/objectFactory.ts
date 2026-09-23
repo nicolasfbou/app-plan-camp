@@ -67,6 +67,8 @@ export function tierForType(type: PlanObject['type']): RenderTier {
     line: 'circulation',
     flow: 'circulation',
     corridor: 'pedestrians',
+    dimension: 'texts',
+    stall: 'parking',
     text: 'texts',
     icon: 'signage',
   };
@@ -210,10 +212,30 @@ export function createCorridorObject(doc: PlanDocument, points: Point[], zoom = 
     type: 'corridor',
     geometry: { kind: 'polyline', points, curved: false },
     width,
+    widthMeters: null,
     showIcons: true,
     iconSpacing: Math.round(width * 6 * 10) / 10,
     iconSize: Math.round(width * 0.75 * 10) / 10,
     iconsOriented: false,
+  };
+}
+
+export const DIMENSION_STYLE: Style = {
+  fill: null,
+  fillOpacity: 0,
+  stroke: '#0f172a',
+  strokeOpacity: 1,
+  strokeWidth: 2,
+  dash: 'solid',
+  pattern: 'none',
+};
+
+/** Cote : distance mesurée le long des points cliqués (affichée en mètres si le plan est calibré). */
+export function createDimensionObject(doc: PlanDocument, points: Point[], zoom = 1): PlanObject {
+  return {
+    ...base(doc, 'texts', 'Cote', scaledStyle(DIMENSION_STYLE, zoom), 'dimension'),
+    type: 'dimension',
+    geometry: { kind: 'polyline', points, curved: false },
   };
 }
 

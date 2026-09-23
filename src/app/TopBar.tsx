@@ -9,6 +9,7 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Printer,
   Redo2,
   Undo2,
 } from 'lucide-react';
@@ -26,9 +27,18 @@ interface TopBarProps {
   onRename?(): void;
   onImport?(): void;
   onExport?(): void;
+  onPrint?(): void;
 }
 
-export function TopBar({ siteId, siteName, saveError = null, onRename, onImport, onExport }: TopBarProps) {
+export function TopBar({
+  siteId,
+  siteName,
+  saveError = null,
+  onRename,
+  onImport,
+  onExport,
+  onPrint,
+}: TopBarProps) {
   const planName = usePlanStore((s) => s.doc?.plan.name ?? null);
   const hasBackground = usePlanStore((s) => s.doc?.plan.baseImage != null);
   const canUndo = usePlanStore(selectCanUndo);
@@ -106,6 +116,12 @@ export function TopBar({ siteId, siteName, saveError = null, onRename, onImport,
       {onImport && planName !== null && (
         <Button onClick={onImport}>
           <ImageUp size={16} /> {hasBackground ? t('topbar.replace') : t('topbar.import')}
+        </Button>
+      )}
+
+      {onPrint && planName !== null && (
+        <Button onClick={onPrint} title={`${t('print.open')} (Ctrl+P)`} data-testid="open-print">
+          <Printer size={16} /> {t('print.open')}
         </Button>
       )}
 

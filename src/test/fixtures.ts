@@ -90,6 +90,7 @@ export function makeLargeDocument(count: number): PlanDocument {
         layerId: layerId('pedestrians'),
         geometry: line,
         width: 24,
+        widthMeters: null,
         showIcons: true,
         iconSpacing: 120,
         iconSize: 20,

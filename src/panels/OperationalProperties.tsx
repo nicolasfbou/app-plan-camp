@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { displaySettingsSchema } from '@/domain/model/schema.ts';
 import { FLOW_PRESETS, findFlowPreset } from '@/domain/presets/flowPresets.ts';
 import { assetSymbolId, findSymbol, SYMBOLS } from '@/domain/symbols/catalog.ts';
+import { corridorWidthPx, metersPerPixel } from '@/domain/model/measure.ts';
 import type {
   CorridorObject,
   DisplaySettings,
@@ -120,23 +121,68 @@ export function FlowProperties({
 
 export function CorridorProperties({
   object,
+  doc,
   disabled,
   set,
 }: {
   object: CorridorObject;
+  doc: PlanDocument;
   disabled: boolean;
   set: Set;
 }) {
+  const mpp = metersPerPixel(doc.plan.calibration);
+  const physical = object.widthMeters !== null;
   return (
     <Section title={t('corridor.title')}>
-      <NumberField
-        label={t('corridor.width')}
-        value={object.width}
-        min={0.1}
-        disabled={disabled}
-        onCommit={(width) => set({ ...object, width }, 'Largeur du corridor')}
-      />
-      <p className="text-xs text-slate-500">{t('corridor.units')}</p>
+      {mpp && (
+        <SelectField
+          label={t('corridor.widthUnit')}
+          value={physical ? 'meters' : 'pixels'}
+          disabled={disabled}
+          options={[
+            { value: 'meters', label: t('corridor.widthUnit.meters') },
+            { value: 'pixels', label: t('corridor.widthUnit.pixels') },
+          ]}
+          onChange={(unit) =>
+            set(
+              unit === 'meters'
+                ? { ...object, widthMeters: Math.round(object.width * mpp * 100) / 100 }
+                : { ...object, width: corridorWidthPx(object, doc.plan.calibration), widthMeters: null },
+              'Unité de largeur',
+            )
+          }
+        />
+      )}
+      {mpp && physical ? (
+        <NumberField
+          label={t('corridor.widthMeters')}
+          value={object.widthMeters!}
+          min={0.01}
+          digits={2}
+          disabled={disabled}
+          onCommit={(widthMeters) =>
+            // La largeur en pixels suit (utilisée si la calibration est un jour retirée).
+            set({ ...object, widthMeters, width: widthMeters / mpp }, 'Largeur du corridor')
+          }
+        />
+      ) : (
+        <NumberField
+          label={t('corridor.width')}
+          value={object.width}
+          min={0.1}
+          disabled={disabled}
+          onCommit={(width) => set({ ...object, width }, 'Largeur du corridor')}
+        />
+      )}
+      <p className="text-xs text-slate-500">
+        {mpp
+          ? physical
+            ? t('corridor.units.meters')
+            : t('corridor.units.pixelsCalibrated')
+          : physical
+            ? t('corridor.units.metersUncalibrated', { meters: object.widthMeters! })
+            : t('corridor.units')}
+      </p>
       <Toggle
         label={t('corridor.showIcons')}
         checked={object.showIcons}

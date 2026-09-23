@@ -6,6 +6,7 @@
  * ici la migration `SCHEMA_VERSION - 1`, accompagnée d'un test avec un fichier de l'ancienne version.
  */
 import { newId } from '../model/factories.ts';
+import { planDefaults } from '../model/planDefaults.ts';
 import { SCHEMA_VERSION } from '../model/schema.ts';
 
 export type Migration = (doc: Record<string, unknown>) => Record<string, unknown>;
@@ -60,7 +61,29 @@ export const MIGRATIONS: MigrationTable = {
       crossingReviews: Array.isArray(doc.crossingReviews) ? doc.crossingReviews : [],
     };
   },
+
+  3: (doc) => migrateV3(doc),
 };
+
+/**
+ * 3 → 4 (phase 5) : réglages du plan professionnel (unités, nord non orienté, légende, cartouche,
+ * mise en page) ; largeur physique des corridors absente (`widthMeters: null`). Le nord n'est
+ * jamais déduit du haut de l'image : il reste « non défini » jusqu'à ce que l'utilisateur l'oriente.
+ */
+function migrateV3(doc: Record<string, unknown>): Record<string, unknown> {
+  const plan = isRecord(doc.plan) ? doc.plan : {};
+  const objects = isRecord(doc.objects) ? doc.objects : {};
+  return {
+    ...doc,
+    plan: { ...planDefaults(), ...plan },
+    objects: Object.fromEntries(
+      Object.entries(objects).map(([id, o]) => [
+        id,
+        isRecord(o) && o.type === 'corridor' ? { widthMeters: null, ...o } : o,
+      ]),
+    ),
+  };
+}
 
 /** Noms figés dans la migration (indépendants des traductions futures). */
 const NEW_LAYERS_V3 = [

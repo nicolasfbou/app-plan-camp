@@ -18,8 +18,10 @@ import { z } from 'zod';
  *   livraison et sécurité ; trajets (catégorie, flèches masquables) ; corridors (pictogrammes) ;
  *   pictogrammes (texte) ; pictogramme et nom affichés dans les zones ; pictogrammes importés
  *   (`assets`) ; suivi des croisements (`crossingReviews`) ; limites d'affichage (`plan.display`).
+ * - 4 : plan professionnel (phase 5) : unités, statut du nord, largeur physique des corridors,
+ *   cotes (`dimension`), cases de stationnement (`stall`), légende, cartouche, mise en page.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const idSchema = z.string().min(1);
 export const isoDateSchema = z.iso.datetime();
@@ -218,10 +220,13 @@ export const planObjectSchema = z.discriminatedUnion('type', [
     type: z.literal('corridor'),
     geometry: polylineGeometrySchema,
     /**
-     * Largeur du corridor en pixels IMAGE (pas en mètres : aucune calibration n'est utilisée).
-     * Remplissage = `style.fill`, bordure = `style.stroke` / `style.dash`.
+     * Largeur du corridor en pixels IMAGE. Remplissage = `style.fill`, bordure = `style.stroke`.
+     * Si `widthMeters` est défini ET que le plan est calibré, c'est la largeur physique qui
+     * s'applique (convertie à l'affichage) ; `width` reste la dernière largeur en pixels connue.
      */
     width: z.number().positive(),
+    /** Largeur physique en mètres (null = largeur définie en pixels). */
+    widthMeters: z.number().positive().nullable(),
     showIcons: z.boolean(),
     /** Espacement des pictogrammes piétons le long du tracé, en pixels image. */
     iconSpacing: z.number().positive(),
@@ -244,6 +249,20 @@ export const planObjectSchema = z.discriminatedUnion('type', [
     align: z.enum(['left', 'center', 'right']),
     /** Non nul = étiquette (texte sur fond avec marge et bordure). */
     label: labelSpecSchema.nullable(),
+  }),
+  z.object({
+    ...objectBase,
+    /** Cote : distance mesurée le long de la polyligne, affichée en mètres si le plan est calibré. */
+    type: z.literal('dimension'),
+    geometry: polylineGeometrySchema,
+  }),
+  z.object({
+    ...objectBase,
+    /** Case de stationnement (générée ou dessinée) ; modifiable individuellement. */
+    type: z.literal('stall'),
+    geometry: rectGeometrySchema,
+    /** Zone de stationnement d'origine (null si la case a été détachée ou dessinée seule). */
+    parentZoneId: idSchema.nullable(),
   }),
   z.object({
     ...objectBase,
@@ -324,6 +343,82 @@ export const displaySettingsSchema = z
   })
   .refine((d) => d.symbolMinPx <= d.symbolMaxPx, 'La taille minimale dépasse la taille maximale.');
 
+export const NORTH_STATUSES = ['undefined', 'estimated', 'verified'] as const;
+export const PLAN_STATUSES = ['draft', 'review', 'field-validation', 'approved'] as const;
+export const PAPER_SIZES = ['letter', 'legal', 'tabloid', 'a4', 'a3', 'a2', 'a1'] as const;
+export const LEGEND_PLACEMENTS = [
+  'side',
+  'map-auto',
+  'top-left',
+  'top-right',
+  'bottom-left',
+  'bottom-right',
+] as const;
+
+/** Légende automatique : les entrées sont calculées ; seuls les choix de l'utilisateur sont stockés. */
+export const legendSettingsSchema = z.object({
+  visible: z.boolean(),
+  title: z.string(),
+  placement: z.enum(LEGEND_PLACEMENTS),
+  mode: z.enum(['compact', 'detailed']),
+  /** Facteur de taille (1 = normal). */
+  sizeFactor: z.number().min(0.5).max(2.5),
+  /** Clés d'entrées exclues. */
+  hidden: z.array(z.string()),
+  /** Intitulés personnalisés par clé d'entrée. */
+  labels: z.record(z.string(), z.string()),
+});
+
+export const titleBlockSchema = z.object({
+  campName: z.string(),
+  title: z.string(),
+  client: z.string(),
+  company: z.string(),
+  preparedBy: z.string(),
+  checkedBy: z.string(),
+  approvedBy: z.string(),
+  /** Date du plan (AAAA-MM-JJ) ; vide = date de l'export. */
+  date: z.string(),
+  planNumber: z.string(),
+  revision: z.string(),
+  notes: z.string(),
+  /** « Approuvé » n'est JAMAIS attribué automatiquement (choix explicite, confirmé). */
+  status: z.enum(PLAN_STATUSES),
+  /** Moment de l'approbation explicite (null si le plan n'est pas approuvé). */
+  approvedAt: isoDateSchema.nullable(),
+  /** Logo : pictogramme importé du plan (`assets`). */
+  logoAssetId: idSchema.nullable(),
+  placement: z.enum(['side', 'bottom']),
+});
+
+export const printSettingsSchema = z.object({
+  paper: z.enum(PAPER_SIZES),
+  orientation: z.enum(['portrait', 'landscape']),
+  marginMm: z.number().min(0).max(50),
+  /** complet : photo + annotations + légende + cartouche ; simplifié : sans cartouche ; annotations seules. */
+  mode: z.enum(['complete', 'simplified', 'annotations']),
+  /** Résolution de rendu (points par pouce) des images et des exports PNG / JPG. */
+  dpi: z.number().int().min(72).max(600),
+  jpegQuality: z.number().min(0.4).max(1),
+  /** Étendue : photo entière, ou zone annotée (avec une marge). */
+  extent: z.enum(['image', 'annotations']),
+  /** Fond des annotations seules : blanc ou transparent (PNG uniquement). */
+  background: z.enum(['white', 'transparent']),
+  include: z.object({
+    title: z.boolean(),
+    legend: z.boolean(),
+    titleBlock: z.boolean(),
+    logo: z.boolean(),
+    north: z.boolean(),
+    scaleBar: z.boolean(),
+    date: z.boolean(),
+    revision: z.boolean(),
+    notes: z.boolean(),
+  }),
+  /** Calques non exportés. */
+  excludedLayerIds: z.array(idSchema),
+});
+
 export const planSchema = z.object({
   id: idSchema,
   siteId: idSchema,
@@ -333,7 +428,13 @@ export const planSchema = z.object({
   calibration: calibrationSchema.nullable(),
   /** Angle du Nord en degrés, sens horaire à partir du haut de l'image. */
   northAngleDeg: z.number(),
+  /** Le haut de l'image n'est jamais supposé être le nord : `undefined` tant qu'il n'est pas orienté. */
+  northStatus: z.enum(NORTH_STATUSES),
+  units: z.enum(['metric', 'imperial']),
   display: displaySettingsSchema,
+  legend: legendSettingsSchema,
+  titleBlock: titleBlockSchema,
+  print: printSettingsSchema,
   metadata: metadataSchema,
   createdAt: isoDateSchema,
   updatedAt: isoDateSchema,

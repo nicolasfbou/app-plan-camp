@@ -711,3 +711,79 @@ certification de sécurité. Une voie d'urgence est une catégorie de tracé, pa
   nettoyé les fichiers orphelins : le fichier peut manquer (pictogramme affiché comme emplacement).
 - Au-delà d'environ 500 objets lourds (trajets de 40 sommets, corridors fléchés), la fluidité
   descend vers 36-40 ips sur cette machine sans GPU.
+
+## 16. Plan professionnel et export (phase 5)
+
+### 16.1 Modèle (schéma v4)
+
+| Ajout                                    | Contenu                                                                                                                                       |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `plan.calibration` (existant, utilisé)   | deux points image + distance réelle (m) ; aucune calibration n'est jamais inventée                                                            |
+| `plan.units`                             | `metric` (m, m²) ou `imperial` (pi, pi²)                                                                                                      |
+| `plan.northStatus`, `plan.northAngleDeg` | `undefined` par défaut (le haut de l'image n'est PAS présumé être le nord) ; `estimated` (outil 2 clics) ; `verified` (choix explicite)       |
+| `corridor.widthMeters`                   | largeur physique (null = largeur en pixels, jamais modifiée en silence)                                                                       |
+| objet `dimension`                        | cote : polyligne mesurée                                                                                                                      |
+| objet `stall`                            | case de stationnement : rectangle + `parentZoneId` (null si détachée)                                                                         |
+| `plan.legend`                            | visible, titre, position, compacte / détaillée, taille, catégories masquées, intitulés personnalisés (les entrées elles-mêmes sont calculées) |
+| `plan.titleBlock`                        | champs du cartouche, statut, date d'approbation, logo (`assets`), position                                                                    |
+| `plan.print`                             | format, orientation, marges, contenu, résolution, qualité JPEG, cadrage, fond, éléments inclus, calques exclus                                |
+
+Migration 3 → 4 : valeurs par défaut sûres (nord non défini, brouillon, Tabloïd paysage) et
+`widthMeters: null` ; aucune géométrie ne change. Le `.campplan` transporte tout (logo compris,
+vérifié comme un pictogramme importé).
+
+### 16.2 Mesures honnêtes
+
+- Mètres par pixel = distance réelle / distance en pixels des deux points de calibration.
+- Incertitude relative = max(2 %, 2 px / longueur de calibration) ; doublée pour les surfaces.
+  Le résultat est arrondi au pas décimal immédiatement inférieur à l'incertitude absolue et préfixé
+  de « ≈ » : jamais de précision artificielle. Sans calibration : pixels de la photo.
+- Corridors en mètres : largeur de rendu = largeur physique / (m par pixel), recalculée à chaque
+  rendu ; donc stable au zoom, à l'enregistrement, à l'export et au réimport, et mise à jour si la
+  calibration change.
+
+### 16.3 Cases de stationnement
+
+`generateStalls` range des cases (largeur, longueur, rangées, allée, orientation) dans le repère
+pivoté de la zone ; une case n'est gardée que si ses 4 coins sont dans le contour, qu'aucun bord ne
+croise le contour et qu'aucun sommet du contour n'est à l'intérieur : jamais de case hors d'une zone
+irrégulière (L, polygone concave, zone pivotée). Chaque case est un objet indépendant (déplacer,
+supprimer, détacher) ; régénérer ne remplace que les cases encore rattachées. Dimensions = paramètres
+de dessin, pas une conformité réglementaire.
+
+### 16.4 Moteur d'export (`src/export/`)
+
+- **Jamais de capture d'écran.** Une surface de dessin abstraite (`Painter`, en mm de page, textes en
+  points) est pilotée par la même mise en page pour trois sorties : canevas (aperçu, PNG, JPG) et PDF
+  (jsPDF). L'aperçu est donc fidèle au fichier produit.
+- **PDF vectoriel** : contours, surfaces, flèches, hachures (lignes réelles limitées au contour),
+  textes (police Liberation Sans intégrée, licence OFL, métriques Arial : accents, « ≈ », « ² ») ;
+  photo et pictogrammes en images (une seule copie par image, réutilisée). Photo : octets JPEG
+  d'origine intégrés tels quels quand c'est possible (JPEG sans rotation EXIF, entier, pas beaucoup
+  plus fin que nécessaire) ; sinon copie recadrée / réduite encodée en JPEG. L'original stocké n'est
+  jamais modifié.
+- **Mise en page** (`compose.ts`) : bandeau de titre avec statut (« NON APPROUVÉ » tant que le plan
+  n'est pas approuvé), carte aux proportions exactes, colonne latérale (légende en haut, cartouche en
+  bas) ou cartouche en bandeau bas ; légende sur la carte possible : le coin choisi automatiquement
+  est celui qui recouvre le moins d'objets, et jamais un bâtiment (sinon elle repasse à côté).
+- **Échelle d'affichage des repères** : pixels CSS imprimés par pixel image (mm par pixel ÷ 0,2646) :
+  flèches et pictogrammes gardent sur le papier la taille bornée qu'ils ont à l'écran.
+- **Nord** : imprimé seulement s'il a été orienté ; « Nord estimé — à vérifier » s'il est estimé.
+  **Échelle** : barre (1-2-5) et échelle numérique « ≈ 1:X » seulement si le plan est calibré, calculées
+  depuis l'échelle réelle de la page ; sinon « Plan non calibré — aucune échelle ».
+- **Avertissements** (jamais d'échec silencieux) : texte < 6 pt pour le format, texte coupé par le
+  cadre, légende trop longue (taille réduite jusqu'à 6 pt, puis entrées omises et comptées sur le
+  plan), cartouche trop grand, légende sur un bâtiment, plan non calibré, nord non défini / estimé,
+  photo réduite pour les limites mémoire.
+- **Limites du navigateur** : canevas ≤ 16 384 px de côté et ≤ 120 Mpx. Au-delà : message clair et
+  résolution proposée (bouton « Utiliser … ») ; la photo du PDF est réduite automatiquement (signalé).
+- **PNG / JPG** : « page » (identique au PDF, à la résolution choisie) ou « plan à la résolution de
+  la photo » (facteur 1 = résolution d'origine ; légende et cartouche ajoutés À CÔTÉ, jamais sur la
+  photo) ; PNG transparent pour le plan sans fond.
+- Chargés à la demande : fenêtre d'export, jsPDF, polices (mises en cache hors ligne).
+
+### 16.5 Statut « Approuvé »
+
+`setPlanStatus` refuse « Approuvé » sans nom d'approbateur ET confirmation explicite d'autorisation
+(boîte dédiée) ; la date est enregistrée ; tout autre statut retire l'approbation ; une copie de plan
+redevient « Brouillon ». Aucun code ne l'attribue automatiquement.

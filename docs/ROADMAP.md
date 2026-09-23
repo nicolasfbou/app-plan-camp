@@ -72,14 +72,18 @@ Règle : le parcours complet doit être fiable avant toute fonction avancée.
 - Affichage par catégorie ; limites d'affichage des repères ; schéma v3 ; `.campplan` format 2
 - Démonstration sur la photo réelle du Camp 105 (`bench/camp105-phase4.mjs`)
 
-Hors phase 4 (plus tard) : générateur de cases de stationnement, légende automatique, calibration
-et mesures réelles, cartouche d'impression.
+## Phase 5 — Plan professionnel et export PDF ✅
 
-## Phase 5 — Export
-
-PNG / JPG haute résolution, PDF Lettre / Légal / 11x17 / A4 / A3, portrait / paysage, marges, titre.
+- Calibration (2 clics + distance réelle), mesures approximatives honnêtes (m / m², pi / pi², px
+  sans calibration), cotes ; corridors en mètres
+- Générateur de cases de stationnement (jamais hors du contour, cases modifiables une à une)
+- Légende automatique, cartouche (statut « Approuvé » explicite et confirmé), nord manuel, barre
+  d'échelle seulement si calibré
+- Export PDF vectoriel (Lettre, Légal, Tabloïd, A4, A3, A2, A1 ; portrait / paysage ; complet,
+  simplifié, sans fond), PNG / JPG, aperçu fidèle avec avertissements ; schéma v4
+- Démonstration sur la photo réelle du Camp 105 (`bench/camp105-phase5.mjs`)
 
 ## V2
 
-Calibration et mesures, légende automatique, cartouche, Nord et échelle, générateur de stationnement,
-modèles réutilisables, mode hiver, PDF vectoriel, tuilage des très grandes images.
+Modèles réutilisables, mode hiver, rendu par tuiles des très grandes images (au-delà des limites du
+navigateur), polices italiques dans le PDF, plusieurs pages.

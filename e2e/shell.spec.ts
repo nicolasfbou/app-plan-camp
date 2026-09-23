@@ -53,7 +53,7 @@ test('les panneaux latéraux se réduisent et la zone de travail s’agrandit', 
   await expect.poll(async () => (await canvas.boundingBox())!.width).toBeGreaterThan(initialWidth + 400);
 });
 
-test('la palette contient exactement les outils livrés (phases 2 et 4)', async ({ page }) => {
+test('la palette contient exactement les outils livrés (phases 2, 4 et 5)', async ({ page }) => {
   await openFreshApp(page);
   await createCamp(page, 'Camp');
   await createPlan(page, 'Plan');
@@ -75,6 +75,7 @@ test('la palette contient exactement les outils livrés (phases 2 et 4)', async 
     'Circulation véhicules',
     'Corridor piéton',
     'Pictogramme',
+    'Mesurer (cote)',
   ]);
 });
 

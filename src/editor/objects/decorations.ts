@@ -5,6 +5,7 @@
  * tout zoom, sans devenir gigantesques. Quand on dézoome, les repères s'espacent au lieu de se
  * chevaucher.
  */
+import { midpointAlong } from '@/domain/model/measure.ts';
 import { marksAlongPath } from '@/domain/model/paths.ts';
 import type { DisplaySettings, FlowObject, Point, Style } from '@/domain/model/types.ts';
 import { rgba } from './konvaStyle.ts';
@@ -45,13 +46,11 @@ const inView = (view: ViewBox | null | undefined, x: number, y: number, margin: 
   !view ||
   (x >= view.minX - margin && x <= view.maxX + margin && y >= view.minY - margin && y <= view.maxY + margin);
 
-/**
- * Pointe de flèche (sous-chemin) centrée en `cx` le long de l'axe du repère, sans transformation
- * du contexte : toutes les flèches d'un trajet forment un seul chemin (un remplissage, un trait).
- */
+type Poly = Point[];
+
+/** Pointe de flèche centrée en `cx` le long de l'axe du repère (polygone en coordonnées image). */
 function arrowHead(
-  c: CanvasRenderingContext2D,
-  m: { x: number; y: number },
+  m: Point,
   cos: number,
   sin: number,
   cx: number,
@@ -59,32 +58,22 @@ function arrowHead(
   width: number,
   dir: 1 | -1,
 ) {
-  const at = (u: number, v: number) => [m.x + u * cos - v * sin, m.y + u * sin + v * cos] as const;
+  const at = (u: number, v: number): Point => ({ x: m.x + u * cos - v * sin, y: m.y + u * sin + v * cos });
   const tip = cx + (dir * length) / 2;
   const back = cx - (dir * length) / 2;
   const notch = cx - (dir * length) / 6;
-  c.moveTo(...at(tip, 0));
-  c.lineTo(...at(back, width / 2));
-  c.lineTo(...at(notch, 0));
-  c.lineTo(...at(back, -width / 2));
-  c.closePath();
+  return [at(tip, 0), at(back, width / 2), at(notch, 0), at(back, -width / 2)];
 }
 
 /** Trait central d'une flèche double (rectangle le long de l'axe). */
-function shaft(
-  c: CanvasRenderingContext2D,
-  m: { x: number; y: number },
-  cos: number,
-  sin: number,
-  half: number,
-  thickness: number,
-) {
-  const at = (u: number, v: number) => [m.x + u * cos - v * sin, m.y + u * sin + v * cos] as const;
-  c.moveTo(...at(-half, -thickness / 2));
-  c.lineTo(...at(half, -thickness / 2));
-  c.lineTo(...at(half, thickness / 2));
-  c.lineTo(...at(-half, thickness / 2));
-  c.closePath();
+function shaft(m: Point, cos: number, sin: number, half: number, thickness: number): Poly {
+  const at = (u: number, v: number): Point => ({ x: m.x + u * cos - v * sin, y: m.y + u * sin + v * cos });
+  return [
+    at(-half, -thickness / 2),
+    at(half, -thickness / 2),
+    at(half, thickness / 2),
+    at(-half, thickness / 2),
+  ];
 }
 
 /** Taille minimale absolue d'une flèche réduite pour tenir sur un segment court (pixels écran). */
@@ -121,6 +110,45 @@ export function flowArrowMarks(
 }
 
 /**
+ * Polygones des flèches d'un trajet (sens du tracé, inverse ou double sens), en coordonnées image,
+ * et épaisseur du liseré blanc. Partagé par l'éditeur et l'export (même dessin partout).
+ */
+export function flowArrowPolygons(
+  flow: Pick<FlowObject, 'arrows'> & { geometry: { points: Point[] } },
+  scale: number,
+  display: DisplaySettings,
+  view?: ViewBox | null,
+): { polygons: Poly[]; outline: number } {
+  if (!flow.arrows.visible) return { polygons: [], outline: 0 };
+  const placed = flowArrowMarks(flow.geometry.points, flow.arrows, scale, display);
+  const length = placed.length;
+  const width = length * 0.8;
+  const polygons: Poly[] = [];
+  for (const m of placed.marks) {
+    if (!inView(view, m.x, m.y, length)) continue;
+    const r = (m.angle * Math.PI) / 180;
+    const cos = Math.cos(r);
+    const sin = Math.sin(r);
+    if (flow.arrows.direction === 'both') {
+      // Double sens : deux pointes opposées reliées par un trait (se lit ↔, pas comme un losange).
+      polygons.push(
+        arrowHead(m, cos, sin, length * 0.36, length * 0.28, width, 1),
+        arrowHead(m, cos, sin, -length * 0.36, length * 0.28, width, -1),
+        shaft(m, cos, sin, length * 0.46, width * 0.26),
+      );
+    } else
+      polygons.push(arrowHead(m, cos, sin, 0, length, width, flow.arrows.direction === 'forward' ? 1 : -1));
+  }
+  return { polygons, outline: length * 0.12 };
+}
+
+/** Couleur de remplissage des flèches d'un trajet. */
+export const flowArrowColor = (style: Style) => ({
+  color: style.stroke ?? '#1d4ed8',
+  opacity: Math.max(style.strokeOpacity, 0.6),
+});
+
+/**
  * Flèches d'un trajet, posées sur ses segments et orientées selon eux (sens du tracé, inverse ou
  * double sens). Retourne le nombre de flèches dessinées (utile aux tests).
  */
@@ -131,33 +159,24 @@ export function drawFlowArrows(
   display: DisplaySettings,
   view?: ViewBox | null,
 ): number {
-  if (!flow.arrows.visible) return 0;
-  const placed = flowArrowMarks(flow.geometry.points, flow.arrows, scale, display);
-  const length = placed.length;
-  const marks = placed.marks.filter((m) => inView(view, m.x, m.y, length));
-  if (!marks.length) return 0;
-  const width = length * 0.8;
+  const { polygons, outline } = flowArrowPolygons(flow, scale, display, view);
+  if (!polygons.length) return 0;
   c.save();
   c.beginPath();
-  for (const m of marks) {
-    const r = (m.angle * Math.PI) / 180;
-    const cos = Math.cos(r);
-    const sin = Math.sin(r);
-    if (flow.arrows.direction === 'both') {
-      // Double sens : deux pointes opposées reliées par un trait (se lit ↔, pas comme un losange).
-      arrowHead(c, m, cos, sin, length * 0.36, length * 0.28, width, 1);
-      arrowHead(c, m, cos, sin, -length * 0.36, length * 0.28, width, -1);
-      shaft(c, m, cos, sin, length * 0.46, width * 0.26);
-    } else arrowHead(c, m, cos, sin, 0, length, width, flow.arrows.direction === 'forward' ? 1 : -1);
+  for (const poly of polygons) {
+    c.moveTo(poly[0]!.x, poly[0]!.y);
+    for (const p of poly.slice(1)) c.lineTo(p.x, p.y);
+    c.closePath();
   }
   c.lineJoin = 'round';
-  c.lineWidth = length * 0.12;
+  c.lineWidth = outline;
   c.strokeStyle = 'rgba(255, 255, 255, 0.95)';
   c.stroke(); // liseré blanc : lisible sur la photo
-  c.fillStyle = rgba(flow.style.stroke ?? '#1d4ed8', Math.max(flow.style.strokeOpacity, 0.6))!;
+  const fill = flowArrowColor(flow.style);
+  c.fillStyle = rgba(fill.color, fill.opacity)!;
   c.fill();
   c.restore();
-  return marks.length;
+  return flow.arrows.direction === 'both' ? polygons.length / 3 : polygons.length;
 }
 
 /**
@@ -256,4 +275,51 @@ export function hatchPattern(style: Style): HTMLCanvasElement | null {
   c.stroke();
   patterns.set(key, canvas);
   return canvas;
+}
+
+/**
+ * Cote : traits perpendiculaires aux extrémités et valeur mesurée au milieu du tracé, lisible
+ * (taille bornée à l'écran, liseré blanc) et toujours droite.
+ */
+export function drawDimensionMarks(
+  c: CanvasRenderingContext2D,
+  points: Point[],
+  label: string,
+  style: Style,
+  objectRotation: number,
+  scale: number,
+  display: DisplaySettings,
+): void {
+  if (points.length < 2) return;
+  const tick = boundedSize(10, scale, display) * 0.6;
+  const color = rgba(style.stroke ?? '#0f172a', style.strokeOpacity) ?? '#0f172a';
+  c.save();
+  c.strokeStyle = color;
+  c.lineWidth = Math.max(style.strokeWidth, 1 / scale);
+  c.beginPath();
+  for (const [a, b] of [
+    [points[0]!, points[1]!],
+    [points.at(-1)!, points.at(-2)!],
+  ] as const) {
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const nx = -(b.y - a.y) / len;
+    const ny = (b.x - a.x) / len;
+    c.moveTo(a.x - nx * tick, a.y - ny * tick);
+    c.lineTo(a.x + nx * tick, a.y + ny * tick);
+  }
+  c.stroke();
+  const { point } = midpointAlong(points);
+  const font = Math.max(11, Math.min(display.symbolMaxPx * 0.4, 14)) / Math.max(scale, 1e-9);
+  c.translate(point.x, point.y);
+  c.rotate((-objectRotation * Math.PI) / 180);
+  c.font = `600 ${font}px Inter, "Segoe UI", Arial, sans-serif`;
+  c.textAlign = 'center';
+  c.textBaseline = 'bottom';
+  c.lineJoin = 'round';
+  c.lineWidth = font * 0.3;
+  c.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+  c.strokeText(label, 0, -font * 0.25);
+  c.fillStyle = color;
+  c.fillText(label, 0, -font * 0.25);
+  c.restore();
 }

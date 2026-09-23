@@ -75,6 +75,8 @@ export const ObjectsLayer = memo(function ObjectsLayer({ scaleBucket }: { scaleB
                     hidden={editingTextId === object.id}
                     scale={scaleBucket}
                     display={doc.plan.display}
+                    calibration={doc.plan.calibration}
+                    units={doc.plan.units}
                     assets={doc.assets}
                     imagesVersion={imagesVersion}
                     onSelect={select}

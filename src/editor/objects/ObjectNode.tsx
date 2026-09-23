@@ -3,10 +3,12 @@ import { memo } from 'react';
 import { Ellipse, Group, Image as KImage, Line, Rect, Shape, Text } from 'react-konva';
 import { bandOutline } from '@/domain/model/paths.ts';
 import { geometryCenter } from '@/domain/model/shapes.ts';
-import type { DisplaySettings, PlanObject, Style, SymbolAsset } from '@/domain/model/types.ts';
+import { corridorWidthPx, formatLength, polylineLength, type Units } from '@/domain/model/measure.ts';
+import type { Calibration, DisplaySettings, PlanObject, Style, SymbolAsset } from '@/domain/model/types.ts';
 import { editActions } from '../editActions.ts';
 import {
   displayedSymbolSize,
+  drawDimensionMarks,
   drawCorridorIcons,
   drawFlowArrows,
   drawZoneBadge,
@@ -27,6 +29,9 @@ interface ObjectNodeProps {
   scale: number;
   /** Limites d'affichage des repères répétés (flèches, pictogrammes). */
   display: DisplaySettings;
+  /** Calibration du plan (largeurs physiques, cotes) et unités d'affichage. */
+  calibration: Calibration | null;
+  units: Units;
   /** Pictogrammes importés du plan. */
   assets: Readonly<Record<string, SymbolAsset>>;
   /** Change quand une image de pictogramme vient d'être chargée (redessin). */
@@ -105,6 +110,8 @@ export const ObjectNode = memo(function ObjectNode({
   hidden,
   scale,
   display,
+  calibration,
+  units,
   assets,
   onSelect,
   onDoubleClick,
@@ -238,8 +245,29 @@ export const ObjectNode = memo(function ObjectNode({
     );
   }
 
+  if (object.type === 'dimension' && g.kind === 'polyline') {
+    const label = formatLength(polylineLength(g.points), calibration, units);
+    return (
+      <Group {...common} offsetX={center.x} offsetY={center.y}>
+        <Line
+          {...stroke}
+          points={g.points.flatMap((p) => [p.x, p.y])}
+          hitStrokeWidth={hitStrokeWidth(style.strokeWidth, scale)}
+          perfectDrawEnabled={false}
+        />
+        <Shape
+          listening={false}
+          sceneFunc={(ctx, shape) => {
+            const { c, scale: s } = native(ctx, shape);
+            drawDimensionMarks(c, g.points, label, style, object.rotation, s, display);
+          }}
+        />
+      </Group>
+    );
+  }
+
   if (object.type === 'corridor' && g.kind === 'polyline') {
-    const outline = bandOutline(g.points, object.width);
+    const outline = bandOutline(g.points, corridorWidthPx(object, calibration));
     const image = object.showIcons
       ? symbolBitmap(object.iconsOriented ? 'mark.footprints' : 'mark.walker', null, assets)
       : null;

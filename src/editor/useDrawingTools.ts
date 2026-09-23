@@ -18,6 +18,7 @@ import { type RefObject, useEffect } from 'react';
 import {
   createAreaObject,
   createCorridorObject,
+  createDimensionObject,
   createFlowObject,
   createIconObject,
   createLineObject,
@@ -26,7 +27,8 @@ import {
 import { assetIdOf, findSymbol, isAssetSymbol } from '@/domain/symbols/catalog.ts';
 import type { Point } from '@/domain/model/types.ts';
 import { screenToImage } from '@/domain/viewport/viewport.ts';
-import { type DrawingTool, type Draft, useEditorStore } from '@/store/editorStore.ts';
+import { type DrawingTool, type Draft, TWO_POINT_TOOLS, useEditorStore } from '@/store/editorStore.ts';
+import { normalizeAngle } from '@/domain/model/shapes.ts';
 import { planStore } from '@/store/planStore.ts';
 import { useViewportStore } from '@/store/viewportStore.ts';
 import { editActions } from './editActions.ts';
@@ -67,6 +69,30 @@ export function finishPathDraft(): void {
   if (!draft || draft.kind !== 'path' || !doc) return;
   const points = draft.points;
   editor.setDraft(null);
+  if (draft.tool === 'calibrate') {
+    // La distance réelle est demandée dans une boîte de dialogue ; rien n'est encore enregistré.
+    if (points.length >= 2) editor.setPendingCalibration({ p1: points[0]!, p2: points[1]! });
+    editor.setTool('select');
+    return;
+  }
+  if (draft.tool === 'north') {
+    if (points.length >= 2) {
+      const [a, b] = [points[0]!, points[1]!];
+      const angle = normalizeAngle((Math.atan2(b.x - a.x, -(b.y - a.y)) * 180) / Math.PI);
+      // Orientation tracée par l'utilisateur : enregistrée comme « à vérifier » jusqu'à confirmation.
+      planStore.getState().update('Orienter le nord', (d) => {
+        d.plan.northAngleDeg = angle;
+        d.plan.northStatus = 'estimated';
+      });
+    }
+    editor.setTool('select');
+    return;
+  }
+  if (draft.tool === 'measure') {
+    if (points.length >= 2)
+      editActions.create(createDimensionObject(doc, points, scale()), 'Mesurer une distance');
+    return;
+  }
   if (draft.tool === 'flow') {
     if (points.length >= 2)
       editActions.create(
@@ -266,11 +292,11 @@ export function useDrawingTools(stageRef: RefObject<Konva.Stage | null>, enabled
         const repeatsLast = screenDistance(at, last) <= SNAP_PX / 2; // 2e clic d'un double clic
         if (closesPolygon || repeatsLast) return finishPathDraft();
         editor.setDraft({ ...current, points: [...current.points, at] });
-        if (drawing === 'line') finishPathDraft();
+        if (TWO_POINT_TOOLS.includes(drawing)) finishPathDraft();
         return;
       }
       editor.setDraft({ kind: 'path', tool: drawing, points: [at], cursor: at });
-      if (drawing === 'line') {
+      if (TWO_POINT_TOOLS.includes(drawing)) {
         // Cliquer-glisser : la ligne est créée au relâchement si on a glissé.
         const onCancel = () => {
           window.removeEventListener('pointerup', onUp);
@@ -282,7 +308,7 @@ export function useDrawingTools(stageRef: RefObject<Konva.Stage | null>, enabled
           window.removeEventListener('pointercancel', onCancel);
           const end = imagePoint(element, ev);
           const d = useEditorStore.getState().draft;
-          if (d?.kind === 'path' && d.tool === 'line' && screenDistance(end, at) > MIN_DRAG_PX) {
+          if (d?.kind === 'path' && d.tool === drawing && screenDistance(end, at) > MIN_DRAG_PX) {
             useEditorStore.getState().setDraft({ ...d, points: [at, end] });
             finishPathDraft();
           }

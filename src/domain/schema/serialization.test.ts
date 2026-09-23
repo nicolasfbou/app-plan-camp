@@ -14,7 +14,7 @@ describe('sérialisation du projet', () => {
   it('écrit la version du format', () => {
     const json = JSON.parse(serializePlanDocument(makeDocument()));
     expect(json.schemaVersion).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe(3);
+    expect(SCHEMA_VERSION).toBe(4);
   });
 
   it('n’enregistre aucune donnée de viewport dans le document', () => {
@@ -206,7 +206,7 @@ describe('migration réelle 2 → 3 (circulation et zones opérationnelles)', ()
   it('ajoute les calques Stationnement, Livraison et Sécurité au-dessus des zones ; géométries inchangées', () => {
     const v2 = phase3Document();
     const doc = parsePlanDocument(JSON.stringify(v2));
-    expect(doc.schemaVersion).toBe(3);
+    expect(doc.schemaVersion).toBe(SCHEMA_VERSION);
     expect(doc.layers.map((l) => l.tier)).toEqual([
       'zones',
       'parking',

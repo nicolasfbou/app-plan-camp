@@ -1,3 +1,4 @@
+import { ScalePanel } from './ScalePanel.tsx';
 import { CheckCircle2, Download, Lock, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { repository } from '@/app/repository.ts';
@@ -78,6 +79,7 @@ function BackgroundDetails({ image }: { image: BaseImageRef }) {
         <Lock size={14} className="mt-0.5 shrink-0" aria-hidden />
         {t('bg.locked')}
       </p>
+      <ScalePanel />
       <dl className="space-y-2">
         <Field label={t('bg.fileName')}>{image.fileName}</Field>
         <Field label={t('bg.format')}>{FORMAT_LABELS[image.mimeType] ?? image.mimeType}</Field>

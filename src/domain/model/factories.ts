@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid';
 import { t } from '../../i18n/index.ts';
 import { RENDER_TIERS, SCHEMA_VERSION } from './schema.ts';
+import { planDefaults } from './planDefaults.ts';
 import type { Layer, PlanDocument, PlanKind, RenderTier, Site } from './types.ts';
 
 export const newId = (): string => nanoid(12);
@@ -36,6 +37,7 @@ export function createPlanDocument(params: { siteId: string; name: string; kind?
       calibration: null,
       northAngleDeg: 0,
       display: { ...DEFAULT_DISPLAY },
+      ...planDefaults(),
       metadata: {},
       createdAt: now,
       updatedAt: now,
@@ -55,5 +57,7 @@ export function duplicatePlanDocument(doc: PlanDocument, name: string): PlanDocu
   const now = nowIso();
   const copy = structuredClone(doc);
   copy.plan = { ...copy.plan, id: newId(), name, createdAt: now, updatedAt: now };
+  // Une copie n'hérite jamais d'une approbation : elle repart en brouillon.
+  copy.plan.titleBlock = { ...copy.plan.titleBlock, status: 'draft', approvedAt: null };
   return copy;
 }

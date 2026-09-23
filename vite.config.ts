@@ -9,10 +9,11 @@ export default defineConfig({
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
   build: {
-    // Application installée et mise en cache hors ligne : le bundle principal (~255 Ko gzip,
-    // dominé par Konva, React et zod) est téléchargé une seule fois. pdf.js est déjà séparé et
-    // chargé à la demande. Le seuil signale une croissance anormale au-delà de 1 Mo.
-    chunkSizeWarningLimit: 1000,
+    // Application installée et mise en cache hors ligne : le bundle principal (~315 Ko gzip,
+    // dominé par Konva, React et zod) est téléchargé une seule fois. pdf.js, jsPDF, les polices et
+    // le moteur d'export sont séparés et chargés à la demande. Le seuil signale une croissance
+    // anormale au-delà de 1,1 Mo.
+    chunkSizeWarningLimit: 1100,
   },
   plugins: [
     react(),
@@ -36,7 +37,7 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,mjs,css,html,svg,png,woff2}'],
+        globPatterns: ['**/*.{js,mjs,css,html,svg,png,woff2,ttf}'],
         // Konva + React dépassent la limite par défaut (2 Mo) une fois regroupés.
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
       },

@@ -75,7 +75,7 @@ describe('export / import .campplan', () => {
     expect(content.manifest).toMatchObject({
       format: 'campplan',
       formatVersion: 2,
-      schemaVersion: 3,
+      schemaVersion: 4,
       counts: { objects: 400 },
     });
     const { siteId, planId } = await importCampplan(target, content, {

@@ -49,9 +49,13 @@ export function removeObject(doc: PlanDocument, id: string, now = nowIso()): boo
   return true;
 }
 
-/** Pictogrammes importés qu'aucun objet (pictogramme placé ou zone) n'utilise : retirés du plan. */
+/**
+ * Pictogrammes importés qu'aucun objet (pictogramme placé ou zone) n'utilise : retirés du plan.
+ * Le logo du cartouche est conservé.
+ */
 export function removeUnusedAssets(doc: PlanDocument, now = nowIso()): number {
   const used = new Set<string>();
+  if (doc.plan.titleBlock.logoAssetId) used.add(`asset:${doc.plan.titleBlock.logoAssetId}`);
   for (const o of Object.values(doc.objects)) {
     if (o.type === 'icon') used.add(o.symbolId);
     if (o.type === 'zone' && o.icon) used.add(o.icon.symbolId);

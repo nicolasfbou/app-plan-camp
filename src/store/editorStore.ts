@@ -26,6 +26,9 @@ export const DRAWING_TOOLS = [
   'flow',
   'corridor',
   'symbol',
+  'measure',
+  'calibrate',
+  'north',
 ] as const;
 export type DrawingTool = (typeof DRAWING_TOOLS)[number];
 export type Tool = 'select' | 'hand' | DrawingTool;
@@ -37,13 +40,25 @@ export type Draft =
   | { kind: 'box'; tool: 'rect' | 'roundedRect' | 'ellipse'; start: Point; end: Point }
   | {
       kind: 'path';
-      tool: 'polygon' | 'polyline' | 'line' | 'flow' | 'corridor';
+      tool: 'polygon' | 'polyline' | 'line' | 'flow' | 'corridor' | 'measure' | 'calibrate' | 'north';
       points: Point[];
       cursor: Point | null;
     };
 
 /** Outils qui se dessinent par clics successifs (double clic ou Entrée pour terminer). */
-export const PATH_TOOLS = ['polygon', 'polyline', 'line', 'flow', 'corridor'] as const;
+export const PATH_TOOLS = [
+  'polygon',
+  'polyline',
+  'line',
+  'flow',
+  'corridor',
+  'measure',
+  'calibrate',
+  'north',
+] as const;
+
+/** Outils à deux points : terminés automatiquement au 2e clic (ou au relâchement d'un glisser). */
+export const TWO_POINT_TOOLS: readonly string[] = ['line', 'calibrate', 'north'];
 
 interface EditorState {
   background: BackgroundStatus;
@@ -60,6 +75,8 @@ interface EditorState {
   showVerifiedCrossings: boolean;
   /** Croisement consulté (clé de `detectCrossings`). */
   selectedCrossing: string | null;
+  /** Deux points de calibration en attente de la distance réelle (boîte de dialogue). */
+  pendingCalibration: { p1: Point; p2: Point } | null;
   /** Objets sélectionnés (vide = aucune sélection). */
   selectedIds: string[];
   /** Mode « Modifier les points » d'un polygone / d'une polyligne (sélection d'un seul objet). */
@@ -89,6 +106,7 @@ interface EditorState {
   setShowCrossings(show: boolean): void;
   setShowVerifiedCrossings(show: boolean): void;
   selectCrossing(key: string | null): void;
+  setPendingCalibration(points: { p1: Point; p2: Point } | null): void;
 
   /** Remplace la sélection (un identifiant, une liste, ou null pour tout désélectionner). */
   select(ids: string | readonly string[] | null): void;
@@ -116,6 +134,7 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   showCrossings: false,
   showVerifiedCrossings: false,
   selectedCrossing: null,
+  pendingCalibration: null,
   selectedIds: [],
   vertexEditing: false,
   selectedVertex: null,
@@ -144,6 +163,7 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   setShowCrossings: (showCrossings) => set({ showCrossings }),
   setShowVerifiedCrossings: (showVerifiedCrossings) => set({ showVerifiedCrossings }),
   selectCrossing: (selectedCrossing) => set({ selectedCrossing }),
+  setPendingCalibration: (pendingCalibration) => set({ pendingCalibration }),
 
   select(ids) {
     const selectedIds = ids === null ? [] : typeof ids === 'string' ? [ids] : [...new Set(ids)];
@@ -194,6 +214,7 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
       spaceHeld: false,
       isPanning: false,
       selectedCrossing: null,
+      pendingCalibration: null,
     });
   },
 }));

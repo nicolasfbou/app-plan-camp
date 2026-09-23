@@ -7,6 +7,7 @@ import {
   MousePointer2,
   Pentagon,
   Route,
+  Ruler,
   SignpostBig,
   Slash,
   Spline,
@@ -48,6 +49,13 @@ const TOOLS: { tool: Tool; icon: LucideIcon; hint: MessageKey }[] = [
   { tool: 'flow', icon: Route, hint: 'tools.hint.flow' },
   { tool: 'corridor', icon: Footprints, hint: 'tools.hint.corridor' },
   { tool: 'symbol', icon: SignpostBig, hint: 'tools.hint.symbol' },
+  { tool: 'measure', icon: Ruler, hint: 'tools.hint.measure' },
+];
+
+/** Outils lancés depuis l'onglet Fond (pas de bouton dans la palette), avec leur consigne. */
+const PANEL_TOOLS: { tool: Tool; hint: MessageKey }[] = [
+  { tool: 'calibrate', hint: 'tools.hint.calibrate' },
+  { tool: 'north', hint: 'tools.hint.north' },
 ];
 
 const keyOf = (tool: Tool) =>
@@ -91,7 +99,7 @@ export function LeftSidebar({ showTools }: { showTools: boolean }) {
 function ToolPalette() {
   const tool = useEditorStore((s) => s.tool);
   const setTool = useEditorStore((s) => s.setTool);
-  const active = TOOLS.find((entry) => entry.tool === tool);
+  const active = [...TOOLS, ...PANEL_TOOLS].find((entry) => entry.tool === tool);
 
   return (
     <>

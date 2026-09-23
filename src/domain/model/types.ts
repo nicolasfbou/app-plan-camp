@@ -4,6 +4,9 @@ import type {
   calibrationSchema,
   crossingReviewSchema,
   displaySettingsSchema,
+  legendSettingsSchema,
+  printSettingsSchema,
+  titleBlockSchema,
   geometrySchema,
   layerSchema,
   planDocumentSchema,
@@ -39,3 +42,9 @@ export type CorridorObject = Extract<PlanObject, { type: 'corridor' }>;
 export type IconObject = Extract<PlanObject, { type: 'icon' }>;
 export type ZoneObject = Extract<PlanObject, { type: 'zone' }>;
 export type FlowCategory = FlowObject['category'];
+export type LegendSettings = z.infer<typeof legendSettingsSchema>;
+export type TitleBlock = z.infer<typeof titleBlockSchema>;
+export type PrintSettings = z.infer<typeof printSettingsSchema>;
+export type DimensionObject = Extract<PlanObject, { type: 'dimension' }>;
+export type StallObject = Extract<PlanObject, { type: 'stall' }>;
+export type PlanStatus = TitleBlock['status'];

@@ -185,7 +185,7 @@ describe('camps et plans', () => {
     await repo.savePlan(doc);
     await repo.saveViewPrefs(doc.plan.id, { centerX: 100, centerY: 50, scale: 0.5 });
     expect(await repo.getViewPrefs(doc.plan.id)).toEqual({ centerX: 100, centerY: 50, scale: 0.5 });
-    expect(JSON.stringify(await repo.loadPlan(doc.plan.id))).not.toMatch(/centerX|scale/);
+    expect(JSON.stringify(await repo.loadPlan(doc.plan.id))).not.toMatch(/"(centerX|centerY|scale)"/);
     await repo.deletePlan(doc.plan.id);
     expect(await repo.getViewPrefs(doc.plan.id)).toBeUndefined();
   });
