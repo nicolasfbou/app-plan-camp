@@ -9,7 +9,14 @@ import { assetIdOf, isAssetSymbol, symbolDataUrl } from '@/domain/symbols/catalo
 import type { SymbolAsset } from '@/domain/model/types.ts';
 import { repository } from '@/app/repository.ts';
 
-type Entry = { image: HTMLImageElement; ready: boolean; failed: boolean };
+type Entry = { image: HTMLImageElement; ready: boolean; failed: boolean; bitmap?: HTMLCanvasElement };
+
+/**
+ * Côté du bitmap des repères répétés : un SVG redessiné à chaque image coûte cher (le navigateur
+ * le rastérise à chaque fois) ; on le rastérise une fois à cette taille, suffisante pour la taille
+ * d'affichage maximale des repères, écrans haute densité compris.
+ */
+const BITMAP_PX = 192;
 
 const cache = new Map<string, Entry>();
 const listeners = new Set<() => void>();
@@ -18,7 +25,7 @@ let version = 0;
 function changed() {
   version++;
   for (const listener of listeners) listener();
-  // Les formes dessinées à la main (flèches, pictogrammes des corridors et des zones) se redessinent.
+  // Les formes dessinées à la main (pictogrammes des corridors et des zones) se redessinent.
   for (const stage of Konva.stages) stage.batchDraw();
 }
 
@@ -49,26 +56,57 @@ async function assetUrl(asset: SymbolAsset): Promise<string | null> {
   return blob ? URL.createObjectURL(new Blob([blob.bytes], { type: asset.mimeType })) : null;
 }
 
-/**
- * Image prête d'un pictogramme, ou null (chargement en cours, pictogramme inconnu). Le chargement
- * est lancé au premier appel ; les abonnés sont prévenus quand l'image est prête.
- */
-export function symbolImage(
+/** Entrée du cache (chargement lancé au premier appel). */
+function entryOf(
   symbolId: string,
   text: string | null | undefined,
   assets: Readonly<Record<string, SymbolAsset>>,
-): HTMLImageElement | null {
+): Entry {
   const asset = isAssetSymbol(symbolId) ? assets[assetIdOf(symbolId)] : undefined;
   const key = asset ? `${symbolId}:${asset.sha256}` : `${symbolId}:${text ?? ''}`;
-  const entry =
+  return (
     cache.get(key) ??
     load(
       key,
       asset
         ? assetUrl(asset)
         : Promise.resolve(isAssetSymbol(symbolId) ? null : symbolDataUrl(symbolId, text)),
-    );
+    )
+  );
+}
+
+/**
+ * Image prête d'un pictogramme (vectorielle, nette à toute taille), ou null (chargement en cours,
+ * pictogramme inconnu). Les abonnés sont prévenus quand l'image est prête.
+ */
+export function symbolImage(
+  symbolId: string,
+  text: string | null | undefined,
+  assets: Readonly<Record<string, SymbolAsset>>,
+): HTMLImageElement | null {
+  const entry = entryOf(symbolId, text, assets);
   return entry.ready ? entry.image : null;
+}
+
+/**
+ * Version bitmap (rastérisée une fois) d'un pictogramme, pour les repères dessinés en grand nombre
+ * à taille bornée (pictogrammes des corridors et des zones). Null tant que l'image n'est pas prête.
+ */
+export function symbolBitmap(
+  symbolId: string,
+  text: string | null | undefined,
+  assets: Readonly<Record<string, SymbolAsset>>,
+): CanvasImageSource | null {
+  const entry = entryOf(symbolId, text, assets);
+  if (!entry.ready) return null;
+  if (!entry.bitmap && typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    canvas.width = BITMAP_PX;
+    canvas.height = BITMAP_PX;
+    canvas.getContext('2d')?.drawImage(entry.image, 0, 0, BITMAP_PX, BITMAP_PX);
+    entry.bitmap = canvas;
+  }
+  return entry.bitmap ?? entry.image;
 }
 
 /** URL affichable d'un pictogramme de la bibliothèque (vignettes de l'interface). */

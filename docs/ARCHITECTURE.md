@@ -607,3 +607,77 @@ ajuster les coins. Tout est annulable et enregistré.
 - Performance (`bench/objects-performance.mjs`, même photo, Chromium sans GPU ; valeurs de
   référence, pas des garanties) : 100 / 500 / 1 000 objets ouverts en 0,4 / 0,55 / 0,65 s ; vue
   60 / 59 / 53 ips ; glisser d'un objet 60 ips ; sélection ≈ 30 ms.
+
+---
+
+## 15. Circulation et zones opérationnelles (phase 4)
+
+### 15.1 Modèle (schéma v3)
+
+Aucune architecture parallèle : les nouveaux outils créent des objets du modèle existant (mêmes
+calques, sélection multiple, groupes, verrous, annuler / rétablir, sauvegarde, `.campplan`).
+
+| Objet                        | Géométrie                        | Paramètres                                                                                                                                                                                                      |
+| ---------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Trajet de véhicules (`flow`) | polyligne (les points des clics) | catégorie (légers, lourds, livraison, service, urgence, générale, personnalisé), sens (tracé, inverse, double), flèches affichées, taille et espacement des flèches, trait (couleur, épaisseur, opacité, style) |
+| Corridor piéton (`corridor`) | polyligne = axe du corridor      | largeur (px image), remplissage, bordure, pictogrammes (affichés, espacement, taille, orientés dans le sens du déplacement)                                                                                     |
+| Pictogramme (`icon`)         | point (centre)                   | pictogramme de la bibliothèque ou importé, taille, rotation, texte (limite de vitesse), opacité                                                                                                                 |
+| Zone (`zone`)                | rectangle, ellipse, polygone     | + pictogramme et nom affichés au centre                                                                                                                                                                         |
+
+- Catégories de calques ajoutées : Stationnement, Livraison et débarquement, Sécurité et accès.
+- `doc.assets` : pictogrammes importés (octets d'origine stockés à part, SHA-256) ;
+  `doc.crossingReviews` : décisions sur les croisements ; `plan.display` : limites d'affichage.
+- Migration 2 → 3 : les trois calques sont ajoutés au-dessus des zones, les nouveaux champs reçoivent
+  des valeurs neutres ; aucune géométrie ne change. Testée sur un vrai document de format 2 (unitaire
+  et navigateur).
+
+### 15.2 Flèches et corridors : calculés, jamais stockés
+
+- **Flèches** : `marksAlongPath` place des repères régulièrement le long du tracé ; chaque flèche
+  tient entièrement sur UN segment et suit sa direction : elle ne déborde jamais du chemin dans un
+  virage (une flèche qui chevaucherait un sommet est reportée sur le segment suivant). Toutes les
+  flèches d'un trajet sont dessinées dans une seule forme Konva, en un seul chemin (un remplissage,
+  un liseré blanc), sans aucun objet par flèche. Double sens : ↔.
+- **Corridor** : `bandOutline` calcule les deux bords à une demi-largeur de l'axe : jonctions en
+  onglet, biseau à l'extérieur des angles aigus, onglet intérieur borné (demi-tours, segments
+  courts). Les sommets de l'axe s'éditent comme ceux d'une polyligne ; le contour suit.
+- **Tailles à l'écran** : flèches, pictogrammes des corridors et des zones, et pictogrammes placés
+  restent entre `symbolMinPx` et `symbolMaxPx` pixels écran (12 et 44 par défaut, réglables pour le
+  plan). Dézoomé, les repères s'espacent au lieu de se chevaucher. La géométrie n'est jamais
+  modifiée par le zoom. Largeurs en pixels image, jamais présentées comme des mètres.
+- **Rendu** : un bitmap par pictogramme (un SVG redessiné à chaque image est coûteux) ; les repères
+  hors de l'écran ne sont pas dessinés. Toujours 3 couches Konva physiques.
+
+### 15.3 Pictogrammes
+
+Bibliothèque de 30 pictogrammes en 7 catégories (SVG construits à partir de formes de panneau et de
+tracés lucide, licence ISC, générés par `scripts/build-glyphs.mjs`). Import PNG ou SVG : taille
+≤ 2 Mo, PNG ≤ 4096 px, SVG refusé s'il contient script, gestionnaire d'événement, lien ou ressource
+externe, HTML intégré, DOCTYPE / ENTITY ; il est de toute façon affiché comme une image (aucun
+script exécuté). Les pictogrammes importés voyagent dans le `.campplan` (format 2, rôle `symbol`).
+
+### 15.4 Analyse des croisements
+
+`detectCrossings` repère les points où un trajet de véhicules coupe l'axe d'un corridor piéton, ou le
+longe à moins d'une demi-largeur (objets affichés seulement, rotation comprise). Marqueurs discrets ;
+pour chaque croisement : consulter, point de vigilance, note, « vérifié : masquer », rouvrir. Les
+décisions sont retrouvées par paire d'objets et proximité, et disparaissent avec l'objet supprimé
+(dans la même action). C'est une **aide à la planification**, présentée comme telle : jamais une
+certification de sécurité. Une voie d'urgence est une catégorie de tracé, pas une garantie.
+
+### 15.5 Mesures
+
+- Camp 105 (photo réelle, `bench/camp105-phase4.mjs`) : 17 objets tracés avec les vrais outils
+  (2 trajets, 2 corridors, 4 zones, 6 pictogrammes, 3 étiquettes) sur des éléments visibles de la
+  photo ; 1 croisement détecté et marqué « point de vigilance » ; réouverture identique ;
+  102 vérifications d'attache (6 zooms), écart 0 px ; `.campplan` réimporté dans un navigateur vide :
+  identique, SHA-256 de la photo identique, objets modifiables. Disposition **illustrative**, à
+  valider sur le terrain.
+- Performance (`MIX=phase4 bench/objects-performance.mjs` : trajets de 40 sommets, corridors de 20
+  sommets avec pictogrammes, pictogrammes, zones avec badge ; Chromium sans GPU ; valeurs de
+  référence, pas des garanties) :
+
+  | Image               | Objets            | Ouverture         | Vue (ips)    | Zoom (ips)   | Glisser (ips) |
+  | ------------------- | ----------------- | ----------------- | ------------ | ------------ | ------------- |
+  | Camp 105, 9 MP      | 100 / 500 / 1 000 | 0,6 / 1,1 / 1,1 s | 59 / 53 / 38 | 60 / 50 / 38 | 60 / 60 / 40  |
+  | Image de test 50 MP | 100 / 500 / 1 000 | 1,1 / 1,2 / 1,4 s | 60 / 50 / 40 | 60 / 45 / 37 | 60 / 58 / 38  |

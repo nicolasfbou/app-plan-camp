@@ -2,6 +2,8 @@
  * Performance de l'éditeur avec N objets sur une vraie photo (100, 500, 1 000 par défaut).
  * Prérequis : `npm run build && npx vite preview --port 4178`.
  * Usage : node bench/objects-performance.mjs <image> [N1,N2,...]
+ * MIX=phase4 : ajoute au mélange des trajets de véhicules (40 sommets, flèches), des corridors
+ * piétons (20 sommets, pictogrammes) et des pictogrammes.
  *
  * Les objets (rectangles, ellipses, polygones, polylignes, étiquettes) sont écrits directement
  * dans le plan enregistré, puis le plan est rouvert. Mesures : ouverture, RAM Chromium, fluidité
@@ -59,7 +61,59 @@ function makeObjects(n, layers, width, height) {
       createdAt: now,
       updatedAt: now,
     };
-    const kind = i % 5;
+    const kind = i % (process.env.MIX === 'phase4' ? 8 : 5);
+    const zigzag = (count, amplitude) =>
+      Array.from({ length: count }, (_, k) => ({
+        x: x + (s * k) / (count - 1),
+        y: y + (k % 2 ? amplitude : 0) + s * 0.1,
+      }));
+    if (kind === 5) {
+      objects[id] = {
+        ...base,
+        type: 'flow',
+        layerId: layer('circulation'),
+        style: style('#1d4ed8', false),
+        geometry: { kind: 'polyline', curved: false, points: zigzag(40, s * 0.3) },
+        category: 'general',
+        arrows: { direction: i % 3 ? 'forward' : 'both', visible: true, size: s * 0.08, spacing: s * 0.2 },
+      };
+      continue;
+    }
+    if (kind === 6) {
+      objects[id] = {
+        ...base,
+        type: 'corridor',
+        layerId: layer('pedestrians'),
+        style: { ...style('#f97316'), dash: 'dashed' },
+        geometry: { kind: 'polyline', curved: false, points: zigzag(20, s * 0.4) },
+        width: s * 0.1,
+        showIcons: true,
+        iconSpacing: s * 0.3,
+        iconSize: s * 0.08,
+        iconsOriented: i % 2 === 0,
+      };
+      continue;
+    }
+    if (kind === 7) {
+      const symbols = [
+        'sign.stop',
+        'sign.parking',
+        'sign.pedestrian',
+        'sign.extinguisher',
+        'sign.speed-limit',
+      ];
+      objects[id] = {
+        ...base,
+        type: 'icon',
+        layerId: layer('signage'),
+        style: { ...style('#000000'), fillOpacity: 1 },
+        geometry: { kind: 'point', x: x + s / 2, y: y + s / 2 },
+        symbolId: symbols[i % symbols.length],
+        size: s * 0.4,
+        text: i % symbols.length === 4 ? '20' : null,
+      };
+      continue;
+    }
     if (kind === 0)
       objects[id] = {
         ...base,
@@ -67,6 +121,8 @@ function makeObjects(n, layers, width, height) {
         layerId: layer('zones'),
         style: style('#2563eb'),
         geometry: { kind: 'rect', x, y, width: s, height: s * 0.6, cornerRadius: 0 },
+        icon: process.env.MIX === 'phase4' ? { symbolId: 'sign.parking', size: s * 0.25 } : null,
+        showName: process.env.MIX === 'phase4',
       };
     else if (kind === 1)
       objects[id] = {
@@ -75,6 +131,8 @@ function makeObjects(n, layers, width, height) {
         layerId: layer('zones'),
         style: style('#f97316'),
         geometry: { kind: 'ellipse', cx: x + s / 2, cy: y + s / 2, rx: s / 2, ry: s / 3 },
+        icon: null,
+        showName: false,
       };
     else if (kind === 2)
       objects[id] = {
@@ -167,7 +225,15 @@ for (const n of counts) {
   await page.getByRole('button', { name: 'Nouveau plan' }).click();
   await page.getByRole('button', { name: 'Créer' }).click();
   await page.getByTestId('import-input').setInputFiles(imagePath);
-  await page.getByTestId('navigation-controls').waitFor({ timeout: 120_000 });
+  // Très grande image : l'application demande confirmation avant de l'ouvrir.
+  await Promise.race([
+    page.getByTestId('navigation-controls').waitFor({ timeout: 180_000 }),
+    page
+      .getByRole('button', { name: 'Ouvrir quand même' })
+      .click({ timeout: 180_000 })
+      .catch(() => {}),
+  ]);
+  await page.getByTestId('navigation-controls').waitFor({ timeout: 180_000 });
   await page
     .getByTestId('save-status')
     .filter({ hasText: /^Enregistré$/ })

@@ -89,7 +89,8 @@ export function SelectionLayer({ scale }: { scale: number }) {
     });
   });
 
-  const isText = single?.type === 'text';
+  // Texte et pictogramme : proportions conservées (l'échelle devient une taille).
+  const isText = single?.type === 'text' || single?.type === 'icon';
   const multi = movable.length > 1;
   // Coins seuls : texte ; sélection multiple (une poignée de côté déformerait en biais un objet
   // tourné, ce que le modèle ne sait pas représenter) ; petit objet (le glisser depuis son centre

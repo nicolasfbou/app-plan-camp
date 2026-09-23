@@ -59,10 +59,21 @@ Règle : le parcours complet doit être fiable avant toute fonction avancée.
 - Sommets : insérer, supprimer ; fermer une polyligne ; rectangle → polygone
 - Essai complet sur la photo réelle du Camp 105 (`bench/camp105-phase3.mjs`)
 
-## Phase 4 — Circulation et piétons
+## Phase 4 — Circulation et zones opérationnelles ✅
 
-Flux fléchés (sens, double sens, taille, fréquence), presets de circulation, corridor piéton
-(largeur, remplissages, icônes), icônes et signalisation.
+- Trajets de véhicules : 7 catégories, sens / inverse / double sens, flèches calculées le long du
+  tracé (jamais hors du chemin), sommets modifiables ; voies d'urgence tracées comme les trajets
+- Corridors piétons : largeur (px image), bords calculés dans les virages, pictogrammes droits ou
+  orientés
+- Zones : stationnement (7), livraison et débarquement (8), sécurité et accès (8), pictogramme et
+  nom au centre, bordure de délimitation rouge / orange, hachures
+- Bibliothèque de 30 pictogrammes en 7 catégories ; import PNG / SVG vérifié
+- Analyse des croisements piétons / véhicules (aide à la planification, pas une certification)
+- Affichage par catégorie ; limites d'affichage des repères ; schéma v3 ; `.campplan` format 2
+- Démonstration sur la photo réelle du Camp 105 (`bench/camp105-phase4.mjs`)
+
+Hors phase 4 (plus tard) : générateur de cases de stationnement, légende automatique, calibration
+et mesures réelles, cartouche d'impression.
 
 ## Phase 5 — Export
 

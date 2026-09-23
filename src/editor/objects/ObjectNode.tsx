@@ -5,9 +5,17 @@ import { bandOutline } from '@/domain/model/paths.ts';
 import { geometryCenter } from '@/domain/model/shapes.ts';
 import type { DisplaySettings, PlanObject, Style, SymbolAsset } from '@/domain/model/types.ts';
 import { editActions } from '../editActions.ts';
-import { drawCorridorIcons, drawFlowArrows, drawZoneBadge, hatchPattern } from './decorations.ts';
+import {
+  displayedSymbolSize,
+  drawCorridorIcons,
+  drawFlowArrows,
+  drawZoneBadge,
+  hatchPattern,
+  type ViewBox,
+} from './decorations.ts';
 import { areaFill, dashArray, hitStrokeWidth, measureText, rgba, textFontStyle } from './konvaStyle.ts';
-import { symbolImage } from './symbolImages.ts';
+import { symbolBitmap, symbolImage } from './symbolImages.ts';
+import { useViewportStore } from '@/store/viewportStore.ts';
 
 interface ObjectNodeProps {
   object: PlanObject;
@@ -41,9 +49,29 @@ function areaFillProps(style: Style) {
   };
 }
 
-/** Contexte 2D natif d'une forme Konva, et échelle absolue (zoom compris) au moment du dessin. */
+/**
+ * Contexte 2D natif d'une forme Konva, échelle absolue (zoom compris) au moment du dessin et zone
+ * visible de la scène exprimée dans le repère de la forme (pour ne pas dessiner hors écran).
+ */
 function native(ctx: Konva.Context, shape: Konva.Shape) {
-  return { c: ctx._context, scale: Math.abs(shape.getAbsoluteScale().x) || 1 };
+  const stage = shape.getStage();
+  let view: ViewBox | null = null;
+  if (stage) {
+    const inverse = shape.getAbsoluteTransform().copy().invert();
+    const corners = [
+      inverse.point({ x: 0, y: 0 }),
+      inverse.point({ x: stage.width(), y: 0 }),
+      inverse.point({ x: 0, y: stage.height() }),
+      inverse.point({ x: stage.width(), y: stage.height() }),
+    ];
+    view = {
+      minX: Math.min(...corners.map((p) => p.x)),
+      minY: Math.min(...corners.map((p) => p.y)),
+      maxX: Math.max(...corners.map((p) => p.x)),
+      maxY: Math.max(...corners.map((p) => p.y)),
+    };
+  }
+  return { c: ctx._context, scale: Math.abs(shape.getAbsoluteScale().x) || 1, view };
 }
 
 function transformOf(node: Konva.Node) {
@@ -72,6 +100,11 @@ export const ObjectNode = memo(function ObjectNode({
   onSelect,
   onDoubleClick,
 }: ObjectNodeProps) {
+  // Pictogramme placé : taille affichée bornée à l'écran (limites du plan). Le nœud n'est
+  // re-rendu au zoom que si la limite s'applique (sinon la valeur ne change pas).
+  const iconSize = useViewportStore((s) =>
+    object.type === 'icon' ? displayedSymbolSize(object.size, s.viewport.scale, display) : 0,
+  );
   const center = geometryCenter(object.geometry);
   const { style } = object;
   const common = {
@@ -109,6 +142,12 @@ export const ObjectNode = memo(function ObjectNode({
     onTransformEnd: (e: Konva.KonvaEventObject<Event>) => {
       const node = e.target;
       const t = transformOf(node);
+      if (object.type === 'icon' && (t.scaleX !== 1 || t.scaleY !== 1)) {
+        // Pictogramme affiché à une taille bornée : l'échelle s'applique à la taille AFFICHÉE.
+        const k = iconSize / object.size;
+        t.scaleX *= k;
+        t.scaleY *= k;
+      }
       // Le modèle reçoit l'échelle intégrée ; le nœud revient à l'échelle 1.
       node.scale({ x: 1, y: 1 });
       if (editActions.isGestureCancelled()) {
@@ -182,8 +221,8 @@ export const ObjectNode = memo(function ObjectNode({
         <Shape
           listening={false}
           sceneFunc={(ctx, shape) => {
-            const { c, scale: s } = native(ctx, shape);
-            drawFlowArrows(c, { ...object, geometry: g }, s, display);
+            const { c, scale: s, view } = native(ctx, shape);
+            drawFlowArrows(c, { ...object, geometry: g }, s, display, view);
           }}
         />
       </Group>
@@ -193,7 +232,7 @@ export const ObjectNode = memo(function ObjectNode({
   if (object.type === 'corridor' && g.kind === 'polyline') {
     const outline = bandOutline(g.points, object.width);
     const image = object.showIcons
-      ? symbolImage(object.iconsOriented ? 'mark.footprints' : 'mark.walker', null, assets)
+      ? symbolBitmap(object.iconsOriented ? 'mark.footprints' : 'mark.walker', null, assets)
       : null;
     return (
       <Group {...common} offsetX={center.x} offsetY={center.y}>
@@ -209,8 +248,8 @@ export const ObjectNode = memo(function ObjectNode({
           <Shape
             listening={false}
             sceneFunc={(ctx, shape) => {
-              const { c, scale: s } = native(ctx, shape);
-              drawCorridorIcons(c, g.points, object, object.rotation, s, display, image);
+              const { c, scale: s, view } = native(ctx, shape);
+              drawCorridorIcons(c, g.points, object, object.rotation, s, display, image, view);
             }}
           />
         )}
@@ -220,7 +259,7 @@ export const ObjectNode = memo(function ObjectNode({
 
   if (object.type === 'icon') {
     const image = symbolImage(object.symbolId, object.text, assets);
-    const size = object.size;
+    const size = iconSize;
     return (
       <Group {...common} opacity={style.fillOpacity}>
         {image ? (
@@ -248,7 +287,7 @@ export const ObjectNode = memo(function ObjectNode({
     object.type === 'zone' && (object.icon || object.showName)
       ? {
           icon: object.icon,
-          image: object.icon ? symbolImage(object.icon.symbolId, null, assets) : null,
+          image: object.icon ? symbolBitmap(object.icon.symbolId, null, assets) : null,
           name: object.showName ? object.name : null,
         }
       : null;

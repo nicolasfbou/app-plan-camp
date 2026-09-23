@@ -262,6 +262,12 @@ test.describe('pictogrammes', () => {
     const moved = (await objectsOfType(page, 'icon'))[0]!;
     const t = await settledTransform(page);
     expect(moved.geometry.x).toBeCloseTo(at.x + 60 / t.scale, 0);
+    // Zoomé très fort : le pictogramme ne dépasse pas la taille maximale à l'écran (44 px).
+    for (const key of ['+', '+', '+', '+', '+', '+']) await page.keyboard.press(key);
+    await settledTransform(page);
+    const [node] = await planNodes(page);
+    expect(node!.client.width).toBeLessThanOrEqual(44 * Math.SQRT2 + 1); // tourné de 45°
+    expect((await objectsOfType(page, 'icon'))[0]!.size).toBe(40); // la taille enregistrée ne change pas
   });
 
   test('pictogramme importé (SVG vérifié) : placé et conservé ; SVG dangereux refusé', async ({ page }) => {

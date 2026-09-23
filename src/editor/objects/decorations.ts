@@ -15,19 +15,72 @@ export function boundedSize(imagePx: number, scale: number, display: DisplaySett
   return screen / Math.max(scale, 1e-9);
 }
 
+/**
+ * Taille affichée (pixels image) d'un pictogramme placé : sa taille enregistrée tant qu'elle reste
+ * dans les limites à l'écran, sinon la limite (arrondie : pas de re-rendu pour d'infimes écarts).
+ */
+export function displayedSymbolSize(size: number, scale: number, display: DisplaySettings): number {
+  const screen = size * scale;
+  if (screen >= display.symbolMinPx && screen <= display.symbolMaxPx) return size;
+  return Number(boundedSize(size, scale, display).toPrecision(4));
+}
+
 /** Espacement effectif : au moins ~2,2 repères entre deux repères, pour ne jamais se chevaucher. */
 export function effectiveSpacing(spacing: number, markSize: number): number {
   return Math.max(spacing, markSize * 2.2);
 }
 
-function arrowHead(c: CanvasRenderingContext2D, cx: number, length: number, width: number, dir: 1 | -1) {
+/** Zone visible, en coordonnées locales de la forme : les repères hors écran ne sont pas dessinés. */
+export interface ViewBox {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+const inView = (view: ViewBox | null | undefined, x: number, y: number, margin: number) =>
+  !view ||
+  (x >= view.minX - margin && x <= view.maxX + margin && y >= view.minY - margin && y <= view.maxY + margin);
+
+/**
+ * Pointe de flèche (sous-chemin) centrée en `cx` le long de l'axe du repère, sans transformation
+ * du contexte : toutes les flèches d'un trajet forment un seul chemin (un remplissage, un trait).
+ */
+function arrowHead(
+  c: CanvasRenderingContext2D,
+  m: { x: number; y: number },
+  cos: number,
+  sin: number,
+  cx: number,
+  length: number,
+  width: number,
+  dir: 1 | -1,
+) {
+  const at = (u: number, v: number) => [m.x + u * cos - v * sin, m.y + u * sin + v * cos] as const;
   const tip = cx + (dir * length) / 2;
   const back = cx - (dir * length) / 2;
   const notch = cx - (dir * length) / 6;
-  c.moveTo(tip, 0);
-  c.lineTo(back, width / 2);
-  c.lineTo(notch, 0);
-  c.lineTo(back, -width / 2);
+  c.moveTo(...at(tip, 0));
+  c.lineTo(...at(back, width / 2));
+  c.lineTo(...at(notch, 0));
+  c.lineTo(...at(back, -width / 2));
+  c.closePath();
+}
+
+/** Trait central d'une flèche double (rectangle le long de l'axe). */
+function shaft(
+  c: CanvasRenderingContext2D,
+  m: { x: number; y: number },
+  cos: number,
+  sin: number,
+  half: number,
+  thickness: number,
+) {
+  const at = (u: number, v: number) => [m.x + u * cos - v * sin, m.y + u * sin + v * cos] as const;
+  c.moveTo(...at(-half, -thickness / 2));
+  c.lineTo(...at(half, -thickness / 2));
+  c.lineTo(...at(half, thickness / 2));
+  c.lineTo(...at(-half, thickness / 2));
   c.closePath();
 }
 
@@ -40,30 +93,36 @@ export function drawFlowArrows(
   flow: Pick<FlowObject, 'arrows' | 'style'> & { geometry: { points: Point[] } },
   scale: number,
   display: DisplaySettings,
+  view?: ViewBox | null,
 ): number {
   if (!flow.arrows.visible) return 0;
   const length = boundedSize(flow.arrows.size, scale, display);
-  const marks = marksAlongPath(flow.geometry.points, effectiveSpacing(flow.arrows.spacing, length), length);
-  const color = rgba(flow.style.stroke ?? '#1d4ed8', Math.max(flow.style.strokeOpacity, 0.6))!;
+  const marks = marksAlongPath(
+    flow.geometry.points,
+    effectiveSpacing(flow.arrows.spacing, length),
+    length,
+  ).filter((m) => inView(view, m.x, m.y, length));
+  if (!marks.length) return 0;
+  const width = length * 0.8;
   c.save();
-  c.lineJoin = 'round';
+  c.beginPath();
   for (const m of marks) {
-    c.save();
-    c.translate(m.x, m.y);
-    c.rotate((m.angle * Math.PI) / 180);
-    c.beginPath();
-    const width = length * 0.8;
+    const r = (m.angle * Math.PI) / 180;
+    const cos = Math.cos(r);
+    const sin = Math.sin(r);
     if (flow.arrows.direction === 'both') {
-      arrowHead(c, length * 0.27, length * 0.46, width, 1);
-      arrowHead(c, -length * 0.27, length * 0.46, width, -1);
-    } else arrowHead(c, 0, length, width, flow.arrows.direction === 'forward' ? 1 : -1);
-    c.lineWidth = length * 0.12;
-    c.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-    c.stroke(); // liseré blanc : lisible sur la photo
-    c.fillStyle = color;
-    c.fill();
-    c.restore();
+      // Double sens : deux pointes opposées reliées par un trait (se lit ↔, pas comme un losange).
+      arrowHead(c, m, cos, sin, length * 0.36, length * 0.28, width, 1);
+      arrowHead(c, m, cos, sin, -length * 0.36, length * 0.28, width, -1);
+      shaft(c, m, cos, sin, length * 0.46, width * 0.26);
+    } else arrowHead(c, m, cos, sin, 0, length, width, flow.arrows.direction === 'forward' ? 1 : -1);
   }
+  c.lineJoin = 'round';
+  c.lineWidth = length * 0.12;
+  c.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+  c.stroke(); // liseré blanc : lisible sur la photo
+  c.fillStyle = rgba(flow.style.stroke ?? '#1d4ed8', Math.max(flow.style.strokeOpacity, 0.6))!;
+  c.fill();
   c.restore();
   return marks.length;
 }
@@ -79,11 +138,13 @@ export function drawCorridorIcons(
   objectRotation: number,
   scale: number,
   display: DisplaySettings,
-  image: HTMLImageElement | null,
+  image: CanvasImageSource | null,
+  view?: ViewBox | null,
 ): void {
   if (!image) return;
   const size = boundedSize(corridor.iconSize, scale, display);
   for (const m of marksAlongPath(points, effectiveSpacing(corridor.iconSpacing, size), size)) {
+    if (!inView(view, m.x, m.y, size)) continue;
     c.save();
     c.translate(m.x, m.y);
     // Pas orientés : le tracé « footprints » pointe vers le haut → +90° par rapport à l'axe.
@@ -100,7 +161,7 @@ export function drawZoneBadge(
   options: { iconSize: number | null; name: string | null; rotation: number },
   scale: number,
   display: DisplaySettings,
-  image: HTMLImageElement | null,
+  image: CanvasImageSource | null,
 ): void {
   const size = options.iconSize ? boundedSize(options.iconSize, scale, display) : 0;
   c.save();
