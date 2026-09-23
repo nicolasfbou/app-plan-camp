@@ -10,7 +10,9 @@ import type { PlanDocument } from '@/domain/model/types.ts';
 import { checkSymbolFile } from '@/domain/symbols/importSymbol.ts';
 import { exportCampplan } from '@/persistence/campplan.ts';
 import type { ProjectRepository } from '@/persistence/ProjectRepository.ts';
-import { recoveryJournalTexts } from '@/persistence/recovery.ts';
+import { recoveryJournalPlanIds, recoveryJournalTexts, recoveryKey } from '@/persistence/recovery.ts';
+
+export { recoveryJournalPlanIds };
 import { oldEnough } from './cleanup.ts';
 
 export type HealthStatus = 'ok' | 'warn' | 'error';
@@ -34,20 +36,6 @@ export interface HealthContext {
 }
 
 const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} Mo`;
-
-/** Journaux de récupération encore présents (localStorage), par plan. */
-export function recoveryJournalPlanIds(): string[] {
-  const ids: string[] = [];
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key?.startsWith('campplanner.recovery.')) ids.push(key.slice('campplanner.recovery.'.length));
-    }
-  } catch {
-    // stockage indisponible
-  }
-  return ids;
-}
 
 /** Tous les plans ENREGISTRÉS (clés de la table, même si leur camp manque). */
 async function allPlanIds(repo: ProjectRepository): Promise<Set<string>> {
@@ -356,7 +344,7 @@ export async function applyRepair(
     case 'clear-stale-recovery': {
       const existing = await allPlanIds(repo);
       const stale = recoveryJournalPlanIds().filter((id) => !existing.has(id));
-      for (const id of stale) localStorage.removeItem(`campplanner.recovery.${id}`);
+      for (const id of stale) localStorage.removeItem(recoveryKey(id));
       return `${stale.length} journal(aux) supprimé(s).`;
     }
     case 'request-persistence': {

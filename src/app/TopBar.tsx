@@ -1,3 +1,4 @@
+import { SyncIndicator } from '@/sync/ui/SyncIndicator.tsx';
 import {
   AlertTriangle,
   ChevronRight,
@@ -221,6 +222,7 @@ export function TopBar({
           <LifeBuoy size={18} />
         </IconButton>
       )}
+      <SyncIndicator compact />
 
       <IconButton label={t('topbar.toggleRight')} onClick={toggleRight} pressed={!rightCollapsed}>
         {rightCollapsed ? <PanelRightOpen size={18} /> : <PanelRightClose size={18} />}

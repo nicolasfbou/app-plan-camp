@@ -126,6 +126,13 @@ export interface ProjectRepository {
   setRevisionStatus(id: string, change: StatusChange, now?: string): Promise<RevisionMeta>;
   /** Supprime une révision non approuvée. Lève `RevisionError` pour une révision approuvée. */
   deleteRevision(id: string): Promise<void>;
+  /** Révision reçue (serveur) : vérifiée (SHA, sceau) puis ajoutée si absente ; jamais remplacée. */
+  importRevision(revision: ImportedRevision): Promise<'created' | 'exists'>;
+  /**
+   * Métadonnées mises à jour par le serveur (statut, approbation authentifiée) : sceau vérifié,
+   * instantané identique ; une approbation existante n'est jamais réécrite.
+   */
+  replaceRevisionMeta(id: string, meta: RevisionMeta): Promise<void>;
 
   /** Stocke des octets tels quels et retourne leur empreinte. */
   putBlob(bytes: ArrayBuffer, mimeType: string): Promise<Omit<StoredBlob, 'bytes'>>;

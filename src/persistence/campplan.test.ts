@@ -149,7 +149,9 @@ describe('export / import .campplan', () => {
   it('échec d’écriture pendant l’import : aucun camp créé, le plan remplacé est intact', async () => {
     const content = await readCampplan((await exportCampplan(source, doc.plan.id)).bytes);
     const failingSave = () => Promise.reject(new Error('QuotaExceededError'));
-    target.savePlan = failingSave;
+    // Écriture interne du plan (utilisée par l'import, dans sa transaction) en échec.
+    type Internal = { savePlanRecord: typeof failingSave };
+    (target as unknown as Internal).savePlanRecord = failingSave;
     await expect(
       importCampplan(target, content, {
         target: { kind: 'new-site', name: 'Camp 105' },
@@ -162,7 +164,7 @@ describe('export / import .campplan', () => {
     const modified = structuredClone(doc);
     modified.objects = {};
     await source.savePlan(modified);
-    source.savePlan = failingSave;
+    (source as unknown as Internal).savePlanRecord = failingSave;
     await expect(
       importCampplan(source, content, {
         target: { kind: 'existing-site', siteId: doc.plan.siteId },

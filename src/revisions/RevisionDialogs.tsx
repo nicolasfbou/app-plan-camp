@@ -2,6 +2,7 @@
  * Boîtes de dialogue des révisions : création (le brouillon est figé), changement de statut
  * (approbation explicite), suppression protégée, brouillon à partir d'une révision.
  */
+import { ACTIVE_PROFILE } from '@/app/profile.ts';
 import { AlertTriangle, Lock } from 'lucide-react';
 import { lazy, type ReactNode, Suspense, useEffect, useId, useMemo, useState } from 'react';
 import { repository } from '@/app/repository.ts';
@@ -335,7 +336,9 @@ function StatusDialog({ meta, onClose }: { meta: RevisionMeta; onClose(): void }
   const refresh = useRevisionsStore((s) => s.refresh);
   const options = allowedStatuses(meta);
   const [to, setTo] = useState<RevisionStatus>(options[0] ?? meta.status);
-  const [by, setBy] = useState(rememberedAuthor());
+  // Espace d'organisation : l'approbateur est le COMPTE connecté, la date est celle du serveur.
+  const serverSide = ACTIVE_PROFILE.kind === 'org';
+  const [by, setBy] = useState(serverSide ? (ACTIVE_PROFILE.userName ?? '') : rememberedAuthor());
   const [comment, setComment] = useState('');
   const [date, setDate] = useState(today());
   const [confirmed, setConfirmed] = useState(false);
@@ -395,12 +398,21 @@ function StatusDialog({ meta, onClose }: { meta: RevisionMeta; onClose(): void }
             </select>
           )}
         </Field>
-        <Field label={approving ? t('rev.approver') : t('rev.changedBy')}>
+        <Field
+          label={serverSide ? t('rev.approverAccount') : approving ? t('rev.approver') : t('rev.changedBy')}
+        >
           {(id) => (
-            <input id={id} value={by} onChange={(e) => setBy(e.target.value)} className={inputClass} />
+            <input
+              id={id}
+              value={by}
+              readOnly={serverSide}
+              onChange={(e) => setBy(e.target.value)}
+              className={inputClass}
+            />
           )}
         </Field>
-        {approving && (
+        {serverSide && <p className="text-xs text-slate-600">{t('rev.serverApprovalNote')}</p>}
+        {approving && !serverSide && (
           <Field label={t('rev.approvalDate')}>
             {(id) => (
               <input

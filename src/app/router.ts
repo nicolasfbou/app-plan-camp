@@ -5,10 +5,18 @@
 import { useSyncExternalStore } from 'react';
 
 export type Route =
-  { name: 'camps' } | { name: 'camp'; siteId: string } | { name: 'plan'; siteId: string; planId: string };
+  | { name: 'camps' }
+  | { name: 'camp'; siteId: string }
+  | { name: 'plan'; siteId: string; planId: string }
+  | { name: 'login' }
+  | { name: 'invitation'; token: string }
+  | { name: 'organization' };
 
 export function parseRoute(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
+  if (parts[0] === 'connexion') return { name: 'login' };
+  if (parts[0] === 'organisation') return { name: 'organization' };
+  if (parts[0] === 'invitation' && parts[1]) return { name: 'invitation', token: parts[1] };
   if (parts[0] === 'camp' && parts[1]) {
     if (parts[2] === 'plan' && parts[3]) return { name: 'plan', siteId: parts[1], planId: parts[3] };
     return { name: 'camp', siteId: parts[1] };
@@ -25,6 +33,12 @@ export function routeHref(route: Route): string {
       return `#/camp/${e(route.siteId)}`;
     case 'plan':
       return `#/camp/${e(route.siteId)}/plan/${e(route.planId)}`;
+    case 'login':
+      return '#/connexion';
+    case 'organization':
+      return '#/organisation';
+    case 'invitation':
+      return `#/invitation/${e(route.token)}`;
   }
 }
 

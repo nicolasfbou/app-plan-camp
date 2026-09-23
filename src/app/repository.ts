@@ -1,5 +1,20 @@
 import { IndexedDbRepository } from '@/persistence/indexedDbRepository.ts';
-import type { ProjectRepository } from '@/persistence/ProjectRepository.ts';
+import { api } from '@/sync/api.ts';
+import { kickSync } from '@/sync/bus.ts';
+import { SyncingRepository } from '@/sync/syncingRepository.ts';
+import { ACTIVE_PROFILE } from './profile.ts';
 
-/** Dépôt unique de l'application (IndexedDB en V1). */
-export const repository: ProjectRepository = new IndexedDbRepository();
+/**
+ * Dépôt de l'espace actif :
+ * - espace local : IndexedDB seul (phases 1 à 8, inchangé) ;
+ * - espace d'organisation : sa propre base IndexedDB + file de synchronisation (le travail reste
+ *   local d'abord, le serveur reçoit ensuite).
+ */
+export const repository: IndexedDbRepository =
+  ACTIVE_PROFILE.kind === 'org' && ACTIVE_PROFILE.orgId
+    ? new SyncingRepository(ACTIVE_PROFILE.dbName, ACTIVE_PROFILE.orgId, api, kickSync, async () => {
+        // Chargé à la demande (évite une dépendance circulaire au démarrage).
+        const { actionEngine } = await import('@/sync/ui/actions.ts');
+        await actionEngine().runOnce();
+      })
+    : new IndexedDbRepository(ACTIVE_PROFILE.dbName);

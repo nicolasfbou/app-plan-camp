@@ -20,6 +20,12 @@ import {
   type StatusChange,
   withLocalBlobs,
 } from '@/domain/revisions/revision.ts';
+import type {
+  ConflictArchiveRecord,
+  SyncConflictRecord,
+  SyncLinkRecord,
+  SyncOperationRecord,
+} from '@/sync/types.ts';
 import { PlanConflictError } from './ProjectRepository.ts';
 import type {
   ImportedRevision,
@@ -87,6 +93,15 @@ interface ViewPrefsRecord extends ViewCenter {
   planId: string;
 }
 
+/** Tables de synchronisation (espaces d'organisation seulement ; vides dans l'espace local). */
+export interface SyncTables {
+  outbox: Table<SyncOperationRecord, number>;
+  syncLinks: Table<SyncLinkRecord, string>;
+  conflicts: Table<SyncConflictRecord, string>;
+  syncState: Table<{ key: string; value: unknown }, string>;
+  conflictArchive: Table<ConflictArchiveRecord, number>;
+}
+
 class CampPlannerDatabase extends Dexie {
   sites!: Table<Site, string>;
   plans!: Table<PlanRecord, string>;
@@ -96,6 +111,11 @@ class CampPlannerDatabase extends Dexie {
   revisions!: Table<RevisionRecord, string>;
   revisionSnapshots!: Table<RevisionSnapshotRecord, string>;
   settings!: Table<{ key: string; value: unknown }, string>;
+  outbox!: SyncTables['outbox'];
+  syncLinks!: SyncTables['syncLinks'];
+  conflicts!: SyncTables['conflicts'];
+  syncState!: SyncTables['syncState'];
+  conflictArchive!: SyncTables['conflictArchive'];
 
   constructor(name: string) {
     super(name);
@@ -110,6 +130,15 @@ class CampPlannerDatabase extends Dexie {
     // Index des empreintes : un fichier déjà stocké (même SHA-256) est réutilisé, jamais dupliqué.
     this.version(5).stores({ blobs: 'id, sha256' });
     this.version(6).stores({ settings: 'key' });
+    // Phase 9 : file de synchronisation, liens avec le serveur, conflits (ajouts seulement : les
+    // données existantes ne sont pas touchées).
+    this.version(7).stores({
+      outbox: '++seq, &operationId, status, entityId',
+      syncLinks: 'key, entityType',
+      conflicts: 'planId',
+      syncState: 'key',
+      conflictArchive: '++id, planId',
+    });
   }
 }
 
@@ -125,6 +154,30 @@ export class IndexedDbRepository implements ProjectRepository {
 
   close(): void {
     this.db.close();
+  }
+
+  /** Nom de la base (espace de travail). */
+  get databaseName(): string {
+    return this.db.name;
+  }
+
+  /** Tables de synchronisation (utilisées par le moteur de synchronisation uniquement). */
+  get sync(): SyncTables & { transaction: Dexie['transaction'] } {
+    const db = this.db;
+    return {
+      outbox: db.outbox,
+      syncLinks: db.syncLinks,
+      conflicts: db.conflicts,
+      syncState: db.syncState,
+      conflictArchive: db.conflictArchive,
+      transaction: db.transaction.bind(db) as Dexie['transaction'],
+    };
+  }
+
+  /** Supprime TOUTE la base de cet espace (déconnexion d'un appareil partagé). */
+  async destroy(): Promise<void> {
+    this.db.close();
+    await Dexie.delete(this.db.name);
   }
 
   async listSites(): Promise<Site[]> {
@@ -152,7 +205,7 @@ export class IndexedDbRepository implements ProjectRepository {
       ],
       async () => {
         const planIds = (await this.db.plans.where('siteId').equals(id).primaryKeys()) as string[];
-        for (const planId of planIds) await this.deletePlan(planId);
+        for (const planId of planIds) await this.deletePlanRecord(planId);
         await this.db.sites.delete(id);
       },
     );
@@ -176,6 +229,11 @@ export class IndexedDbRepository implements ProjectRepository {
   }
 
   async savePlan(doc: PlanDocument, options: { expectedVersion?: number } = {}): Promise<number> {
+    return this.savePlanRecord(doc, options);
+  }
+
+  /** Écriture d'un plan (aussi utilisée à l'intérieur des transactions de ce dépôt). */
+  protected savePlanRecord(doc: PlanDocument, options: { expectedVersion?: number } = {}): Promise<number> {
     // Lecture de la version et écriture dans UNE transaction : aucune écriture ne s'intercale.
     return this.db.transaction('rw', this.db.plans, async () => {
       const current = await this.db.plans.get(doc.plan.id);
@@ -252,7 +310,7 @@ export class IndexedDbRepository implements ProjectRepository {
       async () => {
         if (newSite) await this.db.sites.put(newSite);
         const previous = await this.db.plans.get(doc.plan.id);
-        await this.savePlan(doc);
+        await this.savePlanRecord(doc);
         // Révisions du fichier : ajoutées ; une révision déjà présente n'est JAMAIS remplacée
         // (figée : la version locale, avec son statut et son approbation, fait foi).
         for (const record of prepared) {
@@ -271,6 +329,10 @@ export class IndexedDbRepository implements ProjectRepository {
   }
 
   async deletePlan(id: string): Promise<void> {
+    await this.deletePlanRecord(id);
+  }
+
+  protected async deletePlanRecord(id: string): Promise<void> {
     await this.db.transaction(
       'rw',
       [this.db.plans, this.db.blobs, this.db.viewPrefs, this.db.revisions, this.db.revisionSnapshots],
@@ -333,6 +395,39 @@ export class IndexedDbRepository implements ProjectRepository {
         throw new RevisionError(`Révision ${label} : fichier d’origine introuvable (${blobId}).`);
     await this.db.revisions.put(meta);
     await this.db.revisionSnapshots.put({ id: meta.id, json });
+  }
+
+  async importRevision(revision: ImportedRevision): Promise<'created' | 'exists'> {
+    const record = await IndexedDbRepository.prepareRevision(revision, revision.blobMap);
+    return this.db.transaction(
+      'rw',
+      this.db.blobs,
+      this.db.revisions,
+      this.db.revisionSnapshots,
+      async () => {
+        if (await this.db.revisions.get(record.id)) return 'exists' as const;
+        await this.putRevision(record);
+        return 'created' as const;
+      },
+    );
+  }
+
+  async replaceRevisionMeta(id: string, next: RevisionMeta): Promise<void> {
+    const meta = revisionMetaSchema.parse(next);
+    if (!(await isSealIntact(meta)))
+      throw new RevisionIntegrityError('Révision reçue altérée (sceau) : refusée.');
+    await this.db.transaction('rw', this.db.revisions, this.db.revisionSnapshots, async () => {
+      const current = await this.db.revisions.get(id);
+      const snapshot = await this.db.revisionSnapshots.get(id);
+      if (!current || !snapshot) throw new RevisionError('Révision introuvable.');
+      const old = revisionMetaSchema.parse(current.meta);
+      // Seuls le statut, le journal des statuts et l'approbation peuvent changer ; l'instantané, jamais.
+      if (meta.id !== id || meta.snapshot.sha256 !== old.snapshot.sha256 || meta.label !== old.label)
+        throw new RevisionIntegrityError('Révision reçue incohérente avec la révision locale : refusée.');
+      if (old.approval && JSON.stringify(old.approval) !== JSON.stringify(meta.approval))
+        throw new RevisionError('Une approbation ne peut jamais être réécrite.');
+      await this.db.revisions.put({ ...current, meta });
+    });
   }
 
   async listRevisions(planId: string): Promise<RevisionEntry[]> {

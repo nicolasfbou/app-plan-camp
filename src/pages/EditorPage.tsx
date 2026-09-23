@@ -9,6 +9,7 @@ import { NavigationControls } from '@/editor/NavigationControls.tsx';
 import { NoticeBanner } from '@/editor/NoticeBanner.tsx';
 import { ViewBanner } from '@/editor/ViewBanner.tsx';
 import { ConflictDialog, LockBanner, RecoveredBanner } from '@/editor/SessionBanner.tsx';
+import { SyncPlanBanner } from '@/sync/ui/SyncPlanBanner.tsx';
 import { TextEditorOverlay } from '@/editor/TextEditorOverlay.tsx';
 import { CalibrationDialog } from '@/panels/ScalePanel.tsx';
 import { useEditorShortcuts } from '@/editor/useEditorShortcuts.ts';
@@ -257,6 +258,7 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
           <ViewBanner />
           <LockBanner />
           <RecoveredBanner />
+          <SyncPlanBanner planId={planId} />
           {state.status === 'ready' && !hasBaseImage && (
             <div className="absolute inset-0 flex items-center justify-center p-8">
               <div className="max-w-md rounded-lg border border-slate-300 bg-white p-6 text-center shadow-sm">

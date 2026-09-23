@@ -15,6 +15,7 @@
 import { create } from 'zustand';
 import { repository } from '@/app/repository.ts';
 import { downloadBytes } from '@/app/download.ts';
+import { namespace } from '@/app/profile.ts';
 import { logEvent } from '@/diagnostics/errorLog.ts';
 import { DamagedRevisionsError, exportCampplan } from '@/persistence/campplan.ts';
 import { exportEmergency } from '@/persistence/emergency.ts';
@@ -417,7 +418,7 @@ export async function startBackupScheduler(repo: ProjectRepository = repository)
   };
   // Un seul onglet planifie : les autres attendent (et prennent le relais s'il ferme).
   if (navigator.locks)
-    void navigator.locks.request('campplanner-backup-scheduler', async () => {
+    void navigator.locks.request(`campplanner-backup-scheduler-${namespace()}`, async () => {
       if (stopped) return;
       const off = lead();
       await new Promise<void>((resolve) => (release = resolve));

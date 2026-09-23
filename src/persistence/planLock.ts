@@ -12,6 +12,8 @@
  *   (version du plan) — signalé dans le diagnostic.
  */
 
+import { namespace } from '@/app/profile.ts';
+
 export type LockMode = 'pending' | 'editor' | 'readonly' | 'unsupported';
 
 export interface LockMessage {
@@ -55,7 +57,8 @@ export class TakeoverRefusedError extends Error {
   }
 }
 
-const lockName = (planId: string) => `campplanner-plan-${planId}`;
+/** Nom du verrou d'un plan, propre à l'espace de travail actif. */
+const lockName = (planId: string) => `campplanner-plan-${namespace()}${planId}`;
 const TAB_ID =
   typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : String(Math.random());
 
@@ -246,6 +249,12 @@ export function acquirePlanLock(planId: string, deps: LockDeps = defaultLockDeps
 /** Plans ouverts en édition dans un onglet de ce navigateur (verrous détenus). */
 export async function openPlanIds(): Promise<Set<string>> {
   const held = (await navigator.locks?.query?.())?.held ?? [];
-  const prefix = 'campplanner-plan-';
-  return new Set(held.flatMap((l) => (l.name?.startsWith(prefix) ? [l.name.slice(prefix.length)] : [])));
+  const prefix = `campplanner-plan-${namespace()}`;
+  return new Set(
+    held.flatMap((l) => {
+      if (!l.name?.startsWith(prefix)) return [];
+      const id = l.name.slice(prefix.length);
+      return id.includes('.') ? [] : [id]; // verrou d'un autre espace
+    }),
+  );
 }

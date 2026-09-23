@@ -11,7 +11,46 @@ import type { PlanDocument } from '@/domain/model/types.ts';
 import { parsePlanDocument, serializePlanDocument } from '@/domain/schema/serialization.ts';
 import { logEvent } from '@/diagnostics/errorLog.ts';
 
-const key = (planId: string) => `campplanner.recovery.${planId}`;
+import { namespace } from '@/app/profile.ts';
+
+const PREFIX = 'campplanner.recovery.';
+/** Clé du journal d'un plan dans l'espace actif (espace local : clé historique inchangée). */
+export const recoveryKey = (planId: string) => `${PREFIX}${namespace()}${planId}`;
+const key = recoveryKey;
+
+/** Plans ayant un journal dans l'espace actif (les journaux des autres espaces sont ignorés). */
+export function recoveryJournalPlanIds(): string[] {
+  const ids: string[] = [];
+  const prefix = PREFIX + namespace();
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k?.startsWith(prefix)) continue;
+      const id = k.slice(prefix.length);
+      // Espace local : une clé contenant un « . » appartient à un autre espace.
+      if (!id.includes('.')) ids.push(id);
+    }
+  } catch {
+    // stockage indisponible
+  }
+  return ids;
+}
+
+/** Supprime tous les journaux d'un espace (purge d'un appareil partagé). */
+export function clearNamespaceJournals(ns: string) {
+  if (!ns) return;
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && (k.startsWith(PREFIX + ns) || k.startsWith(`campplanner.recovery-illisible.${ns}`)))
+        keys.push(k);
+    }
+    for (const k of keys) localStorage.removeItem(k);
+  } catch {
+    // ignoré
+  }
+}
 
 export interface RecoveryEntry {
   doc: PlanDocument;
@@ -53,7 +92,7 @@ export function readRecovery(planId: string): RecoveryEntry | null {
     // Journal illisible : conservé tel quel sous une autre clé (jamais détruit en silence).
     try {
       const raw = localStorage.getItem(key(planId));
-      if (raw) localStorage.setItem(`campplanner.recovery-illisible.${planId}`, raw);
+      if (raw) localStorage.setItem(`campplanner.recovery-illisible.${namespace()}${planId}`, raw);
     } catch {
       // stockage plein : tant pis, l'erreur est journalisée par l'appelant
     }

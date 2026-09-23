@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { diffPlans } from '@/domain/revisions/diff.ts';
 import {
   allowedStatuses,
+  approvalVerification,
   isDeletable,
   REVISION_STATUS_LABELS,
   type RevisionMeta,
@@ -217,6 +218,14 @@ function RevisionCard({
             <dt>{t('rev.approvedBy')}</dt>
             <dd data-testid="revision-approval">
               {t('rev.approvalLine', { by: meta.approval.by, date: meta.approval.date })}
+              {/* Nature de l'approbation : jamais confondre une déclaration locale et une approbation serveur. */}
+              <span
+                data-testid="approval-verification"
+                data-verification={approvalVerification(meta.approval)}
+                className={`mt-0.5 block text-[11px] ${approvalVerification(meta.approval) === 'authenticated_server' ? 'text-emerald-700' : 'text-amber-700'}`}
+              >
+                {t(`verification.${approvalVerification(meta.approval)!}`)}
+              </span>
             </dd>
           </>
         )}

@@ -15,6 +15,7 @@ import { VariantDialog } from '@/app/VariantDialog.tsx';
 import { downloadBytes } from '@/app/download.ts';
 import { exportCampplan } from '@/persistence/campplan.ts';
 import { openPlanIds } from '@/persistence/planLock.ts';
+import { PlanSyncBadge } from '@/sync/ui/PlanSyncBadge.tsx';
 import { downloadEmergencyCopy } from '@/maintenance/emergencyDownload.ts';
 import { useState } from 'react';
 import { createPlanDocument, duplicatePlanDocument, nowIso } from '@/domain/model/factories.ts';
@@ -32,6 +33,7 @@ import { TextPromptDialog } from '@/ui/TextPromptDialog.tsx';
 import { ListRow } from './ListRow.tsx';
 import { Notice, PageLayout } from './PageLayout.tsx';
 import { useAsync } from './useAsync.ts';
+import { useSyncReload } from '@/sync/ui/useSyncReload.ts';
 
 type Dialog =
   | { kind: 'create' }
@@ -50,6 +52,7 @@ export function CampPage({ siteId }: { siteId: string }) {
     const site = await repository.getSite(siteId);
     return site ? { site, plans: await repository.listPlans(siteId) } : null;
   }, siteId);
+  useSyncReload(reload);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [kind, setKind] = useState<PlanKind>('general');
   const [templates, setTemplates] = useState<StoredTemplate[]>([]);
@@ -109,6 +112,7 @@ export function CampPage({ siteId }: { siteId: string }) {
               subtitle={`${t(`planKind.${plan.kind}`)} · ${t('common.updatedAt', { date: formatDateTime(plan.updatedAt) })}`}
               actions={
                 <>
+                  <PlanSyncBadge planId={plan.id} />
                   <IconButton
                     label={`${t('common.rename')} ${plan.name}`}
                     onClick={() => setDialog({ kind: 'rename', plan })}

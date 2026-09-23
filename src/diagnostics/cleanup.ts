@@ -7,7 +7,7 @@
 import type { PlanDocument } from '@/domain/model/types.ts';
 import type { OrphanBlob, ProjectRepository } from '@/persistence/ProjectRepository.ts';
 import { openPlanIds } from '@/persistence/planLock.ts';
-import { recoveryJournalTexts } from '@/persistence/recovery.ts';
+import { recoveryJournalTexts, recoveryKey } from '@/persistence/recovery.ts';
 import { recoveryJournalPlanIds } from './health.ts';
 
 export type CleanupKind =
@@ -111,10 +111,7 @@ export async function planCleanup(repo: ProjectRepository): Promise<CleanupItem[
       kind: 'stale-journals',
       label: 'Journaux de récupération de plans supprimés (sauvegardes temporaires)',
       count: staleJournals.length,
-      bytes: staleJournals.reduce(
-        (s, id) => s + (localStorage.getItem(`campplanner.recovery.${id}`)?.length ?? 0) * 2,
-        0,
-      ),
+      bytes: staleJournals.reduce((s, id) => s + (localStorage.getItem(recoveryKey(id))?.length ?? 0) * 2, 0),
       planIds: staleJournals,
     });
   const stalePrefs = (await repo.listViewPrefPlanIds()).filter((id) => !planIds.has(id));
@@ -182,7 +179,7 @@ export async function applyCleanup(
       }
     if (item.kind === 'stale-journals')
       for (const id of item.planIds ?? []) {
-        localStorage.removeItem(`campplanner.recovery.${id}`);
+        localStorage.removeItem(recoveryKey(id));
         result.done++;
       }
     if (item.kind === 'stale-view-prefs')
