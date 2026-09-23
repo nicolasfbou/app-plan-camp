@@ -4,7 +4,8 @@ import type { PlanDocument, PlanKind, Site } from '@/domain/model/types.ts';
 import { sha256Hex } from '@/domain/image/hash.ts';
 import { parsePlanDocument } from '@/domain/schema/serialization.ts';
 import type { ViewCenter } from '@/domain/viewport/viewport.ts';
-import type { PlanSummary, ProjectRepository, StoredBlob } from './ProjectRepository.ts';
+import { templateSchema } from '@/domain/templates/template.ts';
+import type { PlanSummary, ProjectRepository, StoredBlob, StoredTemplate } from './ProjectRepository.ts';
 
 /**
  * Enregistrement d'un plan : le document complet (versionné) + un résumé dénormalisé.
@@ -25,6 +26,15 @@ interface PlanRecord {
   document: unknown;
 }
 
+interface TemplateRecord {
+  id: string;
+  name: string;
+  updatedAt: string;
+  /** Modèle brut : relu et validé à chaque lecture. */
+  template: unknown;
+  logo: ArrayBuffer | null;
+}
+
 interface ViewPrefsRecord extends ViewCenter {
   planId: string;
 }
@@ -34,6 +44,7 @@ class CampPlannerDatabase extends Dexie {
   plans!: Table<PlanRecord, string>;
   blobs!: Table<StoredBlob, string>;
   viewPrefs!: Table<ViewPrefsRecord, string>;
+  templates!: Table<TemplateRecord, string>;
 
   constructor(name: string) {
     super(name);
@@ -43,6 +54,7 @@ class CampPlannerDatabase extends Dexie {
       blobs: 'id',
     });
     this.version(2).stores({ viewPrefs: 'planId' });
+    this.version(3).stores({ templates: 'id, name, updatedAt' });
   }
 }
 
@@ -201,5 +213,36 @@ export class IndexedDbRepository implements ProjectRepository {
 
   async saveViewPrefs(planId: string, view: ViewCenter): Promise<void> {
     await this.db.viewPrefs.put({ planId, ...view });
+  }
+
+  private static readTemplate(record: TemplateRecord): StoredTemplate | undefined {
+    const parsed = templateSchema.safeParse(record.template);
+    if (!parsed.success) return undefined;
+    return { template: parsed.data, logo: record.logo ? new Uint8Array(record.logo) : null };
+  }
+
+  async listTemplates(): Promise<StoredTemplate[]> {
+    const records = await this.db.templates.orderBy('name').toArray();
+    return records.map(IndexedDbRepository.readTemplate).filter((t): t is StoredTemplate => Boolean(t));
+  }
+
+  async getTemplate(id: string): Promise<StoredTemplate | undefined> {
+    const record = await this.db.templates.get(id);
+    return record ? IndexedDbRepository.readTemplate(record) : undefined;
+  }
+
+  async saveTemplate(entry: StoredTemplate): Promise<void> {
+    const template = templateSchema.parse(entry.template);
+    await this.db.templates.put({
+      id: template.id,
+      name: template.name,
+      updatedAt: template.updatedAt,
+      template,
+      logo: entry.logo ? entry.logo.slice().buffer : null,
+    });
+  }
+
+  async deleteTemplate(id: string): Promise<void> {
+    await this.db.templates.delete(id);
   }
 }

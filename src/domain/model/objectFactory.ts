@@ -107,6 +107,16 @@ function base(doc: PlanDocument, tier: RenderTier, name: string, style: Style, p
  * converties en pixels image (`zoom` = échelle du viewport) : un trait de 3 px reste bien visible
  * qu'on dessine à 20 % ou à 200 %. La valeur stockée est en pixels image (liée à la photo).
  */
+/**
+ * Style d'entreprise (modèle réutilisable) : couleurs, opacités, pointillés et hachures d'un
+ * modèle d'objet. L'épaisseur reste celle de l'objet (elle dépend du zoom de création).
+ */
+export function withOverride(style: Style, override: Style | undefined): Style {
+  if (!override) return style;
+  const { strokeWidth: _width, ...look } = override;
+  return { ...style, ...look };
+}
+
 function scaledStyle(style: Style, zoom: number): Style {
   return { ...style, strokeWidth: screenToImage(style.strokeWidth, zoom) };
 }
@@ -126,7 +136,8 @@ export function createAreaObject(
   zoom = 1,
 ): PlanObject {
   const preset = findZonePreset(presetId) ?? findZonePreset('zone.custom')!;
-  const common = base(doc, preset.tier, preset.name.fr, scaledStyle(preset.style, zoom), preset.id);
+  const style = withOverride(scaledStyle(preset.style, zoom), doc.plan.styleOverrides[preset.id]);
+  const common = base(doc, preset.tier, preset.name.fr, style, preset.id);
   return preset.objectType === 'building'
     ? { ...common, type: 'building', geometry }
     : {
@@ -135,6 +146,7 @@ export function createAreaObject(
         geometry,
         icon: preset.icon ? { symbolId: preset.icon, size: screenToImage(ZONE_ICON_PX, zoom) } : null,
         showName: preset.showName ?? false,
+        nameOffset: null,
       };
 }
 
@@ -169,6 +181,7 @@ export function createTextObject(
           cornerRadius: options.fontSize * 0.2,
         }
       : null,
+    leaderTo: null,
   };
 }
 
@@ -181,7 +194,13 @@ export function createFlowObject(
 ): PlanObject {
   const preset = findFlowPreset(category);
   return {
-    ...base(doc, preset.tier, preset.name, scaledStyle(preset.style, zoom), preset.id),
+    ...base(
+      doc,
+      preset.tier,
+      preset.name,
+      withOverride(scaledStyle(preset.style, zoom), doc.plan.styleOverrides[preset.id]),
+      preset.id,
+    ),
     type: 'flow',
     geometry: { kind: 'polyline', points, curved: false },
     category: preset.category,
@@ -208,7 +227,13 @@ export const CORRIDOR_STYLE: Style = {
 export function createCorridorObject(doc: PlanDocument, points: Point[], zoom = 1, widthPx = 26): PlanObject {
   const width = screenToImage(widthPx, zoom);
   return {
-    ...base(doc, 'pedestrians', 'Corridor piéton', scaledStyle(CORRIDOR_STYLE, zoom), 'corridor.pedestrian'),
+    ...base(
+      doc,
+      'pedestrians',
+      'Corridor piéton',
+      withOverride(scaledStyle(CORRIDOR_STYLE, zoom), doc.plan.styleOverrides['corridor.pedestrian']),
+      'corridor.pedestrian',
+    ),
     type: 'corridor',
     geometry: { kind: 'polyline', points, curved: false },
     width,

@@ -62,12 +62,17 @@ export function titleBlockRows(
     northText: string;
     include: { date: boolean; revision: boolean; notes: boolean };
     now?: Date;
+    /** Titre imprimé (vue par public) ; sinon celui du cartouche ou du plan. */
+    title?: string;
+    /** Public visé par la vue (ex. « Destiné aux fournisseurs »). */
+    audience?: string;
   },
 ): TitleBlockRow[] {
   const b = doc.plan.titleBlock;
   const rows: [string, string][] = [
     ['Camp', b.campName || context.siteName],
-    ['Titre', b.title || doc.plan.name],
+    ['Titre', context.title || b.title || doc.plan.name],
+    ['Destinataires', context.audience ?? ''],
     ['Client', b.client],
     ['Entreprise', b.company],
     ['Préparé par', b.preparedBy],

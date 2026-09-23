@@ -124,16 +124,27 @@ function entryFor(o: PlanObject, doc: PlanDocument): Omit<LegendEntry, 'count'> 
 }
 
 /** Objets exportés : visibles, sur un calque visible et non exclu des réglages d'impression. */
-export function exportedObjects(doc: PlanDocument, excludedLayerIds: readonly string[]): PlanObject[] {
+export function exportedObjects(
+  doc: PlanDocument,
+  excludedLayerIds: readonly string[],
+  excludedObjectIds: readonly string[] = [],
+): PlanObject[] {
   const excluded = new Set(excludedLayerIds);
+  const objects = new Set(excludedObjectIds);
   const layers = new Set(doc.layers.filter((l) => l.visible && !excluded.has(l.id)).map((l) => l.id));
-  return Object.values(doc.objects).filter((o) => o.visible && layers.has(o.layerId));
+  return Object.values(doc.objects).filter((o) => o.visible && layers.has(o.layerId) && !objects.has(o.id));
 }
 
 /** Toutes les entrées possibles du plan exporté (avant les choix de l'utilisateur). */
-export function legendEntries(doc: PlanDocument, excludedLayerIds: readonly string[] = []): LegendEntry[] {
+export function legendEntries(
+  doc: PlanDocument,
+  excludedLayerIds: readonly string[] = [],
+  excludedObjectIds: readonly string[] = [],
+  detail: 'full' | 'standard' | 'simplified' = 'full',
+): LegendEntry[] {
   const byKey = new Map<string, LegendEntry>();
-  for (const o of exportedObjects(doc, excludedLayerIds)) {
+  for (const o of exportedObjects(doc, excludedLayerIds, excludedObjectIds)) {
+    if (o.type === 'dimension' && detail !== 'full') continue; // cotes non imprimées
     const entry = entryFor(o, doc);
     if (!entry) continue;
     const existing = byKey.get(entry.key);
@@ -156,9 +167,11 @@ export function shownLegendEntries(
   doc: PlanDocument,
   settings: LegendSettings,
   excludedLayerIds: readonly string[] = [],
+  excludedObjectIds: readonly string[] = [],
+  detail: 'full' | 'standard' | 'simplified' = 'full',
 ): ShownLegendEntry[] {
   const hidden = new Set(settings.hidden);
-  return legendEntries(doc, excludedLayerIds)
+  return legendEntries(doc, excludedLayerIds, excludedObjectIds, detail)
     .filter((e) => !hidden.has(e.key))
     .map((e) => ({ ...e, label: settings.labels[e.key]?.trim() || e.defaultLabel }));
 }

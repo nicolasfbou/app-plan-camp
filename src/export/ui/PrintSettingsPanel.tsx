@@ -14,6 +14,7 @@ import type {
   TitleBlock,
 } from '@/domain/model/types.ts';
 import { legendEntries } from '@/domain/print/legend.ts';
+import { editableSettings } from '@/domain/print/views.ts';
 import { PAPER } from '@/domain/print/paper.ts';
 import { setPlanStatus, STATUS_LABELS } from '@/domain/print/titleBlock.ts';
 import { checkSymbolFile, MAX_SYMBOL_BYTES } from '@/domain/symbols/importSymbol.ts';
@@ -27,10 +28,19 @@ import { Modal } from '@/ui/Modal.tsx';
 const update = (label: string, recipe: (d: PlanDocument) => void, mergeKey?: string) =>
   planStore.getState().update(label, recipe, mergeKey ? { mergeKey } : undefined);
 
-const setPrint = (label: string, recipe: (p: PrintSettings) => void, mergeKey?: string) =>
-  update(label, (d) => recipe(d.plan.print), mergeKey);
-const setLegend = (label: string, recipe: (l: LegendSettings) => void, mergeKey?: string) =>
-  update(label, (d) => recipe(d.plan.legend), mergeKey);
+/** Réglages de la vue sélectionnée (ou du plan de base si `viewId` est null). */
+const setPrint = (
+  viewId: string | null,
+  label: string,
+  recipe: (p: PrintSettings) => void,
+  mergeKey?: string,
+) => update(label, (d) => recipe(editableSettings(d, viewId).print), mergeKey);
+const setLegend = (
+  viewId: string | null,
+  label: string,
+  recipe: (l: LegendSettings) => void,
+  mergeKey?: string,
+) => update(label, (d) => recipe(editableSettings(d, viewId).legend), mergeKey);
 const setBlock = (label: string, recipe: (b: TitleBlock) => void, mergeKey?: string) =>
   update(
     label,
@@ -43,8 +53,16 @@ const setBlock = (label: string, recipe: (b: TitleBlock) => void, mergeKey?: str
 
 export type OutputFormat = 'pdf' | 'png' | 'jpeg';
 
-export function PageSettings({ doc, output }: { doc: PlanDocument; output: OutputFormat }) {
-  const print = doc.plan.print;
+export function PageSettings({
+  doc,
+  output,
+  viewId,
+}: {
+  doc: PlanDocument;
+  output: OutputFormat;
+  viewId: string | null;
+}) {
+  const { print } = editableSettings(doc, viewId);
   return (
     <Section title={t('print.page')}>
       <Row>
@@ -55,7 +73,7 @@ export function PageSettings({ doc, output }: { doc: PlanDocument; output: Outpu
             value: value as PrintSettings['paper'],
             label: p.name,
           }))}
-          onChange={(paper) => setPrint('Format de page', (p) => void (p.paper = paper))}
+          onChange={(paper) => setPrint(viewId, 'Format de page', (p) => void (p.paper = paper))}
         />
         <SelectField
           label={t('print.orientation')}
@@ -64,7 +82,9 @@ export function PageSettings({ doc, output }: { doc: PlanDocument; output: Outpu
             { value: 'landscape', label: t('print.orientation.landscape') },
             { value: 'portrait', label: t('print.orientation.portrait') },
           ]}
-          onChange={(orientation) => setPrint('Orientation', (p) => void (p.orientation = orientation))}
+          onChange={(orientation) =>
+            setPrint(viewId, 'Orientation', (p) => void (p.orientation = orientation))
+          }
         />
       </Row>
       <SelectField
@@ -74,7 +94,7 @@ export function PageSettings({ doc, output }: { doc: PlanDocument; output: Outpu
           value,
           label: t(`print.mode.${value}`),
         }))}
-        onChange={(mode) => setPrint('Contenu exporté', (p) => void (p.mode = mode))}
+        onChange={(mode) => setPrint(viewId, 'Contenu exporté', (p) => void (p.mode = mode))}
       />
       {print.mode === 'annotations' && output === 'png' && (
         <SelectField
@@ -84,7 +104,7 @@ export function PageSettings({ doc, output }: { doc: PlanDocument; output: Outpu
             { value: 'white', label: t('print.background.white') },
             { value: 'transparent', label: t('print.background.transparent') },
           ]}
-          onChange={(background) => setPrint('Fond de page', (p) => void (p.background = background))}
+          onChange={(background) => setPrint(viewId, 'Fond de page', (p) => void (p.background = background))}
         />
       )}
       <SelectField
@@ -94,7 +114,7 @@ export function PageSettings({ doc, output }: { doc: PlanDocument; output: Outpu
           { value: 'image', label: t('print.extent.image') },
           { value: 'annotations', label: t('print.extent.annotations') },
         ]}
-        onChange={(extent) => setPrint('Cadrage', (p) => void (p.extent = extent))}
+        onChange={(extent) => setPrint(viewId, 'Cadrage', (p) => void (p.extent = extent))}
       />
       <Row>
         <NumberField
@@ -102,7 +122,7 @@ export function PageSettings({ doc, output }: { doc: PlanDocument; output: Outpu
           value={print.marginMm}
           min={0}
           digits={0}
-          onCommit={(v) => setPrint('Marges', (p) => void (p.marginMm = Math.min(50, v)))}
+          onCommit={(v) => setPrint(viewId, 'Marges', (p) => void (p.marginMm = Math.min(50, v)))}
         />
         <NumberField
           label={t('print.dpi')}
@@ -111,7 +131,7 @@ export function PageSettings({ doc, output }: { doc: PlanDocument; output: Outpu
           step={25}
           digits={0}
           onCommit={(v) =>
-            setPrint('Résolution', (p) => void (p.dpi = Math.min(600, Math.max(72, Math.round(v)))))
+            setPrint(viewId, 'Résolution', (p) => void (p.dpi = Math.min(600, Math.max(72, Math.round(v)))))
           }
         />
       </Row>
@@ -127,6 +147,7 @@ export function PageSettings({ doc, output }: { doc: PlanDocument; output: Outpu
           value={Math.round(print.jpegQuality * 100)}
           onChange={(e) =>
             setPrint(
+              viewId,
               'Qualité JPEG',
               (p) => void (p.jpegQuality = Number(e.target.value) / 100),
               'print-quality',
@@ -151,8 +172,9 @@ const INCLUDES = [
   'notes',
 ] as const;
 
-export function ElementSettings({ doc }: { doc: PlanDocument }) {
-  const include = doc.plan.print.include;
+export function ElementSettings({ doc, viewId }: { doc: PlanDocument; viewId: string | null }) {
+  const { print } = editableSettings(doc, viewId);
+  const include = print.include;
   return (
     <Section title={t('print.elements')}>
       <div className="grid grid-cols-2 gap-1">
@@ -161,8 +183,8 @@ export function ElementSettings({ doc }: { doc: PlanDocument }) {
             key={key}
             label={t(`print.include.${key}` as MessageKey)}
             checked={include[key]}
-            disabled={key === 'titleBlock' && doc.plan.print.mode === 'simplified'}
-            onChange={(v) => setPrint('Éléments exportés', (p) => void (p.include[key] = v))}
+            disabled={key === 'titleBlock' && print.mode === 'simplified'}
+            onChange={(v) => setPrint(viewId, 'Éléments exportés', (p) => void (p.include[key] = v))}
           />
         ))}
       </div>
@@ -170,8 +192,8 @@ export function ElementSettings({ doc }: { doc: PlanDocument }) {
   );
 }
 
-export function LayerSettings({ doc }: { doc: PlanDocument }) {
-  const excluded = new Set(doc.plan.print.excludedLayerIds);
+export function LayerSettings({ doc, viewId }: { doc: PlanDocument; viewId: string | null }) {
+  const excluded = new Set(editableSettings(doc, viewId).print.excludedLayerIds);
   return (
     <Section title={t('print.layers')}>
       <ul className="space-y-1" data-testid="print-layers">
@@ -182,7 +204,7 @@ export function LayerSettings({ doc }: { doc: PlanDocument }) {
               checked={layer.visible && !excluded.has(layer.id)}
               disabled={!layer.visible}
               onChange={(on) =>
-                setPrint('Calques exportés', (p) => {
+                setPrint(viewId, 'Calques exportés', (p) => {
                   p.excludedLayerIds = on
                     ? p.excludedLayerIds.filter((id) => id !== layer.id)
                     : [...p.excludedLayerIds, layer.id];
@@ -196,9 +218,9 @@ export function LayerSettings({ doc }: { doc: PlanDocument }) {
   );
 }
 
-export function LegendSettingsSection({ doc }: { doc: PlanDocument }) {
-  const legend = doc.plan.legend;
-  const entries = legendEntries(doc, doc.plan.print.excludedLayerIds);
+export function LegendSettingsSection({ doc, viewId }: { doc: PlanDocument; viewId: string | null }) {
+  const { legend, print } = editableSettings(doc, viewId);
+  const entries = legendEntries(doc, print.excludedLayerIds, print.excludedObjectIds, print.detail);
   const hidden = new Set(legend.hidden);
   return (
     <Section title={t('print.legend')}>
@@ -212,7 +234,9 @@ export function LegendSettingsSection({ doc }: { doc: PlanDocument }) {
             value,
             label: t(`print.legend.placement.${value}`),
           }))}
-          onChange={(placement) => setLegend('Position de la légende', (l) => void (l.placement = placement))}
+          onChange={(placement) =>
+            setLegend(viewId, 'Position de la légende', (l) => void (l.placement = placement))
+          }
         />
         <SelectField
           label={t('print.legend.mode')}
@@ -221,7 +245,7 @@ export function LegendSettingsSection({ doc }: { doc: PlanDocument }) {
             { value: 'detailed', label: t('print.legend.mode.detailed') },
             { value: 'compact', label: t('print.legend.mode.compact') },
           ]}
-          onChange={(mode) => setLegend('Présentation de la légende', (l) => void (l.mode = mode))}
+          onChange={(mode) => setLegend(viewId, 'Présentation de la légende', (l) => void (l.mode = mode))}
         />
       </Row>
       <label className="block text-xs text-slate-600">
@@ -237,6 +261,7 @@ export function LegendSettingsSection({ doc }: { doc: PlanDocument }) {
           value={Math.round(legend.sizeFactor * 100)}
           onChange={(e) =>
             setLegend(
+              viewId,
               'Taille de la légende',
               (l) => void (l.sizeFactor = Number(e.target.value) / 100),
               'legend-size',
@@ -249,7 +274,9 @@ export function LegendSettingsSection({ doc }: { doc: PlanDocument }) {
       <TextField
         label={t('print.legend.heading')}
         value={legend.title}
-        onChange={(title) => setLegend('Titre de la légende', (l) => void (l.title = title), 'legend-title')}
+        onChange={(title) =>
+          setLegend(viewId, 'Titre de la légende', (l) => void (l.title = title), 'legend-title')
+        }
       />
       <p className="text-xs font-medium text-slate-600">
         {t('print.legend.entries', { count: entries.length })}
@@ -264,7 +291,7 @@ export function LegendSettingsSection({ doc }: { doc: PlanDocument }) {
               aria-label={t('print.legend.show', { label: entry.defaultLabel })}
               checked={!hidden.has(entry.key)}
               onChange={(e) =>
-                setLegend('Catégories de la légende', (l) => {
+                setLegend(viewId, 'Catégories de la légende', (l) => {
                   l.hidden = e.target.checked
                     ? l.hidden.filter((k) => k !== entry.key)
                     : [...l.hidden, entry.key];
@@ -278,6 +305,7 @@ export function LegendSettingsSection({ doc }: { doc: PlanDocument }) {
               value={legend.labels[entry.key] ?? ''}
               onChange={(e) =>
                 setLegend(
+                  viewId,
                   'Intitulé de légende',
                   (l) => {
                     if (e.target.value) l.labels[entry.key] = e.target.value;
@@ -307,7 +335,8 @@ const TB_FIELDS = [
   'revision',
 ] as const;
 
-export function TitleBlockSection({ doc }: { doc: PlanDocument }) {
+export function TitleBlockSection({ doc, viewId }: { doc: PlanDocument; viewId: string | null }) {
+  const view = viewId ? doc.plan.views.find((v) => v.id === viewId) : undefined;
   const block = doc.plan.titleBlock;
   const [approving, setApproving] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -357,12 +386,19 @@ export function TitleBlockSection({ doc }: { doc: PlanDocument }) {
     <Section title={t('print.titleBlock')}>
       <SelectField
         label={t('print.tb.placement')}
-        value={block.placement}
+        value={view ? view.titleBlockPlacement : block.placement}
         options={[
           { value: 'side', label: t('print.tb.placement.side') },
           { value: 'bottom', label: t('print.tb.placement.bottom') },
         ]}
-        onChange={(placement) => setBlock('Position du cartouche', (b) => void (b.placement = placement))}
+        onChange={(placement) =>
+          view
+            ? update('Position du cartouche', (d) => {
+                const v = d.plan.views.find((x) => x.id === view.id);
+                if (v) v.titleBlockPlacement = placement;
+              })
+            : setBlock('Position du cartouche', (b) => void (b.placement = placement))
+        }
       />
       <SelectField
         label={t('print.tb.status')}

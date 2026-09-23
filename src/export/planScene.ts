@@ -8,7 +8,7 @@ import { corridorWidthPx, formatLength, polylineLength, midpointAlong } from '@/
 import { objectsInRenderOrder } from '@/domain/model/operations.ts';
 import { bandOutline, marksAlongPath } from '@/domain/model/paths.ts';
 import { geometryBox, geometryCenter, rotatePoint } from '@/domain/model/shapes.ts';
-import type { PlanDocument, PlanObject, Point, Style } from '@/domain/model/types.ts';
+import type { DisplaySettings, PlanDocument, PlanObject, Point, Style } from '@/domain/model/types.ts';
 import { MM_PER_CSS_PX } from '@/domain/print/paper.ts';
 import {
   boundedSize,
@@ -120,6 +120,23 @@ function strokeOf(style: Style, k: number, join: StrokeSpec['join'] = 'round'): 
   };
 }
 
+/** Réglages de rendu issus du style d'impression et de la vue (n'agissent que sur le rendu). */
+export interface SceneOptions {
+  strokeScale: number;
+  minTextPt: number;
+  iconScale: number;
+  detail: 'full' | 'standard' | 'simplified';
+  excludedObjectIds: readonly string[];
+}
+
+export const DEFAULT_SCENE: SceneOptions = {
+  strokeScale: 1,
+  minTextPt: 0,
+  iconScale: 1,
+  detail: 'full',
+  excludedObjectIds: [],
+};
+
 interface SceneContext {
   p: Painter;
   doc: PlanDocument;
@@ -127,6 +144,48 @@ interface SceneContext {
   frame: Rect;
   symbols: SymbolSource | null;
   issues: SceneIssue[];
+  opts: SceneOptions;
+  /** Limites d'affichage des repères, multipliées par le facteur des pictogrammes. */
+  display: DisplaySettings;
+}
+
+/** Épaisseur de trait mise à l'échelle du style (mm de page par pixel image × facteur). */
+const sk = (ctx: SceneContext) => ctx.m.k * ctx.opts.strokeScale;
+
+/**
+ * Ligne de renvoi d'une étiquette vers ce qu'elle désigne : trait sombre sur liseré blanc, point
+ * à l'extrémité. Part du bord de la boîte de l'étiquette.
+ */
+function leader(
+  ctx: SceneContext,
+  box: { cx: number; cy: number; w: number; h: number },
+  to: Point,
+  stopAt = 0,
+) {
+  const dx = to.x - box.cx;
+  const dy = to.y - box.cy;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) return;
+  const t = Math.min(dx ? box.w / 2 / Math.abs(dx) : Infinity, dy ? box.h / 2 / Math.abs(dy) : Infinity);
+  if (t >= 1) return; // l'ancre est sous l'étiquette
+  const from = { x: box.cx + dx * t, y: box.cy + dy * t };
+  const end = { x: to.x - (dx / len) * stopAt, y: to.y - (dy / len) * stopAt };
+  const w = Math.max(0.25, 0.25 * ctx.opts.strokeScale);
+  ctx.p.path([[from, end]], false, null, { color: '#ffffff', opacity: 0.95, width: w * 2.6, cap: 'round' });
+  ctx.p.path([[from, end]], false, null, { color: '#0f172a', opacity: 1, width: w, cap: 'round' });
+  const r = w * 1.6;
+  if (!stopAt)
+    ctx.p.path(
+      [
+        Array.from({ length: 12 }, (_, i) => ({
+          x: to.x + r * Math.cos((i / 12) * 2 * Math.PI),
+          y: to.y + r * Math.sin((i / 12) * 2 * Math.PI),
+        })),
+      ],
+      true,
+      { color: '#0f172a', opacity: 1 },
+      { color: '#ffffff', opacity: 0.95, width: w },
+    );
 }
 
 /** Texte posé sur la carte : signale un texte trop petit ou coupé par le cadre de la carte. */
@@ -164,17 +223,17 @@ function drawArea(ctx: SceneContext, o: PlanObject) {
     const cell = Math.max(s.strokeWidth * 5, 6) * m.k;
     hatch(p, [outline], box, s, cell / Math.SQRT2, o.rotation);
   }
-  const stroke = strokeOf(s, m.k, o.type === 'stall' ? 'miter' : 'round');
+  const stroke = strokeOf(s, sk(ctx), o.type === 'stall' ? 'miter' : 'round');
   if (stroke) p.path([outline], closed, null, stroke);
 }
 
 function drawFlow(ctx: SceneContext, o: Extract<PlanObject, { type: 'flow' }>) {
-  const { p, m, doc } = ctx;
+  const { p, m } = ctx;
   const c = geometryCenter(o.geometry);
   const world = (q: Point) => toPage(m, o.rotation ? rotatePoint(q, c, o.rotation) : q);
-  const stroke = strokeOf(o.style, m.k);
+  const stroke = strokeOf(o.style, sk(ctx));
   if (stroke) p.path([o.geometry.points.map(world)], false, null, stroke);
-  const { polygons, outline } = flowArrowPolygons(o, printScale(m), doc.plan.display);
+  const { polygons, outline } = flowArrowPolygons(o, printScale(m), ctx.display);
   if (!polygons.length) return;
   const fill = flowArrowColor(o.style);
   p.path(
@@ -210,11 +269,11 @@ function drawCorridor(ctx: SceneContext, o: Extract<PlanObject, { type: 'corrido
     };
     hatch(p, [outline], box, s, (Math.max(s.strokeWidth * 5, 6) * m.k) / Math.SQRT2, o.rotation);
   }
-  const stroke = strokeOf(s, m.k, 'miter');
+  const stroke = strokeOf(s, sk(ctx), 'miter');
   if (stroke) p.path([outline], true, null, stroke);
-  if (!o.showIcons || !symbols) return;
+  if (!o.showIcons || !symbols || ctx.opts.detail === 'simplified') return;
   const scale = printScale(m);
-  const size = boundedSize(o.iconSize, scale, doc.plan.display);
+  const size = boundedSize(o.iconSize * ctx.opts.iconScale, scale, ctx.display);
   const id = o.iconsOriented ? 'mark.footprints' : 'mark.walker';
   for (const mark of marksAlongPath(o.geometry.points, effectiveSpacing(o.iconSpacing, size), size)) {
     const at = world(mark);
@@ -229,8 +288,8 @@ function drawCorridor(ctx: SceneContext, o: Extract<PlanObject, { type: 'corrido
 }
 
 function drawIcon(ctx: SceneContext, o: Extract<PlanObject, { type: 'icon' }>) {
-  const { p, m, doc, symbols } = ctx;
-  const size = displayedSymbolSize(o.size, printScale(m), doc.plan.display) * m.k;
+  const { p, m, symbols } = ctx;
+  const size = displayedSymbolSize(o.size * ctx.opts.iconScale, printScale(m), ctx.display) * m.k;
   const r = (o.rotation * Math.PI) / 180;
   const box = size * (Math.abs(Math.cos(r)) + Math.abs(Math.sin(r)));
   const at = toPage(m, { x: o.geometry.x, y: o.geometry.y });
@@ -239,8 +298,14 @@ function drawIcon(ctx: SceneContext, o: Extract<PlanObject, { type: 'icon' }>) {
 }
 
 function drawText(ctx: SceneContext, o: Extract<PlanObject, { type: 'text' }>) {
-  const { p, m } = ctx;
-  const pt = (o.fontSize * m.k) / MM_PER_PT;
+  const { p } = ctx;
+  if (!o.label && ctx.opts.detail === 'simplified') return; // simplifié : pas de textes libres
+  // Taille minimale du style : texte (et étiquette) agrandis proportionnellement.
+  const basePt = (o.fontSize * ctx.m.k) / MM_PER_PT;
+  const f = Math.max(1, ctx.opts.minTextPt / basePt);
+  const m = { ...ctx.m, k: ctx.m.k * f };
+  const center = toPage(ctx.m, { x: o.geometry.x, y: o.geometry.y });
+  const pt = basePt * f;
   const bold = o.fontWeight === 'bold';
   const lines = (o.text || ' ').split('\n');
   const widths = lines.map((l) => p.textWidth(l, pt, bold));
@@ -250,7 +315,7 @@ function drawText(ctx: SceneContext, o: Extract<PlanObject, { type: 'text' }>) {
   const pad = (o.label?.padding ?? 0) * m.k;
   const w = textW + 2 * pad;
   const h = textH + 2 * pad;
-  const center = toPage(m, { x: o.geometry.x, y: o.geometry.y });
+  if (o.leaderTo) leader(ctx, { cx: center.x, cy: center.y, w, h }, toPage(ctx.m, o.leaderTo));
   const rot = (q: Point) => (o.rotation ? rotatePoint(q, center, o.rotation) : q);
   if (o.label) {
     const rect = roundedRectPath(center.x - w / 2, center.y - h / 2, w, h, o.label.cornerRadius * m.k).map(
@@ -303,13 +368,14 @@ function drawText(ctx: SceneContext, o: Extract<PlanObject, { type: 'text' }>) {
 
 function drawDimension(ctx: SceneContext, o: Extract<PlanObject, { type: 'dimension' }>) {
   const { p, m, doc } = ctx;
+  if (ctx.opts.detail !== 'full') return; // cotes : plan détaillé seulement
   const c = geometryCenter(o.geometry);
   const pts = o.geometry.points.map((q) => toPage(m, o.rotation ? rotatePoint(q, c, o.rotation) : q));
   const color = o.style.stroke ?? '#0f172a';
-  const width = Math.max(o.style.strokeWidth * m.k, 0.2);
+  const width = Math.max(o.style.strokeWidth * sk(ctx), 0.2);
   p.path([pts], false, null, { color, opacity: o.style.strokeOpacity, width, join: 'round' });
   const scale = printScale(m);
-  const tick = boundedSize(10, scale, doc.plan.display) * 0.6 * m.k;
+  const tick = boundedSize(10, scale, ctx.display) * 0.6 * m.k;
   const ticks: Point[][] = [];
   for (const [a, b] of [
     [pts[0]!, pts[1]!],
@@ -325,8 +391,11 @@ function drawDimension(ctx: SceneContext, o: Extract<PlanObject, { type: 'dimens
   }
   p.path(ticks, false, null, { color, opacity: o.style.strokeOpacity, width });
   const label = formatLength(polylineLength(o.geometry.points), doc.plan.calibration, doc.plan.units);
-  const fontMm = Math.max(11, Math.min(doc.plan.display.symbolMaxPx * 0.4, 14)) * MM_PER_CSS_PX;
-  const pt = fontMm / MM_PER_PT;
+  const pt = Math.max(
+    ctx.opts.minTextPt,
+    (Math.max(11, Math.min(ctx.display.symbolMaxPx * 0.4, 14)) * MM_PER_CSS_PX) / MM_PER_PT,
+  );
+  const fontMm = pt * MM_PER_PT;
   const mid = midpointAlong(pts).point;
   const y = mid.y - fontMm * 0.25;
   p.text(label, mid.x, y, {
@@ -341,25 +410,36 @@ function drawDimension(ctx: SceneContext, o: Extract<PlanObject, { type: 'dimens
   checkText(ctx, o, { x: mid.x - w / 2, y: y - fontMm, width: w, height: fontMm }, pt);
 }
 
-/** Pictogramme et / ou nom d'une zone, au centre, toujours droits. */
+/**
+ * Pictogramme et / ou nom d'une zone, toujours droits : au centre, ou nom déplacé (`nameOffset`)
+ * et relié à la zone par une ligne de renvoi.
+ */
 function drawZoneBadge(ctx: SceneContext, o: Extract<PlanObject, { type: 'zone' }>) {
-  const { p, m, doc, symbols } = ctx;
+  const { p, m, symbols } = ctx;
   const scale = printScale(m);
-  const display = doc.plan.display;
-  const size = o.icon ? boundedSize(o.icon.size, scale, display) * m.k : 0;
-  const center = toPage(m, geometryCenter(o.geometry));
+  const display = ctx.display;
+  const size = o.icon ? boundedSize(o.icon.size * ctx.opts.iconScale, scale, display) * m.k : 0;
+  const anchor = geometryCenter(o.geometry);
+  const center = toPage(m, anchor);
   const fontPx = Math.max(11, Math.min(display.symbolMaxPx * 0.42, ((size / m.k) * scale || 30) * 0.42));
-  const fontMm = fontPx * MM_PER_CSS_PX;
-  const name = o.showName ? o.name : null;
-  const textY = name && size ? size / 2 + fontMm * 0.75 : 0;
+  const pt = Math.max(ctx.opts.minTextPt, (fontPx * MM_PER_CSS_PX) / MM_PER_PT);
+  const fontMm = pt * MM_PER_PT;
+  // Standard et simplifié : noms de zones masqués (la légende les identifie).
+  const name = o.showName && ctx.opts.detail === 'full' ? o.name : null;
+  const moved =
+    name && o.nameOffset ? toPage(m, { x: anchor.x + o.nameOffset.x, y: anchor.y + o.nameOffset.y }) : null;
+  const textAt = moved ?? { x: center.x, y: center.y + (name && size ? size / 2 + fontMm * 0.75 : 0) };
+  if (name) {
+    const w = p.textWidth(name, pt, true);
+    if (moved) leader(ctx, { cx: moved.x, cy: moved.y, w, h: fontMm }, center, size / 2);
+  }
   if (o.icon && size) {
     const image = symbols?.get(o.icon.symbolId, null, size, 0);
-    if (image)
-      p.image(image, center.x - size / 2, center.y - size / 2 - (name ? fontMm * 0.35 : 0), size, size);
+    const dy = name && !moved ? fontMm * 0.35 : 0;
+    if (image) p.image(image, center.x - size / 2, center.y - size / 2 - dy, size, size);
   }
   if (name) {
-    const pt = fontMm / MM_PER_PT;
-    p.text(name, center.x, center.y + textY, {
+    p.text(name, textAt.x, textAt.y, {
       size: pt,
       bold: true,
       color: '#0f172a',
@@ -368,12 +448,7 @@ function drawZoneBadge(ctx: SceneContext, o: Extract<PlanObject, { type: 'zone' 
       halo: { color: '#ffffff', opacity: 0.92, width: fontMm * 0.14 },
     });
     const w = p.textWidth(name, pt, true);
-    checkText(
-      ctx,
-      o,
-      { x: center.x - w / 2, y: center.y + textY - fontMm / 2, width: w, height: fontMm },
-      pt,
-    );
+    checkText(ctx, o, { x: textAt.x - w / 2, y: textAt.y - fontMm / 2, width: w, height: fontMm }, pt);
   }
 }
 
@@ -388,10 +463,19 @@ export function drawPlanObjects(
   frame: Rect,
   symbols: SymbolSource | null,
   excludedLayerIds: readonly string[],
+  options: Partial<SceneOptions> = {},
 ): SceneIssue[] {
-  const ctx: SceneContext = { p, doc, m, frame, symbols, issues: [] };
+  const opts = { ...DEFAULT_SCENE, ...options };
+  const display = {
+    symbolMinPx: doc.plan.display.symbolMinPx * opts.iconScale,
+    symbolMaxPx: doc.plan.display.symbolMaxPx * opts.iconScale,
+  };
+  const ctx: SceneContext = { p, doc, m, frame, symbols, issues: [], opts, display };
   const layers = exportedLayerIds(doc, excludedLayerIds);
-  const ordered = objectsInRenderOrder(doc).filter((o) => o.visible && layers.has(o.layerId));
+  const excludedObjects = new Set(opts.excludedObjectIds);
+  const ordered = objectsInRenderOrder(doc).filter(
+    (o) => o.visible && layers.has(o.layerId) && !excludedObjects.has(o.id),
+  );
   const frameOutline = [
     { x: frame.x, y: frame.y },
     { x: frame.x + frame.width, y: frame.y },
@@ -405,6 +489,7 @@ export function drawPlanObjects(
       if (!objects.length) continue;
       p.withOpacity(layer.opacity, () => {
         for (const o of objects) {
+          p.owner?.(o.id);
           switch (o.type) {
             case 'flow':
               drawFlow(ctx, o);
@@ -428,6 +513,7 @@ export function drawPlanObjects(
         }
       });
     }
+    p.owner?.(null);
   });
   return ctx.issues;
 }

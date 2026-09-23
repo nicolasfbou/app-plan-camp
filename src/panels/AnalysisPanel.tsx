@@ -11,6 +11,7 @@ import { useEditorStore } from '@/store/editorStore.ts';
 import { planStore, usePlanStore } from '@/store/planStore.ts';
 import { Button } from '@/ui/Button.tsx';
 import { Section, TextField, Toggle } from './fields.tsx';
+import { ReadabilityPanel } from './ReadabilityPanel.tsx';
 
 const STATUS_CLASS: Record<CrossingView['status'], string> = {
   open: 'bg-amber-100 text-amber-900',
@@ -46,6 +47,10 @@ export function AnalysisPanel() {
 
   return (
     <div className="space-y-3 text-sm" data-testid="analysis-panel">
+      <ReadabilityPanel />
+      <h3 className="border-t border-slate-200 pt-3 text-xs font-semibold tracking-wide text-slate-500 uppercase">
+        {t('analysis.crossingsTitle')}
+      </h3>
       <p className="rounded-md bg-amber-50 p-2 text-xs text-amber-900" data-testid="analysis-disclaimer">
         <AlertTriangle size={14} className="mr-1 inline" aria-hidden />
         {t('analysis.disclaimer')}

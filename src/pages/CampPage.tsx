@@ -1,8 +1,21 @@
-import { Copy, Download, Map as MapIcon, Pencil, Plus, Trash2 } from 'lucide-react';
+import {
+  Copy,
+  Download,
+  GitBranch,
+  LayoutTemplate,
+  Map as MapIcon,
+  Pencil,
+  Plus,
+  Trash2,
+} from 'lucide-react';
+import { TemplatesDialog } from '@/app/TemplatesDialog.tsx';
+import { createPlanFromTemplate } from '@/app/templateActions.ts';
+import { VariantDialog } from '@/app/VariantDialog.tsx';
 import { downloadBytes } from '@/app/download.ts';
 import { exportCampplan } from '@/persistence/campplan.ts';
 import { useState } from 'react';
 import { createPlanDocument, duplicatePlanDocument, nowIso } from '@/domain/model/factories.ts';
+import type { StoredTemplate } from '@/persistence/ProjectRepository.ts';
 import { PLAN_KINDS } from '@/domain/model/schema.ts';
 import type { PlanKind } from '@/domain/model/types.ts';
 import { formatDateTime, t } from '@/i18n/index.ts';
@@ -17,7 +30,11 @@ import { ListRow } from './ListRow.tsx';
 import { Notice, PageLayout } from './PageLayout.tsx';
 import { useAsync } from './useAsync.ts';
 
-type Dialog = { kind: 'create' } | { kind: 'rename' | 'duplicate' | 'delete'; plan: PlanSummary } | null;
+type Dialog =
+  | { kind: 'create' }
+  | { kind: 'templates' }
+  | { kind: 'rename' | 'duplicate' | 'delete' | 'variant'; plan: PlanSummary }
+  | null;
 
 async function requirePlan(id: string) {
   const doc = await repository.loadPlan(id);
@@ -32,6 +49,8 @@ export function CampPage({ siteId }: { siteId: string }) {
   }, siteId);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [kind, setKind] = useState<PlanKind>('general');
+  const [templates, setTemplates] = useState<StoredTemplate[]>([]);
+  const [templateId, setTemplateId] = useState('');
   const close = () => setDialog(null);
 
   const breadcrumb = (
@@ -56,15 +75,22 @@ export function CampPage({ siteId }: { siteId: string }) {
       title={site.name}
       subtitle={t('plans.title')}
       action={
-        <Button
-          variant="primary"
-          onClick={() => {
-            setKind('general');
-            setDialog({ kind: 'create' });
-          }}
-        >
-          <Plus size={16} /> {t('plans.new')}
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={() => setDialog({ kind: 'templates' })}>
+            <LayoutTemplate size={16} /> {t('templates.open')}
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => {
+              setKind('general');
+              setTemplateId('');
+              void repository.listTemplates().then(setTemplates);
+              setDialog({ kind: 'create' });
+            }}
+          >
+            <Plus size={16} /> {t('plans.new')}
+          </Button>
+        </div>
       }
     >
       {plans.length === 0 && <Notice>{t('plans.empty')}</Notice>}
@@ -103,6 +129,12 @@ export function CampPage({ siteId }: { siteId: string }) {
                     <Download size={16} />
                   </IconButton>
                   <IconButton
+                    label={t('variant.rowLabel', { name: plan.name })}
+                    onClick={() => setDialog({ kind: 'variant', plan })}
+                  >
+                    <GitBranch size={16} />
+                  </IconButton>
+                  <IconButton
                     label={`${t('common.duplicate')} ${plan.name}`}
                     onClick={() => setDialog({ kind: 'duplicate', plan })}
                   >
@@ -129,8 +161,10 @@ export function CampPage({ siteId }: { siteId: string }) {
           confirmLabel={t('common.create')}
           onCancel={close}
           onConfirm={async (name) => {
-            const doc = createPlanDocument({ siteId, name, kind });
-            await repository.savePlan(doc);
+            const doc = templateId
+              ? await createPlanFromTemplate({ siteId, name, kind, templateId })
+              : createPlanDocument({ siteId, name, kind });
+            if (!templateId) await repository.savePlan(doc);
             await repository.saveSite({ ...site, updatedAt: nowIso() });
             close();
             navigate({ name: 'plan', siteId, planId: doc.plan.id });
@@ -150,7 +184,32 @@ export function CampPage({ siteId }: { siteId: string }) {
               ))}
             </select>
           </label>
+          <label className="mt-3 block">
+            <span className="mb-1 block font-medium text-slate-800">{t('templates.choose')}</span>
+            <select
+              value={templateId}
+              onChange={(event) => setTemplateId(event.target.value)}
+              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+              data-testid="plan-template"
+            >
+              <option value="">{t('templates.none')}</option>
+              {templates.map(({ template }) => (
+                <option key={template.id} value={template.id}>
+                  {template.name}
+                </option>
+              ))}
+            </select>
+          </label>
         </TextPromptDialog>
+      )}
+      {dialog?.kind === 'templates' && <TemplatesDialog onClose={close} />}
+      {dialog?.kind === 'variant' && (
+        <VariantDialog
+          planId={dialog.plan.id}
+          planName={dialog.plan.name}
+          onClose={close}
+          onCreated={(id) => navigate({ name: 'plan', siteId, planId: id })}
+        />
       )}
       {dialog?.kind === 'rename' && (
         <TextPromptDialog

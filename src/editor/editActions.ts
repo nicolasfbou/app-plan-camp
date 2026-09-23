@@ -28,6 +28,7 @@ import {
 } from '@/domain/model/shapes.ts';
 import type { PlanObject, Point, Style } from '@/domain/model/types.ts';
 import { type MessageKey, t } from '@/i18n/index.ts';
+import { isShownInEditor } from './viewVisibility.ts';
 import { useEditorStore } from '@/store/editorStore.ts';
 import { planStore } from '@/store/planStore.ts';
 import { useViewportStore } from '@/store/viewportStore.ts';
@@ -107,7 +108,8 @@ export const editActions = {
 
   selectAll() {
     const d = doc();
-    if (d) useEditorStore.getState().select(selectableIds(d));
+    if (d)
+      useEditorStore.getState().select(selectableIds(d).filter((id) => isShownInEditor(d, d.objects[id]!)));
   },
 
   deleteSelected(): boolean {

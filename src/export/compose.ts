@@ -23,7 +23,7 @@ import {
   type Rect,
   type TitleBlockFit,
 } from './blocks.ts';
-import { MM_PER_PT, rectPath, type Painter } from './painter.ts';
+import { grayscalePainter, MM_PER_PT, rectPath, type Painter } from './painter.ts';
 import { drawPlanObjects, objectBounds, toPage, type MapTransform, type SceneIssue } from './planScene.ts';
 
 export type { Rect };
@@ -57,6 +57,10 @@ export interface ComposeInput {
   now: Date;
   /** Largeur imposée de la colonne latérale (export image), sinon ≈ 22 % de la page. */
   columnWidth?: number;
+  /** Vue par public : titre imprimé, mention du public, position du cartouche. */
+  title?: string;
+  audienceNote?: string;
+  titleBlockPlacement?: 'side' | 'bottom';
 }
 
 export interface PageLayout {
@@ -92,7 +96,9 @@ export function exportExtent(doc: PlanDocument, print: PrintSettings): Rect {
   const base = doc.plan.baseImage;
   const image = base ? { x: 0, y: 0, width: base.width, height: base.height } : null;
   if (print.extent === 'image' && image) return image;
-  const boxes = exportedObjects(doc, print.excludedLayerIds).map((o) => objectBounds(o, doc));
+  const boxes = exportedObjects(doc, print.excludedLayerIds, print.excludedObjectIds).map((o) =>
+    objectBounds(o, doc),
+  );
   if (!boxes.length) return image ?? { x: 0, y: 0, width: 1000, height: 700 };
   const x0 = Math.min(...boxes.map((b) => b.x));
   const y0 = Math.min(...boxes.map((b) => b.y));
@@ -121,6 +127,8 @@ function scaleText(input: ComposeInput, k: number): string {
 /** Lignes du cartouche pour une échelle d'impression donnée (mm par pixel image). */
 export function composeTitleRows(input: ComposeInput, k: number) {
   return titleBlockRows(input.doc, {
+    title: input.title,
+    audience: input.audienceNote,
     siteName: input.siteName,
     scaleText: scaleText(input, k),
     northText: northText(input.doc),
@@ -165,14 +173,16 @@ function bestCorner(
       y: map.y + map.height - size.height - inset,
     },
   };
-  const boxes = exportedObjects(input.doc, input.print.excludedLayerIds).map((o) => {
-    const b = objectBounds(o, input.doc);
-    const a = toPage(m, { x: b.x, y: b.y });
-    return {
-      building: o.type === 'building',
-      rect: { x: a.x, y: a.y, width: b.width * m.k, height: b.height * m.k },
-    };
-  });
+  const boxes = exportedObjects(input.doc, input.print.excludedLayerIds, input.print.excludedObjectIds).map(
+    (o) => {
+      const b = objectBounds(o, input.doc);
+      const a = toPage(m, { x: b.x, y: b.y });
+      return {
+        building: o.type === 'building',
+        rect: { x: a.x, y: a.y, width: b.width * m.k, height: b.height * m.k },
+      };
+    },
+  );
   const overlap = (r: Rect, s: Rect) =>
     Math.max(0, Math.min(r.x + r.width, s.x + s.width) - Math.max(r.x, s.x)) *
     Math.max(0, Math.min(r.y + r.height, s.y + s.height) - Math.max(r.y, s.y));
@@ -194,7 +204,11 @@ function bestCorner(
 
 /** Mise en page complète (aucun dessin). `symbols` sert seulement aux proportions du logo. */
 export function layoutPage(p: Painter, input: ComposeInput, symbols: SymbolSource | null): PageLayout {
-  const { doc, print, legend: legendSettings, page } = input;
+  const { doc, print, page } = input;
+  // Style « légende simplifiée » : compacte, sans groupes ni nombres.
+  const legendSettings = print.style.simpleLegend
+    ? { ...input.legend, mode: 'compact' as const }
+    : input.legend;
   const warnings: ExportWarning[] = [];
   const inc = modeIncludes(print);
   const margin = print.marginMm;
@@ -210,10 +224,11 @@ export function layoutPage(p: Painter, input: ComposeInput, symbols: SymbolSourc
   };
   const entries: ShownLegendEntry[] =
     inc.legend && legendSettings.visible
-      ? shownLegendEntries(doc, legendSettings, print.excludedLayerIds)
+      ? shownLegendEntries(doc, legendSettings, print.excludedLayerIds, print.excludedObjectIds, print.detail)
       : [];
   const wantLegend = entries.length > 0;
-  const tbPlacement = input.target === 'image' ? 'side' : doc.plan.titleBlock.placement;
+  const tbPlacement =
+    input.target === 'image' ? 'side' : (input.titleBlockPlacement ?? doc.plan.titleBlock.placement);
   const sideLegend = wantLegend && legendSettings.placement === 'side';
   const sideTitle = inc.titleBlock && tbPlacement === 'side';
   const columnWidth = input.columnWidth ?? Math.min(95, Math.max(55, body.width * 0.22), body.width * 0.4);
@@ -496,15 +511,19 @@ export interface DrawAssets {
   symbols: SymbolSource | null;
   /** Fond de page : blanc, ou transparent (PNG annotations seules). */
   background: 'white' | 'transparent';
+  /** Reçoit les textes trop petits ou coupés, objet par objet (analyse de lisibilité). */
+  onSceneIssues?: (issues: SceneIssue[]) => void;
 }
 
 /** Dessine la page. Retourne les avertissements de mise en page et de rendu (textes). */
 export function drawPage(
-  p: Painter,
+  surface: Painter,
   input: ComposeInput,
   layout: PageLayout,
   assets: DrawAssets,
 ): ExportWarning[] {
+  // Noir et blanc : toutes les couleurs converties en niveaux de gris (photo et pictogrammes : à la préparation).
+  const p = input.print.style.grayscale ? grayscalePainter(surface) : surface;
   const { doc, print } = input;
   const warnings = [...layout.warnings];
   const { page, map, transform } = layout;
@@ -531,7 +550,7 @@ export function drawPage(
     });
     // Titre mesuré : réduit jusqu'à 9 pt, puis raccourci (signalé) ; jamais sur le statut.
     const room = t.width - badgeWidth - 6;
-    let text = block.title || doc.plan.name;
+    let text = input.title || block.title || doc.plan.name;
     let size = 14;
     while (size > 9 && p.textWidth(text, size, true) > room) size -= 0.5;
     if (p.textWidth(text, size, true) > room) {
@@ -561,9 +580,14 @@ export function drawPage(
   if (layout.photo && assets.photo) {
     const ph = assets.photo;
     const a = toPage(transform, { x: ph.rect.x, y: ph.rect.y });
-    p.clip([frame], () =>
-      p.image(ph.image, a.x, a.y, ph.rect.width * transform.k, ph.rect.height * transform.k),
-    );
+    const w = ph.rect.width * transform.k;
+    const h = ph.rect.height * transform.k;
+    p.clip([frame], () => {
+      p.image(ph.image, a.x, a.y, w, h);
+      // Voile blanc du style (rendu seulement) : les annotations ressortent sur la photo.
+      if (print.style.photoDim > 0)
+        p.path([rectPath(a.x, a.y, w, h)], true, { color: '#ffffff', opacity: print.style.photoDim }, null);
+    });
     if (ph.reducedForLimits)
       warnings.push({
         code: 'photo-reduced',
@@ -577,7 +601,15 @@ export function drawPage(
     map,
     assets.symbols,
     print.excludedLayerIds,
+    {
+      strokeScale: print.style.strokeScale,
+      minTextPt: print.style.minTextPt,
+      iconScale: print.style.iconScale,
+      detail: print.detail,
+      excludedObjectIds: print.excludedObjectIds,
+    },
   );
+  assets.onSceneIssues?.(issues);
   p.path([frame], true, null, { color: '#0f172a', opacity: 1, width: 0.35 });
 
   if (layout.legend)

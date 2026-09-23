@@ -10,12 +10,15 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Printer,
+  LayoutTemplate,
+  GitBranch,
   Redo2,
   Undo2,
 } from 'lucide-react';
 import { t } from '@/i18n/index.ts';
 import { planStore, selectCanRedo, selectCanUndo, selectIsDirty, usePlanStore } from '@/store/planStore.ts';
 import { useUiStore } from '@/store/uiStore.ts';
+import { useEditorStore } from '@/store/editorStore.ts';
 import { Button } from '@/ui/Button.tsx';
 import { IconButton } from '@/ui/IconButton.tsx';
 import { routeHref } from './router.ts';
@@ -28,6 +31,8 @@ interface TopBarProps {
   onImport?(): void;
   onExport?(): void;
   onPrint?(): void;
+  onTemplates?(): void;
+  onVariant?(): void;
 }
 
 export function TopBar({
@@ -38,6 +43,8 @@ export function TopBar({
   onImport,
   onExport,
   onPrint,
+  onTemplates,
+  onVariant,
 }: TopBarProps) {
   const planName = usePlanStore((s) => s.doc?.plan.name ?? null);
   const hasBackground = usePlanStore((s) => s.doc?.plan.baseImage != null);
@@ -45,6 +52,9 @@ export function TopBar({
   const canRedo = usePlanStore(selectCanRedo);
   const isDirty = usePlanStore(selectIsDirty);
   const { leftCollapsed, rightCollapsed, toggleLeft, toggleRight } = useUiStore();
+  const views = usePlanStore((s) => s.doc?.plan.views);
+  const activeViewId = useEditorStore((s) => s.activeViewId);
+  const setActiveView = useEditorStore((s) => s.setActiveView);
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-2">
@@ -52,7 +62,10 @@ export function TopBar({
         {leftCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
       </IconButton>
 
-      <nav className="flex min-w-0 flex-1 items-center gap-1 text-sm" aria-label="Fil d’Ariane">
+      <nav
+        className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden text-sm"
+        aria-label="Fil d’Ariane"
+      >
         <a href={routeHref({ name: 'camps' })} className="shrink-0 text-slate-500 hover:underline">
           {t('nav.camps')}
         </a>
@@ -114,20 +127,66 @@ export function TopBar({
       </div>
 
       {onImport && planName !== null && (
-        <Button onClick={onImport}>
-          <ImageUp size={16} /> {hasBackground ? t('topbar.replace') : t('topbar.import')}
+        <Button
+          onClick={onImport}
+          aria-label={hasBackground ? t('topbar.replace') : t('topbar.import')}
+          title={hasBackground ? t('topbar.replace') : t('topbar.import')}
+        >
+          {/* Écran étroit : icône seule (le nom reste lisible par les lecteurs d'écran). */}
+          <ImageUp size={16} />
+          <span className="hidden 2xl:inline">
+            {hasBackground ? t('topbar.replace') : t('topbar.import')}
+          </span>
         </Button>
       )}
 
+      {views && views.length > 0 && (
+        <label className="flex shrink-0 items-center gap-1 text-xs text-slate-600">
+          <span className="hidden 2xl:inline">{t('views.topbar')}</span>
+          <select
+            value={views.some((v) => v.id === activeViewId) ? (activeViewId ?? '') : ''}
+            onChange={(e) => setActiveView(e.target.value || null)}
+            aria-label={t('views.topbar')}
+            className="max-w-36 rounded border border-slate-300 bg-white px-1 py-1 text-sm"
+            data-testid="view-select"
+          >
+            <option value="">{t('views.base')}</option>
+            {views.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      {onTemplates && planName !== null && (
+        <IconButton label={t('templates.open')} onClick={onTemplates}>
+          <LayoutTemplate size={18} />
+        </IconButton>
+      )}
+      {onVariant && planName !== null && (
+        <IconButton label={t('variant.topbar')} onClick={onVariant}>
+          <GitBranch size={18} />
+        </IconButton>
+      )}
+
       {onPrint && planName !== null && (
-        <Button onClick={onPrint} title={`${t('print.open')} (Ctrl+P)`} data-testid="open-print">
-          <Printer size={16} /> {t('print.open')}
+        <Button
+          onClick={onPrint}
+          aria-label={t('print.open')}
+          title={`${t('print.open')} (Ctrl+P)`}
+          data-testid="open-print"
+        >
+          <Printer size={16} />
+          <span className="hidden xl:inline">{t('print.open')}</span>
         </Button>
       )}
 
       {onExport && planName !== null && (
-        <Button onClick={onExport}>
-          <Download size={16} /> {t('campplan.export')}
+        <Button onClick={onExport} aria-label={t('campplan.export')} title={t('campplan.export')}>
+          <Download size={16} />
+          <span className="hidden 2xl:inline">{t('campplan.export')}</span>
         </Button>
       )}
 

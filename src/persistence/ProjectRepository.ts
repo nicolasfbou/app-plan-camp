@@ -4,6 +4,13 @@
  */
 import type { PlanDocument, PlanKind, Site } from '@/domain/model/types.ts';
 import type { ViewCenter } from '@/domain/viewport/viewport.ts';
+import type { PlanTemplate } from '@/domain/templates/template.ts';
+
+/** Modèle d'entreprise enregistré sur cet ordinateur (avec les octets de son logo). */
+export interface StoredTemplate {
+  template: PlanTemplate;
+  logo: Uint8Array | null;
+}
 
 export interface PlanSummary {
   id: string;
@@ -66,4 +73,10 @@ export interface ProjectRepository {
    */
   getViewPrefs(planId: string): Promise<ViewCenter | undefined>;
   saveViewPrefs(planId: string, view: ViewCenter): Promise<void>;
+
+  /** Modèles d'entreprise (validés à la lecture ; un modèle illisible est ignoré). */
+  listTemplates(): Promise<StoredTemplate[]>;
+  getTemplate(id: string): Promise<StoredTemplate | undefined>;
+  saveTemplate(entry: StoredTemplate): Promise<void>;
+  deleteTemplate(id: string): Promise<void>;
 }

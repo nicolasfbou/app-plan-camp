@@ -3,6 +3,7 @@ import { Group, Layer } from 'react-konva';
 import { expandGroups } from '@/domain/model/multi.ts';
 import { isEditable, objectsInRenderOrder } from '@/domain/model/operations.ts';
 import type { PlanObject } from '@/domain/model/types.ts';
+import { viewFilter } from '@/domain/print/views.ts';
 import { useEditorStore } from '@/store/editorStore.ts';
 import { planStore, usePlanStore } from '@/store/planStore.ts';
 import { ObjectNode } from './ObjectNode.tsx';
@@ -41,6 +42,9 @@ export const ObjectsLayer = memo(function ObjectsLayer({ scaleBucket }: { scaleB
   const doc = usePlanStore((s) => s.doc);
   const interactiveTool = useEditorStore((s) => s.tool === 'select');
   const editingTextId = useEditorStore((s) => s.editingTextId);
+  const activeViewId = useEditorStore((s) => s.activeViewId);
+  // Vue par public : calques et objets filtrés à l'affichage seulement (le plan n'est pas modifié).
+  const filter = useMemo(() => (doc ? viewFilter(doc, activeViewId) : null), [doc, activeViewId]);
   const imagesVersion = useSymbolImagesVersion();
 
   // Répartition par calque recalculée seulement quand le document change.
@@ -57,16 +61,17 @@ export const ObjectsLayer = memo(function ObjectsLayer({ scaleBucket }: { scaleB
           key={layer.id}
           id={`layer-${layer.id}`}
           name={`user-layer tier-${layer.tier}`}
-          visible={layer.visible}
+          visible={layer.visible && !filter?.hiddenLayers.has(layer.id)}
           opacity={layer.opacity}
           listening={interactiveTool && !layer.locked}
         >
           {/* Calque masqué : ses objets ne sont pas créés du tout (aucun coût mémoire ni de rendu). */}
           {layer.visible &&
+            !filter?.hiddenLayers.has(layer.id) &&
             byLayer
               .get(layer.id)!
               .map((object) =>
-                object.visible ? (
+                object.visible && !filter?.hiddenObjects.has(object.id) ? (
                   <ObjectNode
                     key={object.id}
                     object={object}

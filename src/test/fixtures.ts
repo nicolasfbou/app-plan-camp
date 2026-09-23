@@ -36,6 +36,7 @@ export function makeZone(layerId: string, x = 100, y = 200, overrides: Partial<P
     geometry: { kind: 'rect', x, y, width: 300, height: 150, cornerRadius: 0 },
     icon: null,
     showName: false,
+    nameOffset: null,
     ...overrides,
   } as PlanObject;
 }
@@ -118,6 +119,7 @@ export function makeLargeDocument(count: number): PlanDocument {
           padding: 6,
           cornerRadius: 4,
         },
+        leaderTo: null,
       },
     ];
     doc.objects[id] = objects[i % objects.length]!;

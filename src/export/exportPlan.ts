@@ -1,12 +1,14 @@
 /**
- * Exports du plan : PDF (vectoriel, photo intégrée), PNG et JPG (image aplatie NOUVELLE : la photo
- * d'origine stockée n'est jamais réencodée ni modifiée), et aperçu d'impression. Tous passent par
- * la même mise en page (`compose.ts`) : l'aperçu est fidèle au fichier produit. Jamais de capture
- * d'écran : le rendu est indépendant du viewport de l'éditeur.
+ * Exports du plan : PDF (vectoriel, photo intégrée ; une page ou une page par vue), PNG et JPG
+ * (image aplatie NOUVELLE : la photo d'origine stockée n'est jamais réencodée ni modifiée), et
+ * aperçu d'impression. Tous passent par la même mise en page (`compose.ts`) : l'aperçu est fidèle
+ * au fichier produit. Jamais de capture d'écran : le rendu est indépendant du viewport de l'éditeur.
+ * Chaque export suit des réglages EFFECTIFS : ceux d'une vue par public, ou ceux du plan de base.
  */
 import type { LoadedBackground } from '@/editor/backgroundImage.ts';
-import type { LegendSettings, PlanDocument, PrintSettings } from '@/domain/model/types.ts';
+import type { PlanDocument } from '@/domain/model/types.ts';
 import { pageSize } from '@/domain/print/paper.ts';
+import type { EffectiveSettings } from '@/domain/print/views.ts';
 import {
   canvasFitFactor,
   createCanvas,
@@ -44,106 +46,148 @@ export interface ExportResult {
   mimeType: string;
   fileName: string;
   warnings: ExportWarning[];
-  /** Dimensions de l'image produite (PNG / JPG) ou de la page (PDF, mm). */
+  /** Dimensions de l'image produite (PNG / JPG) ou de la première page (PDF, mm). */
   width: number;
   height: number;
   /** Informations sur la photo intégrée au PDF. */
   photo?: { dpi: number; original: boolean };
+  pages?: number;
 }
 
-/** Nom de fichier sûr, dérivé du nom du plan et de sa révision. */
-export function exportFileName(doc: PlanDocument, extension: string): string {
-  const base = (doc.plan.titleBlock.planNumber || doc.plan.name || 'plan')
+const slug = (text: string) =>
+  text
     .normalize('NFD')
     .replace(/\p{M}/gu, '') // accents retirés
     .replace(/[^A-Za-z0-9._-]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 80);
+
+/** Nom de fichier sûr, dérivé du numéro (ou du nom) du plan, de la vue et de la révision. */
+export function exportFileName(doc: PlanDocument, extension: string, viewName?: string): string {
+  const base = slug(doc.plan.titleBlock.planNumber || doc.plan.name || 'plan') || 'plan';
+  const view = viewName ? `-${slug(viewName)}` : '';
   const rev = doc.plan.titleBlock.revision
     ? `-rev${doc.plan.titleBlock.revision.replace(/[^A-Za-z0-9]/g, '')}`
     : '';
-  return `${base || 'plan'}${rev}.${extension}`;
+  return `${base}${view}${rev}.${extension}`;
 }
 
 function composeInput(
   src: ExportSource,
-  print: PrintSettings,
-  legend: LegendSettings,
+  settings: EffectiveSettings,
   page: { width: number; height: number },
   target: ComposeInput['target'],
-  columnWidth?: number,
+  overrides: {
+    print?: EffectiveSettings['print'];
+    legend?: EffectiveSettings['legend'];
+    columnWidth?: number;
+  } = {},
 ): ComposeInput {
   return {
     doc: src.doc,
     siteName: src.siteName,
-    print,
-    legend,
+    print: overrides.print ?? settings.print,
+    legend: overrides.legend ?? settings.legend,
     page,
     target,
     now: src.now ?? new Date(),
-    columnWidth,
+    columnWidth: overrides.columnWidth,
+    title: settings.title,
+    audienceNote: settings.audienceNote,
+    titleBlockPlacement: settings.titleBlockPlacement,
   };
 }
 
+const photoAdjust = (s: EffectiveSettings) => ({
+  contrast: s.print.style.photoContrast,
+  grayscale: s.print.style.grayscale,
+});
+
 // --- PDF -----------------------------------------------------------------------------------------------
 
-export async function exportPdf(
+/**
+ * PDF d'une ou plusieurs pages : une page par jeu de réglages (vues par public), chacune à son
+ * format. La police et les images communes ne sont intégrées qu'une fois.
+ */
+export async function exportPdfPages(
   src: ExportSource,
-  print: PrintSettings,
-  legend: LegendSettings,
+  pagesSettings: EffectiveSettings[],
 ): Promise<ExportResult> {
+  if (!pagesSettings.length) throw new Error('Aucune page à exporter.');
   const [{ jsPDF }, { PdfPainter, registerPdfFonts }, fonts] = await Promise.all([
     import('jspdf'),
     import('./pdfPainter.ts'),
     loadExportFonts(),
   ]);
-  const page = pageSize(print);
+  const first = pageSize(pagesSettings[0]!.print);
+  const orientation = (p: { width: number; height: number }) =>
+    p.width > p.height ? 'landscape' : 'portrait';
   const pdf = new jsPDF({
     unit: 'mm',
-    format: [page.width, page.height],
-    orientation: page.width > page.height ? 'landscape' : 'portrait',
+    format: [first.width, first.height],
+    orientation: orientation(first),
     compress: true,
     putOnlyUsedFonts: true,
   });
   registerPdfFonts(pdf, fonts);
   const painter = new PdfPainter(pdf);
-  const input = composeInput(src, print, legend, page, 'paper');
-  const symbols = await loadSymbolSource(src.doc, src.readBlob, print.dpi / 25.4);
-  const layout = layoutPage(painter, input, symbols);
+  const warnings: ExportWarning[] = [];
+  let photoInfo: ExportResult['photo'];
   const base = src.doc.plan.baseImage;
-  let photo = null;
-  if (layout.photo && src.background && base) {
-    photo = await preparePhoto(
-      src.background,
-      base,
-      layout.extent,
-      layout.extent.width * layout.transform.k,
-      {
-        dpi: print.dpi,
-        quality: print.jpegQuality,
-        target: 'pdf',
-        readOriginal: () => src.readBlob(base.blobId),
-      },
-    );
+  for (const [index, settings] of pagesSettings.entries()) {
+    const page = pageSize(settings.print);
+    if (index > 0) pdf.addPage([page.width, page.height], orientation(page));
+    const input = composeInput(src, settings, page, 'paper');
+    const symbols = await loadSymbolSource(src.doc, src.readBlob, settings.print.dpi / 25.4, {
+      grayscale: settings.print.style.grayscale,
+    });
+    const layout = layoutPage(painter, input, symbols);
+    let photo = null;
+    if (layout.photo && src.background && base) {
+      photo = await preparePhoto(
+        src.background,
+        base,
+        layout.extent,
+        layout.extent.width * layout.transform.k,
+        {
+          dpi: settings.print.dpi,
+          quality: settings.print.jpegQuality,
+          target: 'pdf',
+          readOriginal: () => src.readBlob(base.blobId),
+          adjust: photoAdjust(settings),
+        },
+      );
+      // Une image par page distincte (réglages différents) : clé propre à la page.
+      if (!photo.original) photo.image = { ...photo.image, key: `photo-${index}` };
+      photoInfo ??= { dpi: photo.dpi, original: photo.original };
+    }
+    const pageWarnings = drawPage(painter, input, layout, { photo, symbols, background: 'white' });
+    const prefix = pagesSettings.length > 1 ? `${settings.name} : ` : '';
+    warnings.push(...pageWarnings.map((w) => ({ ...w, message: prefix + w.message })));
   }
-  const warnings = drawPage(painter, input, layout, { photo, symbols, background: 'white' });
   const block = src.doc.plan.titleBlock;
   pdf.setProperties({
-    title: block.title || src.doc.plan.name,
+    title: pagesSettings.length > 1 ? block.title || src.doc.plan.name : pagesSettings[0]!.title,
     subject: `${src.siteName} — ${block.status === 'approved' ? 'Approuvé' : 'Non approuvé'}`,
     creator: 'CampPlanner',
     author: block.preparedBy || '',
   });
   const bytes = new Uint8Array(pdf.output('arraybuffer'));
+  const single = pagesSettings.length === 1 ? pagesSettings[0]! : null;
   return {
     bytes,
     mimeType: 'application/pdf',
-    fileName: exportFileName(src.doc, 'pdf'),
+    fileName: exportFileName(src.doc, 'pdf', single ? (single.viewId ? single.name : undefined) : 'vues'),
     warnings,
-    width: page.width,
-    height: page.height,
-    photo: photo ? { dpi: photo.dpi, original: photo.original } : undefined,
+    width: first.width,
+    height: first.height,
+    photo: photoInfo,
+    pages: pagesSettings.length,
   };
+}
+
+export function exportPdf(src: ExportSource, settings: EffectiveSettings): Promise<ExportResult> {
+  return exportPdfPages(src, [settings]);
 }
 
 // --- PNG / JPG -------------------------------------------------------------------------------------------
@@ -170,17 +214,20 @@ interface RasterPlan {
 /** Page et résolution d'un export image. */
 export function rasterPlan(
   src: ExportSource,
-  print: PrintSettings,
-  legend: LegendSettings,
+  settings: EffectiveSettings,
   options: RasterOptions,
 ): RasterPlan {
+  const { print } = settings;
   if (options.framing === 'page') {
     const page = pageSize(print);
-    return { page, pxPerMm: print.dpi / 25.4, input: composeInput(src, print, legend, page, 'paper') };
+    return { page, pxPerMm: print.dpi / 25.4, input: composeInput(src, settings, page, 'paper') };
   }
   // Plan à la résolution de la photo : une légende « automatique » va à côté (jamais de repli qui
   // réduirait la carte sous la résolution demandée).
-  if (legend.placement === 'map-auto') legend = { ...legend, placement: 'side' };
+  const legend =
+    settings.legend.placement === 'map-auto'
+      ? { ...settings.legend, placement: 'side' as const }
+      : settings.legend;
   const extent = exportExtent(src.doc, print);
   // mm de « page » par pixel image : carte d'environ 400 mm, mais au moins 4 px par mm pour que la
   // légende et le cartouche restent lisibles sur une petite photo.
@@ -196,11 +243,14 @@ export function rasterPlan(
     height: map.height + 2 * margin + title,
   };
   // Les réglages de marge et de colonne de la page image priment sur ceux du papier.
-  const imagePrint = { ...print, marginMm: margin };
   return {
     page,
     pxPerMm: options.scale / k,
-    input: composeInput(src, imagePrint, legend, page, 'image', IMAGE_COLUMN_MM),
+    input: composeInput(src, settings, page, 'image', {
+      print: { ...print, marginMm: margin },
+      legend,
+      columnWidth: IMAGE_COLUMN_MM,
+    }),
   };
 }
 
@@ -231,12 +281,12 @@ function canvasBlob(canvas: HTMLCanvasElement, type: string, quality?: number): 
 
 export async function exportRaster(
   src: ExportSource,
-  print: PrintSettings,
-  legend: LegendSettings,
+  settings: EffectiveSettings,
   options: RasterOptions,
 ): Promise<ExportResult> {
   await loadExportFonts();
-  const plan = rasterPlan(src, print, legend, options);
+  const { print } = settings;
+  const plan = rasterPlan(src, settings, options);
   const size = rasterSize(plan);
   if (!size.fits) {
     // Jamais d'échec silencieux : on indique la résolution maximale possible.
@@ -255,16 +305,18 @@ export async function exportRaster(
   }
   const canvas = createCanvas(size.width, size.height);
   const painter = new CanvasPainter(canvas.getContext('2d')!, plan.pxPerMm);
-  const symbols = await loadSymbolSource(src.doc, src.readBlob, plan.pxPerMm);
-  const { layout, warnings } = await paint(
+  const symbols = await loadSymbolSource(src.doc, src.readBlob, plan.pxPerMm, {
+    grayscale: print.style.grayscale,
+  });
+  const { warnings } = await paint(
     painter,
     src,
+    settings,
     plan.input,
     symbols,
     plan.pxPerMm,
     options.format === 'png' ? print.background : 'white',
   );
-  void layout;
   const type = options.format === 'png' ? 'image/png' : 'image/jpeg';
   const blob = await canvasBlob(canvas, type, options.format === 'jpeg' ? print.jpegQuality : undefined);
   const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -273,7 +325,11 @@ export async function exportRaster(
   return {
     bytes,
     mimeType: type,
-    fileName: exportFileName(src.doc, options.format === 'png' ? 'png' : 'jpg'),
+    fileName: exportFileName(
+      src.doc,
+      options.format === 'png' ? 'png' : 'jpg',
+      settings.viewId ? settings.name : undefined,
+    ),
     warnings,
     width: size.width,
     height: size.height,
@@ -284,6 +340,7 @@ export async function exportRaster(
 async function paint(
   painter: CanvasPainter,
   src: ExportSource,
+  settings: EffectiveSettings,
   input: ComposeInput,
   symbols: SymbolSource,
   pxPerMm: number,
@@ -297,6 +354,7 @@ async function paint(
           dpi: pxPerMm * 25.4,
           quality: 1,
           target: 'preview',
+          adjust: photoAdjust(settings),
         })
       : null;
   const transparent = background === 'transparent' && input.print.mode === 'annotations';
@@ -323,15 +381,17 @@ export interface PreviewResult {
 export async function renderPreview(
   canvas: HTMLCanvasElement,
   src: ExportSource,
-  print: PrintSettings,
-  legend: LegendSettings,
+  settings: EffectiveSettings,
   box: { maxWidth: number; maxHeight: number; pixelRatio: number },
   raster?: RasterOptions,
 ): Promise<PreviewResult> {
   await loadExportFonts();
   const plan = raster
-    ? rasterPlan(src, print, legend, raster)
-    : { page: pageSize(print), input: composeInput(src, print, legend, pageSize(print), 'paper') };
+    ? rasterPlan(src, settings, raster)
+    : {
+        page: pageSize(settings.print),
+        input: composeInput(src, settings, pageSize(settings.print), 'paper'),
+      };
   const { page } = plan;
   const cssPerMm = Math.min(box.maxWidth / page.width, box.maxHeight / page.height);
   const pxPerMm = cssPerMm * box.pixelRatio;
@@ -343,14 +403,17 @@ export async function renderPreview(
   if (!c) throw new ExportLimitError('Aperçu impossible : mémoire insuffisante.', null);
   c.clearRect(0, 0, canvas.width, canvas.height);
   const painter = new CanvasPainter(c, pxPerMm);
-  const symbols = await loadSymbolSource(src.doc, src.readBlob, pxPerMm);
+  const symbols = await loadSymbolSource(src.doc, src.readBlob, pxPerMm, {
+    grayscale: settings.print.style.grayscale,
+  });
   const { layout, warnings } = await paint(
     painter,
     src,
+    settings,
     plan.input,
     symbols,
     pxPerMm,
-    raster?.format === 'png' ? print.background : 'white',
+    raster?.format === 'png' ? settings.print.background : 'white',
   );
   return { layout, warnings, page };
 }

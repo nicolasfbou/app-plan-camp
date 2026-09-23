@@ -7,6 +7,7 @@ import { CanvasStage } from '@/editor/CanvasStage.tsx';
 import { ImportDialog } from '@/editor/ImportDialog.tsx';
 import { NavigationControls } from '@/editor/NavigationControls.tsx';
 import { NoticeBanner } from '@/editor/NoticeBanner.tsx';
+import { ViewBanner } from '@/editor/ViewBanner.tsx';
 import { TextEditorOverlay } from '@/editor/TextEditorOverlay.tsx';
 import { CalibrationDialog } from '@/panels/ScalePanel.tsx';
 import { useEditorShortcuts } from '@/editor/useEditorShortcuts.ts';
@@ -24,6 +25,9 @@ import { downloadBytes } from '@/app/download.ts';
 import { exportCampplan } from '@/persistence/campplan.ts';
 import { Button } from '@/ui/Button.tsx';
 import { TextPromptDialog } from '@/ui/TextPromptDialog.tsx';
+import { TemplatesDialog } from '@/app/TemplatesDialog.tsx';
+import { VariantDialog } from '@/app/VariantDialog.tsx';
+import { navigate } from '@/app/router.ts';
 import { Notice, PageLayout } from './PageLayout.tsx';
 import { useAsync } from './useAsync.ts';
 
@@ -58,12 +62,23 @@ function useNavigationShortcuts() {
   }, []);
 }
 
+/** Écrit tout de suite les modifications en attente (avant un export ou une variante). */
+async function saveNow() {
+  const state = planStore.getState();
+  if (state.doc && selectIsDirty(state)) {
+    await repository.savePlan(state.doc);
+    if (planStore.getState().revision === state.revision) state.markSaved(state.revision);
+  }
+}
+
 export function EditorPage({ siteId, planId }: { siteId: string; planId: string }) {
   const { state, saveError } = usePlanSession(planId);
   const [site] = useAsync(() => repository.getSite(siteId), siteId);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [variantOpen, setVariantOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const background = useEditorStore((s) => s.background);
   const pendingCalibration = useEditorStore((s) => s.pendingCalibration);
@@ -117,11 +132,7 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
   /** Export .campplan : les modifications en attente sont d'abord écrites, pour un fichier à jour. */
   const exportPlan = useCallback(async () => {
     try {
-      const state = planStore.getState();
-      if (state.doc && selectIsDirty(state)) {
-        await repository.savePlan(state.doc);
-        if (planStore.getState().revision === state.revision) state.markSaved(state.revision);
-      }
+      await saveNow();
       const { bytes, fileName } = await exportCampplan(repository, planId);
       downloadBytes(bytes, fileName, 'application/octet-stream');
     } catch (e) {
@@ -150,6 +161,8 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
         onImport={openFilePicker}
         onExport={() => void exportPlan()}
         onPrint={() => setPrinting(true)}
+        onTemplates={() => setTemplatesOpen(true)}
+        onVariant={() => void saveNow().then(() => setVariantOpen(true))}
       />
       <div className="flex min-h-0 flex-1">
         <main className="relative min-w-0 flex-1">
@@ -158,6 +171,7 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
           <TextEditorOverlay />
           {pendingCalibration && <CalibrationDialog {...pendingCalibration} />}
           <NoticeBanner />
+          <ViewBanner />
           {state.status === 'ready' && !hasBaseImage && (
             <div className="absolute inset-0 flex items-center justify-center p-8">
               <div className="max-w-md rounded-lg border border-slate-300 bg-white p-6 text-center shadow-sm">
@@ -212,6 +226,15 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
             onClose={() => setPrinting(false)}
           />
         </Suspense>
+      )}
+      {templatesOpen && <TemplatesDialog onClose={() => setTemplatesOpen(false)} />}
+      {variantOpen && (
+        <VariantDialog
+          planId={planId}
+          planName={planName}
+          onClose={() => setVariantOpen(false)}
+          onCreated={(id) => navigate({ name: 'plan', siteId, planId: id })}
+        />
       )}
       {importFile && <ImportDialog file={importFile} planId={planId} onClose={closeImport} />}
       {renaming && (

@@ -1,12 +1,14 @@
 import type Konva from 'konva';
 import { useEffect, useRef } from 'react';
 import { Circle, Ellipse, Layer, Line, Rect, Transformer } from 'react-konva';
-import { isDisplayed, isEditable } from '@/domain/model/operations.ts';
+import { isEditable } from '@/domain/model/operations.ts';
+import { isShownInEditor } from './viewVisibility.ts';
 import { geometryBox, segmentMidpoints, worldVertices } from '@/domain/model/shapes.ts';
 import type { PlanObject } from '@/domain/model/types.ts';
 import { useEditorStore } from '@/store/editorStore.ts';
 import { usePlanStore } from '@/store/planStore.ts';
 import { CrossingMarkers } from './CrossingMarkers.tsx';
+import { ProposalMarker } from './ProposalMarker.tsx';
 import { editActions } from './editActions.ts';
 
 const ACCENT = '#2563eb';
@@ -50,7 +52,7 @@ export function SelectionLayer({ scale }: { scale: number }) {
   const selected: PlanObject[] = doc
     ? selectedIds
         .map((id) => doc.objects[id])
-        .filter((o): o is PlanObject => Boolean(o) && isDisplayed(doc, o!))
+        .filter((o): o is PlanObject => Boolean(o) && isShownInEditor(doc, o!))
     : [];
   const movable = doc ? selected.filter((o) => isEditable(doc, o)) : [];
   const locked = doc ? selected.filter((o) => !isEditable(doc, o)) : [];
@@ -184,6 +186,7 @@ export function SelectionLayer({ scale }: { scale: number }) {
         ))}
 
       {showCrossings && <CrossingMarkers scale={scale} />}
+      <ProposalMarker scale={scale} />
 
       {marquee && (
         <Rect

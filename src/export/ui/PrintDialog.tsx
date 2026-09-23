@@ -3,7 +3,7 @@
  * que le fichier produit : format, orientation, marges, photo, annotations, légende, cartouche),
  * avec la liste des problèmes détectés (textes trop petits ou coupés, débordements, échelle, nord).
  */
-import { AlertTriangle, CheckCircle2, Download, Loader2, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Download, Files, Loader2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { repository } from '@/app/repository.ts';
 import { downloadBytes } from '@/app/download.ts';
@@ -32,6 +32,9 @@ import {
   TitleBlockSection,
   type OutputFormat,
 } from './PrintSettingsPanel.tsx';
+import { StyleSection, ViewSection, ViewSelector } from './ViewSettingsPanel.tsx';
+import { BatchExportDialog } from './BatchExportDialog.tsx';
+import { effectiveSettings } from '@/domain/print/views.ts';
 
 const readBlob = async (id: string) => {
   const blob = await repository.getBlob(id);
@@ -45,6 +48,8 @@ export function PrintDialog({ siteName, onClose }: { siteName: string; onClose()
   const doc = usePlanStore((s) => s.doc);
   const backgroundStatus = useEditorStore((s) => s.background);
   const background = backgroundStatus.kind === 'ready' ? backgroundStatus.background : null;
+  const viewId = useEditorStore((s) => s.activeViewId);
+  const [batch, setBatch] = useState(false);
   const [output, setOutput] = useState<OutputFormat>('pdf');
   const [framing, setFraming] = useState<RasterOptions['framing']>('page');
   const [scale, setScale] = useState(1);
@@ -84,8 +89,7 @@ export function PrintDialog({ siteName, onClose }: { siteName: string; onClose()
       renderPreview(
         offscreen,
         src,
-        src.doc.plan.print,
-        src.doc.plan.legend,
+        effectiveSettings(src.doc, viewId),
         {
           maxWidth: box.clientWidth - 24,
           maxHeight: box.clientHeight - 24,
@@ -112,12 +116,13 @@ export function PrintDialog({ siteName, onClose }: { siteName: string; onClose()
       clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `source` et `raster` dérivent de ces valeurs
-  }, [doc, background, output, framing, scale, siteName]);
+  }, [doc, background, output, framing, scale, siteName, viewId]);
 
   if (!doc) return null;
-  const print = doc.plan.print;
+  const settings = effectiveSettings(doc, viewId);
+  const print = settings.print;
   const size = raster
-    ? rasterSize(rasterPlan({ doc, siteName, background, readBlob }, print, doc.plan.legend, raster))
+    ? rasterSize(rasterPlan({ doc, siteName, background, readBlob }, settings, raster))
     : null;
 
   const run = async () => {
@@ -127,8 +132,8 @@ export function PrintDialog({ siteName, onClose }: { siteName: string; onClose()
     setResult(null);
     try {
       const r = raster
-        ? await exportRaster(src, print, src.doc.plan.legend, raster)
-        : await exportPdf(src, print, src.doc.plan.legend);
+        ? await exportRaster(src, effectiveSettings(src.doc, viewId), raster)
+        : await exportPdf(src, effectiveSettings(src.doc, viewId));
       downloadBytes(r.bytes, r.fileName, r.mimeType);
       setResult({ tone: 'ok', message: t('print.exported', { file: r.fileName }) });
     } catch (e) {
@@ -185,6 +190,9 @@ export function PrintDialog({ siteName, onClose }: { siteName: string; onClose()
               </button>
             ))}
           </div>
+          <Button onClick={() => setBatch(true)} data-testid="open-batch">
+            <Files size={16} /> {t('batch.open')}
+          </Button>
           <Button variant="primary" disabled={busy} onClick={() => void run()} data-testid="print-export">
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
             {busy ? t('print.exporting') : t('print.export', { format: formatLabel })}
@@ -231,11 +239,14 @@ export function PrintDialog({ siteName, onClose }: { siteName: string; onClose()
                 )}
               </Section>
             )}
-            <PageSettings doc={doc} output={output} />
-            <ElementSettings doc={doc} />
-            <LayerSettings doc={doc} />
-            <LegendSettingsSection doc={doc} />
-            {print.mode !== 'simplified' && <TitleBlockSection doc={doc} />}
+            <ViewSelector doc={doc} />
+            {viewId && <ViewSection doc={doc} viewId={viewId} />}
+            <StyleSection doc={doc} viewId={viewId} />
+            <PageSettings doc={doc} output={output} viewId={viewId} />
+            <ElementSettings doc={doc} viewId={viewId} />
+            <LayerSettings doc={doc} viewId={viewId} />
+            <LegendSettingsSection doc={doc} viewId={viewId} />
+            {print.mode !== 'simplified' && <TitleBlockSection doc={doc} viewId={viewId} />}
             <p className="text-xs text-slate-500">{t('print.illustrative')}</p>
           </div>
           <div className="flex min-w-0 flex-1 flex-col">
@@ -310,6 +321,9 @@ export function PrintDialog({ siteName, onClose }: { siteName: string; onClose()
           </div>
         </div>
       </div>
+      {batch && (
+        <BatchExportDialog source={{ doc, siteName, background, readBlob }} onClose={() => setBatch(false)} />
+      )}
     </dialog>
   );
 }

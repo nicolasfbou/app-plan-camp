@@ -206,11 +206,55 @@ export function drawCorridorIcons(
   }
 }
 
-/** Pictogramme et / ou nom d'une zone, en son centre, toujours droits à l'écran. */
+/**
+ * Trait de renvoi d'une étiquette vers ce qu'elle désigne (coordonnées locales, pixels image) :
+ * part du bord de la boîte de l'étiquette, trait sombre sur liseré blanc, point à l'extrémité
+ * (ou arrêt avant `stopAt`, par exemple le bord d'un pictogramme).
+ */
+export function drawLeader(
+  c: CanvasRenderingContext2D,
+  box: { cx: number; cy: number; w: number; h: number },
+  to: Point,
+  scale: number,
+  stopAt = 0,
+): void {
+  const dx = to.x - box.cx;
+  const dy = to.y - box.cy;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) return;
+  const t = Math.min(dx ? box.w / 2 / Math.abs(dx) : Infinity, dy ? box.h / 2 / Math.abs(dy) : Infinity);
+  if (t >= 1) return;
+  const from = { x: box.cx + dx * t, y: box.cy + dy * t };
+  const end = { x: to.x - (dx / len) * stopAt, y: to.y - (dy / len) * stopAt };
+  const w = 1.6 / Math.max(scale, 1e-9);
+  c.save();
+  c.lineCap = 'round';
+  c.beginPath();
+  c.moveTo(from.x, from.y);
+  c.lineTo(end.x, end.y);
+  c.lineWidth = w * 2.6;
+  c.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+  c.stroke();
+  c.lineWidth = w;
+  c.strokeStyle = '#0f172a';
+  c.stroke();
+  if (!stopAt) {
+    c.beginPath();
+    c.arc(to.x, to.y, w * 1.8, 0, Math.PI * 2);
+    c.fillStyle = '#0f172a';
+    c.fill();
+  }
+  c.restore();
+}
+
+/**
+ * Pictogramme et / ou nom d'une zone, toujours droits à l'écran : au centre, ou nom déplacé
+ * (`nameOffset`, pixels image) et relié à la zone par une ligne de renvoi.
+ */
 export function drawZoneBadge(
   c: CanvasRenderingContext2D,
   center: Point,
-  options: { iconSize: number | null; name: string | null; rotation: number },
+  options: { iconSize: number | null; name: string | null; rotation: number; nameOffset?: Point | null },
   scale: number,
   display: DisplaySettings,
   image: CanvasImageSource | null,
@@ -221,18 +265,26 @@ export function drawZoneBadge(
   c.rotate((-options.rotation * Math.PI) / 180);
   const fontPx = Math.max(11, Math.min(display.symbolMaxPx * 0.42, (size * scale || 30) * 0.42));
   const font = fontPx / Math.max(scale, 1e-9);
+  const moved = options.name && options.nameOffset ? options.nameOffset : null;
   const textY = options.name && size ? size / 2 + font * 0.75 : 0;
-  if (image && size) c.drawImage(image, -size / 2, -size / 2 - (options.name ? font * 0.35 : 0), size, size);
+  c.font = `600 ${font}px Inter, "Segoe UI", Arial, sans-serif`;
+  if (moved && options.name) {
+    const w = c.measureText(options.name).width;
+    drawLeader(c, { cx: moved.x, cy: moved.y, w, h: font }, { x: 0, y: 0 }, scale, size / 2);
+  }
+  if (image && size)
+    c.drawImage(image, -size / 2, -size / 2 - (options.name && !moved ? font * 0.35 : 0), size, size);
   if (options.name) {
+    const at = moved ?? { x: 0, y: textY };
     c.font = `600 ${font}px Inter, "Segoe UI", Arial, sans-serif`;
     c.textAlign = 'center';
     c.textBaseline = 'middle';
     c.lineJoin = 'round';
     c.lineWidth = font * 0.28;
     c.strokeStyle = 'rgba(255, 255, 255, 0.92)';
-    c.strokeText(options.name, 0, textY);
+    c.strokeText(options.name, at.x, at.y);
     c.fillStyle = '#0f172a';
-    c.fillText(options.name, 0, textY);
+    c.fillText(options.name, at.x, at.y);
   }
   c.restore();
 }

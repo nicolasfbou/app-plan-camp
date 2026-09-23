@@ -8,6 +8,19 @@ import { DEFAULT_FLOW_CATEGORY } from '@/domain/presets/flowPresets.ts';
 import type { FlowCategory, PlanObject, Point } from '@/domain/model/types.ts';
 import { type LoadedBackground, releaseBackground } from '@/editor/backgroundImage.ts';
 
+/** Nouvel emplacement proposé pour une étiquette ou un nom de zone (pixels image). */
+export interface LabelProposal {
+  objectId: string;
+  kind: 'text' | 'zone-name';
+  /** Centre proposé de l'étiquette. */
+  at: Point;
+  /** Ligne de renvoi vers ce point (null = aucune). */
+  leaderTo: Point | null;
+  /** Taille de l'étiquette (aperçu). */
+  width: number;
+  height: number;
+}
+
 export type BackgroundStatus =
   | { kind: 'none' }
   | { kind: 'loading' }
@@ -89,6 +102,15 @@ interface EditorState {
   marquee: { start: Point; end: Point } | null;
   /** Texte en cours d'édition dans le champ superposé. */
   editingTextId: string | null;
+  /**
+   * Vue par public affichée (null = plan de base). État de l'éditeur seulement : changer de vue
+   * ne modifie jamais le plan.
+   */
+  activeViewId: string | null;
+  setActiveView(id: string | null): void;
+  /** Proposition de placement d'étiquette en attente de validation (jamais appliquée seule). */
+  labelProposal: LabelProposal | null;
+  setLabelProposal(p: LabelProposal | null): void;
   draft: Draft | null;
   clipboard: PlanObject[];
   pasteCount: number;
@@ -141,6 +163,10 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   activeLayerId: null,
   marquee: null,
   editingTextId: null,
+  activeViewId: null,
+  setActiveView: (activeViewId) => set({ activeViewId, selectedIds: [] }),
+  labelProposal: null,
+  setLabelProposal: (labelProposal) => set({ labelProposal }),
   draft: null,
   clipboard: [],
   pasteCount: 0,
@@ -215,6 +241,8 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
       isPanning: false,
       selectedCrossing: null,
       pendingCalibration: null,
+      activeViewId: null,
+      labelProposal: null,
     });
   },
 }));

@@ -67,6 +67,11 @@ export interface Painter {
   clip(subpaths: readonly (readonly Point[])[], draw: () => void): void;
   /** Opacité multipliée à tout ce qui est dessiné dans `draw` (opacité d'un calque). */
   withOpacity(opacity: number, draw: () => void): void;
+  /**
+   * Objet du plan en cours de dessin (null = mise en page) : permet à une surface d'analyse de
+   * rattacher chaque texte et chaque image à son objet. Ignoré par les surfaces de rendu.
+   */
+  owner?(objectId: string | null): void;
 }
 
 export const MM_PER_PT = 25.4 / 72;
@@ -135,4 +140,54 @@ export function wrapText(text: string, maxWidth: number, measure: (s: string) =>
     lines.push(line);
   }
   return lines;
+}
+
+/** Niveau de gris d'une couleur (luminance perçue), pour l'impression noir et blanc. */
+export function grayOf(hex: string): string {
+  const n = Number.parseInt(hex.slice(1), 16);
+  const y = Math.round(0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255));
+  const h = y.toString(16).padStart(2, '0');
+  return `#${h}${h}${h}`;
+}
+
+/** Surface qui convertit toutes les couleurs en niveaux de gris (style « Noir et blanc »). */
+export function grayscalePainter(p: Painter): Painter {
+  return {
+    kind: p.kind,
+    path: (subpaths, closed, fill, stroke) =>
+      p.path(
+        subpaths,
+        closed,
+        fill && { ...fill, color: grayOf(fill.color) },
+        stroke && { ...stroke, color: grayOf(stroke.color) },
+      ),
+    text: (text, x, y, spec) =>
+      p.text(text, x, y, {
+        ...spec,
+        color: grayOf(spec.color),
+        halo: spec.halo && { ...spec.halo, color: grayOf(spec.halo.color) },
+      }),
+    textWidth: (text, size, bold) => p.textWidth(text, size, bold),
+    image: (image, x, y, w, h, opacity) => p.image(image, x, y, w, h, opacity),
+    clip: (subpaths, draw) => p.clip(subpaths, draw),
+    withOpacity: (opacity, draw) => p.withOpacity(opacity, draw),
+    owner: (id) => p.owner?.(id),
+  };
+}
+
+/**
+ * Réglage d'une COPIE de pixels (jamais de l'original) : contraste autour du gris moyen, puis
+ * niveaux de gris. Calcul direct sur les pixels (même résultat dans tous les navigateurs).
+ */
+export function adjustPixels(data: Uint8ClampedArray, contrast: number, grayscale: boolean): void {
+  if (contrast === 1 && !grayscale) return;
+  for (let i = 0; i < data.length; i += 4) {
+    let r = (data[i]! - 128) * contrast + 128;
+    let g = (data[i + 1]! - 128) * contrast + 128;
+    let b = (data[i + 2]! - 128) * contrast + 128;
+    if (grayscale) r = g = b = 0.299 * r + 0.587 * g + 0.114 * b;
+    data[i] = r;
+    data[i + 1] = g;
+    data[i + 2] = b;
+  }
 }

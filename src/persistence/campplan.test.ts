@@ -75,7 +75,7 @@ describe('export / import .campplan', () => {
     expect(content.manifest).toMatchObject({
       format: 'campplan',
       formatVersion: 2,
-      schemaVersion: 4,
+      schemaVersion: 5,
       counts: { objects: 400 },
     });
     const { siteId, planId } = await importCampplan(target, content, {
@@ -245,6 +245,7 @@ describe('pictogrammes importés', () => {
     const {
       icon: _icon,
       showName: _showName,
+      nameOffset: _nameOffset,
       ...zone
     } = Object.values(next.objects)[0] as Record<string, unknown>;
     next.objects.icon1 = {

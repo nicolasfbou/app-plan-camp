@@ -18,6 +18,9 @@ import type {
   styleSchema,
   symbolAssetSchema,
   zoneIconSchema,
+  planViewSchema,
+  printStyleSchema,
+  readabilityReviewSchema,
 } from './schema.ts';
 
 export type Point = z.infer<typeof pointSchema>;
@@ -48,3 +51,8 @@ export type PrintSettings = z.infer<typeof printSettingsSchema>;
 export type DimensionObject = Extract<PlanObject, { type: 'dimension' }>;
 export type StallObject = Extract<PlanObject, { type: 'stall' }>;
 export type PlanStatus = TitleBlock['status'];
+export type PlanView = z.infer<typeof planViewSchema>;
+export type PrintStyle = z.infer<typeof printStyleSchema>;
+export type ReadabilityReview = z.infer<typeof readabilityReviewSchema>;
+export type Audience = PlanView['audience'];
+export type TextObject = Extract<PlanObject, { type: 'text' }>;

@@ -6,7 +6,7 @@
  * ici la migration `SCHEMA_VERSION - 1`, accompagnée d'un test avec un fichier de l'ancienne version.
  */
 import { newId } from '../model/factories.ts';
-import { planDefaults } from '../model/planDefaults.ts';
+import { DEFAULT_STYLE, planDefaults } from '../model/planDefaults.ts';
 import { SCHEMA_VERSION } from '../model/schema.ts';
 
 export type Migration = (doc: Record<string, unknown>) => Record<string, unknown>;
@@ -63,6 +63,40 @@ export const MIGRATIONS: MigrationTable = {
   },
 
   3: (doc) => migrateV3(doc),
+
+  /**
+   * 4 → 5 (phase 6) : aucune vue, style d'impression neutre (« standard » : rendu inchangé),
+   * détail complet, aucun élément exclu, pas de styles d'entreprise ; étiquettes et noms de zones
+   * à leur place (pas de renvoi) ; aucun problème de lisibilité revu. Géométries inchangées.
+   */
+  4: (doc) => {
+    const plan = isRecord(doc.plan) ? doc.plan : {};
+    const print = isRecord(plan.print) ? plan.print : {};
+    const objects = isRecord(doc.objects) ? doc.objects : {};
+    return {
+      ...doc,
+      plan: {
+        views: [],
+        variantOf: null,
+        styleOverrides: {},
+        ...plan,
+        print: { excludedObjectIds: [], detail: 'full', style: { ...DEFAULT_STYLE }, ...print },
+      },
+      objects: Object.fromEntries(
+        Object.entries(objects).map(([id, o]) => [
+          id,
+          !isRecord(o)
+            ? o
+            : o.type === 'text'
+              ? { leaderTo: null, ...o }
+              : o.type === 'zone'
+                ? { nameOffset: null, ...o }
+                : o,
+        ]),
+      ),
+      readabilityReviews: Array.isArray(doc.readabilityReviews) ? doc.readabilityReviews : [],
+    };
+  },
 };
 
 /**

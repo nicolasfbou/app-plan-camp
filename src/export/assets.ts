@@ -7,7 +7,7 @@
 import type { LoadedBackground } from '@/editor/backgroundImage.ts';
 import { assetIdOf, isAssetSymbol, symbolDataUrl } from '@/domain/symbols/catalog.ts';
 import type { BaseImageRef, PlanDocument, SymbolAsset } from '@/domain/model/types.ts';
-import type { PainterImage } from './painter.ts';
+import { adjustPixels, type PainterImage } from './painter.ts';
 
 /** Limites d'un canevas que les navigateurs créent de façon fiable (côté, surface). */
 export const MAX_CANVAS_SIDE = 16384;
@@ -60,6 +60,9 @@ export interface SymbolSource {
   logo(assetId: string, heightMm: number): PainterImage | null;
 }
 
+/** Numéro unique des images de pictogrammes (clé d'image du PDF, unique même entre pages). */
+let rasterSerial = 0;
+
 export type BlobReader = (blobId: string) => Promise<Uint8Array | null>;
 
 function loadImage(url: string): Promise<HTMLImageElement | null> {
@@ -102,6 +105,7 @@ export async function loadSymbolSource(
   doc: PlanDocument,
   readBlob: BlobReader,
   pxPerMm: number,
+  options: { grayscale?: boolean } = {},
 ): Promise<SymbolSource> {
   const images = new Map<string, HTMLImageElement>();
   const keyOf = (id: string, text: string | null) =>
@@ -130,7 +134,7 @@ export async function loadSymbolSource(
     // Résolution : celle de l'export, bornée (un pictogramme n'a pas besoin de plus de 1 024 px).
     const px = Math.max(24, Math.min(1024, Math.round(sizeMm * pxPerMm)));
     const rot = Math.round(rotation / 2) * 2; // pas de 2° : réutilisation des images identiques
-    const cacheKey = `${key}@${px}@${rot}`;
+    const cacheKey = `${key}@${px}@${rot}@${options.grayscale ? 'g' : 'c'}`;
     const cached = rasters.get(cacheKey);
     if (cached) return cached;
     const w = image.naturalWidth || 1;
@@ -144,7 +148,12 @@ export async function loadSymbolSource(
     const dw = fit === 'natural' ? cw : px * Math.min(1, w / h);
     const dh = fit === 'natural' ? px : px * Math.min(1, h / w);
     c.drawImage(image, -dw / 2, -dh / 2, dw, dh);
-    const out: PainterImage = { key: `sym-${rasters.size}`, drawable: canvas, width: cw, height: px };
+    if (options.grayscale) {
+      const pixels = c.getImageData(0, 0, cw, px);
+      adjustPixels(pixels.data, 1, true);
+      c.putImageData(pixels, 0, 0);
+    }
+    const out: PainterImage = { key: `sym-${++rasterSerial}`, drawable: canvas, width: cw, height: px };
     rasters.set(cacheKey, out);
     return out;
   };
@@ -212,6 +221,8 @@ export async function preparePhoto(
     quality: number;
     target: 'preview' | 'pdf';
     readOriginal?: () => Promise<Uint8Array | null>;
+    /** Réglage du rendu (style d'impression) : appliqué à une copie, jamais à l'original. */
+    adjust?: { contrast: number; grayscale: boolean };
   },
 ): Promise<PhotoRegion> {
   const x0 = Math.max(0, Math.floor(crop.x));
@@ -224,8 +235,30 @@ export async function preparePhoto(
   const factor = Math.min(1, wanted / rect.width);
   const nativeDpi = rect.width / Math.max(inches, 1e-9);
 
+  const adjusted = !!options.adjust && (options.adjust.contrast !== 1 || options.adjust.grayscale);
   if (options.target === 'preview') {
     const level = levelFor(background, factor);
+    if (adjusted) {
+      // Copie réglée du niveau d'affichage (contraste, gris) : l'original n'est pas touché.
+      const copy = createCanvas(level.bitmap.width, level.bitmap.height);
+      const c = copy.getContext('2d')!;
+      c.drawImage(level.bitmap, 0, 0);
+      const pixels = c.getImageData(0, 0, copy.width, copy.height);
+      adjustPixels(pixels.data, options.adjust!.contrast, options.adjust!.grayscale);
+      c.putImageData(pixels, 0, 0);
+      return {
+        image: {
+          key: `photo-preview-adj-${level.factor}`,
+          drawable: copy,
+          width: copy.width,
+          height: copy.height,
+        },
+        rect: { x: 0, y: 0, width: background.width, height: background.height },
+        dpi: Math.min(options.dpi, nativeDpi),
+        reducedForLimits: false,
+        original: false,
+      };
+    }
     return {
       image: {
         key: `photo-preview-${level.factor}`,
@@ -244,6 +277,7 @@ export async function preparePhoto(
     rect.x === 0 && rect.y === 0 && rect.width === background.width && rect.height === background.height;
   if (
     whole &&
+    !adjusted &&
     base.mimeType === 'image/jpeg' &&
     base.exifOrientation === 1 &&
     base.source.kind === 'image' &&
@@ -286,6 +320,11 @@ export async function preparePhoto(
     w,
     h,
   );
+  if (adjusted) {
+    const pixels = c.getImageData(0, 0, w, h);
+    adjustPixels(pixels.data, options.adjust!.contrast, options.adjust!.grayscale);
+    c.putImageData(pixels, 0, 0);
+  }
   const jpeg = await canvasToJpeg(canvas, options.quality);
   return {
     image: { key: 'photo', drawable: canvas, width: w, height: h, jpeg },

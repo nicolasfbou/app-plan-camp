@@ -13,7 +13,8 @@
  */
 import Konva from 'konva';
 import { expandGroups } from '@/domain/model/multi.ts';
-import { isDisplayed, isEditable } from '@/domain/model/operations.ts';
+import { isEditable } from '@/domain/model/operations.ts';
+import { isShownInEditor } from './viewVisibility.ts';
 import { type RefObject, useEffect } from 'react';
 import {
   createAreaObject,
@@ -190,9 +191,11 @@ function startMarquee(element: HTMLElement, stage: Konva.Stage, start: Point, ad
       .map((node) => node.id())
       .filter((id) => {
         const object = doc.objects[id];
-        return object !== undefined && isEditable(doc, object) && isDisplayed(doc, object);
+        return object !== undefined && isEditable(doc, object) && isShownInEditor(doc, object);
       });
-    const ids = expandGroups(doc, hits);
+    const ids = expandGroups(doc, hits).filter(
+      (id) => doc.objects[id] && isShownInEditor(doc, doc.objects[id]),
+    );
     if (additive) editor.select([...editor.selectedIds, ...ids]);
     else editor.select(ids);
   };

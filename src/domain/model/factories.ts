@@ -46,6 +46,7 @@ export function createPlanDocument(params: { siteId: string; name: string; kind?
     objects: {},
     assets: {},
     crossingReviews: [],
+    readabilityReviews: [],
   };
 }
 
@@ -59,5 +60,24 @@ export function duplicatePlanDocument(doc: PlanDocument, name: string): PlanDocu
   copy.plan = { ...copy.plan, id: newId(), name, createdAt: now, updatedAt: now };
   // Une copie n'hérite jamais d'une approbation : elle repart en brouillon.
   copy.plan.titleBlock = { ...copy.plan.titleBlock, status: 'draft', approvedAt: null };
+  return copy;
+}
+
+/**
+ * Variante d'un plan (ex. Circulation été → Circulation hiver) : TOUT est copié au départ (objets,
+ * calques, vues, réglages), puis les deux plans sont indépendants. La photo d'origine est partagée
+ * (même fichier). L'origine est tracée ; la variante repart en brouillon.
+ */
+export function createVariant(doc: PlanDocument, name: string, kind: PlanKind): PlanDocument {
+  const copy = duplicatePlanDocument(doc, name);
+  copy.plan.kind = kind;
+  copy.plan.variantOf = {
+    planId: doc.plan.id,
+    planName: doc.plan.name,
+    kind: doc.plan.kind,
+    createdAt: copy.plan.createdAt,
+  };
+  // Les décisions de lisibilité ne valent que pour le plan d'origine.
+  copy.readabilityReviews = [];
   return copy;
 }

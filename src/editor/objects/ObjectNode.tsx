@@ -2,7 +2,7 @@ import type Konva from 'konva';
 import { memo } from 'react';
 import { Ellipse, Group, Image as KImage, Line, Rect, Shape, Text } from 'react-konva';
 import { bandOutline } from '@/domain/model/paths.ts';
-import { geometryCenter } from '@/domain/model/shapes.ts';
+import { geometryCenter, rotatePoint } from '@/domain/model/shapes.ts';
 import { corridorWidthPx, formatLength, polylineLength, type Units } from '@/domain/model/measure.ts';
 import type { Calibration, DisplaySettings, PlanObject, Style, SymbolAsset } from '@/domain/model/types.ts';
 import { editActions } from '../editActions.ts';
@@ -12,6 +12,7 @@ import {
   drawCorridorIcons,
   drawFlowArrows,
   drawZoneBadge,
+  drawLeader,
   hatchPattern,
   type ViewBox,
 } from './decorations.ts';
@@ -186,8 +187,25 @@ export const ObjectNode = memo(function ObjectNode({
   if (object.type === 'text') {
     const box = measureText(object);
     const label = object.label;
+    // Ligne de renvoi : extrémité exprimée dans le repère (pivoté) de l'étiquette.
+    const leaderLocal = object.leaderTo
+      ? rotatePoint(
+          { x: object.leaderTo.x - center.x, y: object.leaderTo.y - center.y },
+          { x: 0, y: 0 },
+          -object.rotation,
+        )
+      : null;
     return (
       <Group {...common}>
+        {leaderLocal && (
+          <Shape
+            listening={false}
+            sceneFunc={(ctx, shape) => {
+              const { c, scale: s } = native(ctx, shape);
+              drawLeader(c, { cx: 0, cy: 0, w: box.width, h: box.height }, leaderLocal, s);
+            }}
+          />
+        )}
         {label && (
           <Rect
             x={-box.width / 2}
@@ -326,6 +344,7 @@ export const ObjectNode = memo(function ObjectNode({
           icon: object.icon,
           image: object.icon ? symbolBitmap(object.icon.symbolId, null, assets) : null,
           name: object.showName ? object.name : null,
+          nameOffset: object.nameOffset,
         }
       : null;
   const area = (placement: 'node' | 'child') => {
@@ -390,7 +409,12 @@ export const ObjectNode = memo(function ObjectNode({
           drawZoneBadge(
             c,
             { x: 0, y: 0 },
-            { iconSize: badge.icon?.size ?? null, name: badge.name, rotation: object.rotation },
+            {
+              iconSize: badge.icon?.size ?? null,
+              name: badge.name,
+              rotation: object.rotation,
+              nameOffset: badge.nameOffset,
+            },
             s,
             display,
             badge.image,

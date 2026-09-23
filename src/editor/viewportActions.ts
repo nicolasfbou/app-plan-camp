@@ -39,6 +39,19 @@ export const viewportActions = {
       y: c.stageSize.height / 2 - point.y * scale,
     });
   },
+  /** Zoome sur une zone de l'image (pixels image), avec une marge autour. */
+  zoomToBox(box: { x: number; y: number; width: number; height: number }) {
+    const c = context();
+    if (!c.usable) return;
+    const w = Math.max(box.width, 40) * 3;
+    const h = Math.max(box.height, 40) * 3;
+    const scale = Math.min(4, Math.max(0.05, Math.min(c.stageSize.width / w, c.stageSize.height / h)));
+    c.setViewport({
+      scale,
+      x: c.stageSize.width / 2 - (box.x + box.width / 2) * scale,
+      y: c.stageSize.height / 2 - (box.y + box.height / 2) * scale,
+    });
+  },
   recenter() {
     const c = context();
     if (c.usable && c.content) c.setViewport(centerContent(c.viewport, c.content, c.stageSize));

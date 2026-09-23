@@ -20,8 +20,11 @@ import { z } from 'zod';
  *   (`assets`) ; suivi des croisements (`crossingReviews`) ; limites d'affichage (`plan.display`).
  * - 4 : plan professionnel (phase 5) : unités, statut du nord, largeur physique des corridors,
  *   cotes (`dimension`), cases de stationnement (`stall`), légende, cartouche, mise en page.
+ * - 5 : utilisation quotidienne (phase 6) : vues par public, style d'impression, niveau de détail,
+ *   éléments exclus, suivi de lisibilité, étiquettes déplacées avec ligne de renvoi, variantes,
+ *   styles d'entreprise, nouveaux types de plans.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const idSchema = z.string().min(1);
 export const isoDateSchema = z.iso.datetime();
@@ -197,6 +200,11 @@ export const planObjectSchema = z.discriminatedUnion('type', [
     icon: zoneIconSchema.nullable(),
     /** Affiche le nom de la zone en son centre. */
     showName: z.boolean(),
+    /**
+     * Nom déplacé (décalage en pixels image depuis le centre, rotation non comprise), relié à la
+     * zone par une ligne de renvoi ; null = nom au centre.
+     */
+    nameOffset: pointSchema.nullable(),
   }),
   z.object({
     ...objectBase,
@@ -249,6 +257,8 @@ export const planObjectSchema = z.discriminatedUnion('type', [
     align: z.enum(['left', 'center', 'right']),
     /** Non nul = étiquette (texte sur fond avec marge et bordure). */
     label: labelSpecSchema.nullable(),
+    /** Ligne de renvoi vers ce point (pixels image) : étiquette écartée de ce qu'elle désigne. */
+    leaderTo: pointSchema.nullable(),
   }),
   z.object({
     ...objectBase,
@@ -322,6 +332,9 @@ export const calibrationSchema = z.object({
 
 export const PLAN_KINDS = [
   'general',
+  'suppliers',
+  'employees',
+  'management',
   'winter-circulation',
   'summer-circulation',
   'safety',
@@ -391,6 +404,36 @@ export const titleBlockSchema = z.object({
   placement: z.enum(['side', 'bottom']),
 });
 
+/** Style d'impression : n'agit que sur le RENDU (la photo d'origine n'est jamais modifiée). */
+export const PRINT_STYLE_PRESETS = [
+  'standard',
+  'field',
+  'client',
+  'supplier',
+  'employees',
+  'bw',
+  'custom',
+] as const;
+export const printStyleSchema = z.object({
+  preset: z.enum(PRINT_STYLE_PRESETS),
+  /** Voile blanc sur la photo (0 = aucun, 0,9 = photo presque effacée). */
+  photoDim: z.number().min(0).max(0.9),
+  /** Contraste de la photo (1 = inchangé). */
+  photoContrast: z.number().min(0.5).max(2),
+  /** Noir et blanc : photo, couleurs et pictogrammes en niveaux de gris. */
+  grayscale: z.boolean(),
+  /** Facteur appliqué aux épaisseurs de trait. */
+  strokeScale: z.number().min(0.5).max(3),
+  /** Taille minimale des textes imprimés (points) : les textes plus petits sont agrandis (0 = aucune). */
+  minTextPt: z.number().min(0).max(24),
+  /** Facteur appliqué aux pictogrammes et aux flèches. */
+  iconScale: z.number().min(0.5).max(3),
+  /** Légende simplifiée (compacte, sans groupes ni nombres). */
+  simpleLegend: z.boolean(),
+});
+
+export const DETAIL_LEVELS = ['full', 'standard', 'simplified'] as const;
+
 export const printSettingsSchema = z.object({
   paper: z.enum(PAPER_SIZES),
   orientation: z.enum(['portrait', 'landscape']),
@@ -417,6 +460,44 @@ export const printSettingsSchema = z.object({
   }),
   /** Calques non exportés. */
   excludedLayerIds: z.array(idSchema),
+  /** Objets non exportés (éléments exclus d'une vue). */
+  excludedObjectIds: z.array(idSchema),
+  /** Niveau de détail : complet ; standard (sans cotes ni noms de zones) ; simplifié (en plus, sans textes libres ni pictogrammes de corridor). */
+  detail: z.enum(DETAIL_LEVELS),
+  style: printStyleSchema,
+});
+
+export const AUDIENCES = ['employees', 'suppliers', 'management', 'safety', 'custom'] as const;
+
+/**
+ * Vue par public : un FILTRE et des réglages d'impression sur le plan de base (jamais une copie
+ * des objets). Passer d'une vue à l'autre ne modifie pas le plan.
+ */
+export const planViewSchema = z.object({
+  id: idSchema,
+  name: z.string(),
+  audience: z.enum(AUDIENCES),
+  /** Titre imprimé (vide = titre du plan). */
+  title: z.string(),
+  /** Mention ajoutée au cartouche (ex. « Destiné aux fournisseurs »). */
+  audienceNote: z.string(),
+  titleBlockPlacement: z.enum(['side', 'bottom']),
+  legend: legendSettingsSchema,
+  print: printSettingsSchema,
+});
+
+export const variantOfSchema = z.object({
+  planId: idSchema,
+  planName: z.string(),
+  kind: z.string(),
+  createdAt: isoDateSchema,
+});
+
+/** Décision de l'utilisateur sur un problème de lisibilité (clé stable du problème). */
+export const readabilityReviewSchema = z.object({
+  key: z.string().min(1),
+  status: z.enum(['verified', 'ignored']),
+  at: isoDateSchema,
 });
 
 export const planSchema = z.object({
@@ -435,6 +516,12 @@ export const planSchema = z.object({
   legend: legendSettingsSchema,
   titleBlock: titleBlockSchema,
   print: printSettingsSchema,
+  /** Vues par public (employés, fournisseurs, direction, sécurité, personnalisées). */
+  views: z.array(planViewSchema),
+  /** Plan créé comme variante d'un autre (copie indépendante ; trace de l'origine). */
+  variantOf: variantOfSchema.nullable(),
+  /** Styles d'entreprise par modèle (`presetId`) : appliqués aux nouveaux objets. */
+  styleOverrides: z.record(z.string(), styleSchema),
   metadata: metadataSchema,
   createdAt: isoDateSchema,
   updatedAt: isoDateSchema,
@@ -475,6 +562,8 @@ export const planDocumentSchema = z.object({
   assets: z.record(idSchema, symbolAssetSchema),
   /** Suivi des croisements piétons / véhicules détectés (aide à la planification seulement). */
   crossingReviews: z.array(crossingReviewSchema),
+  /** Problèmes de lisibilité vérifiés ou ignorés volontairement. */
+  readabilityReviews: z.array(readabilityReviewSchema),
 });
 
 export const siteSchema = z.object({

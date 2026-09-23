@@ -9,6 +9,8 @@ import {
   Pentagon,
   Trash2,
   Ungroup,
+  EyeOff,
+  Palette,
 } from 'lucide-react';
 import { isEditable, layerOf } from '@/domain/model/operations.ts';
 import { geometryBox, moveGeometryTo, resizeGeometry, normalizeAngle } from '@/domain/model/shapes.ts';
@@ -16,7 +18,7 @@ import type { PlanDocument, PlanObject, Style } from '@/domain/model/types.ts';
 import { editActions } from '@/editor/editActions.ts';
 import { t } from '@/i18n/index.ts';
 import { useEditorStore } from '@/store/editorStore.ts';
-import { usePlanStore } from '@/store/planStore.ts';
+import { planStore, usePlanStore } from '@/store/planStore.ts';
 import { Button } from '@/ui/Button.tsx';
 import {
   ColorField,
@@ -47,8 +49,67 @@ export function PropertiesPanel() {
     ? selectedIds.map((id) => doc.objects[id]).filter((o): o is PlanObject => Boolean(o))
     : [];
   if (!doc || objects.length === 0) return <p className="text-sm text-slate-500">{t('props.empty')}</p>;
-  if (objects.length > 1) return <MultiProperties objects={objects} doc={doc} />;
-  return <ObjectProperties key={objects[0]!.id} object={objects[0]!} doc={doc} />;
+  return (
+    <>
+      <HideInView ids={objects.map((o) => o.id)} doc={doc} />
+      {objects.length > 1 ? (
+        <MultiProperties objects={objects} doc={doc} />
+      ) : (
+        <>
+          <ObjectProperties key={objects[0]!.id} object={objects[0]!} doc={doc} />
+          <CompanyStyle object={objects[0]!} />
+        </>
+      )}
+    </>
+  );
+}
+
+/**
+ * Style d'entreprise : les couleurs, pointillés et hachures de cet objet deviennent ceux des
+ * nouveaux objets du même modèle (enregistrés dans le plan, puis dans les modèles d'entreprise).
+ */
+function CompanyStyle({ object }: { object: PlanObject }) {
+  if (!object.presetId || object.type === 'stall' || object.type === 'icon' || object.type === 'text')
+    return null;
+  return (
+    <Button
+      className="mt-3 w-full"
+      data-testid="company-style"
+      onClick={() => {
+        planStore.getState().update('Style d’entreprise', (d) => {
+          d.plan.styleOverrides[object.presetId!] = { ...object.style };
+        });
+        useEditorStore.getState().notify(t('templates.companyStyleSet', { name: object.name }));
+      }}
+    >
+      <Palette size={16} /> {t('templates.companyStyle', { name: object.name })}
+    </Button>
+  );
+}
+
+/**
+ * Vue par public affichée : masquer la sélection DANS CETTE VUE seulement (le plan de base et les
+ * autres vues ne changent pas). Réaffichage depuis la mise en page (liste des éléments exclus).
+ */
+function HideInView({ ids, doc }: { ids: string[]; doc: PlanDocument }) {
+  const viewId = useEditorStore((s) => s.activeViewId);
+  const view = viewId ? doc.plan.views.find((v) => v.id === viewId) : undefined;
+  if (!view) return null;
+  return (
+    <Button
+      className="mb-3 w-full"
+      data-testid="hide-in-view"
+      onClick={() => {
+        planStore.getState().update('Masquer dans la vue', (d) => {
+          const v = d.plan.views.find((x) => x.id === view.id);
+          if (v) v.print.excludedObjectIds = [...new Set([...v.print.excludedObjectIds, ...ids])];
+        });
+        useEditorStore.getState().select(null);
+      }}
+    >
+      <EyeOff size={16} /> {t('views.hideObject', { name: view.name })}
+    </Button>
+  );
 }
 
 /** Sélection multiple : propriétés communes appliquées à tous les objets modifiables. */
