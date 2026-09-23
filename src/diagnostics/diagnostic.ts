@@ -34,6 +34,9 @@ export async function buildDiagnostic(repo: ProjectRepository, options: Diagnost
   const name = (text: string) => (options.includeNames ? text : undefined);
 
   const sites = await repo.listSites();
+  // Noms à masquer (camps, plans, fichiers, pictogrammes, modèles) quand ils ne sont pas demandés :
+  // ils peuvent apparaître dans le journal ou le détail des contrôles.
+  const secrets = new Set<string>();
   const plans = [];
   for (const site of sites)
     for (const summary of await repo.listPlans(site.id)) {
@@ -47,8 +50,12 @@ export async function buildDiagnostic(repo: ProjectRepository, options: Diagnost
       try {
         const opened = await repo.openPlan(summary.id);
         const revisions = await repo.listRevisions(summary.id);
+        secrets.add(site.name).add(summary.name);
         if (opened) {
           const d = opened.doc;
+          if (d.plan.baseImage) secrets.add(d.plan.baseImage.fileName);
+          for (const a of Object.values(d.assets)) secrets.add(a.name);
+          secrets.add(d.plan.titleBlock.company).add(d.plan.titleBlock.client);
           const image = d.plan.baseImage;
           Object.assign(entry, {
             version: opened.version,
@@ -92,6 +99,19 @@ export async function buildDiagnostic(repo: ProjectRepository, options: Diagnost
       if (!options.planId || options.planId === summary.id) plans.push(entry);
     }
 
+  for (const tpl of await repo.listTemplates().catch(() => [])) secrets.add(tpl.template.name);
+  const hidden = [...secrets].filter((n) => n && n.trim().length >= 3).sort((a, b) => b.length - a.length);
+  const redact = (text: string | undefined) => {
+    if (!text || options.includeNames) return text;
+    let out = text;
+    for (const n of hidden) out = out.split(n).join('«nom masqué»');
+    // Noms de fichiers restants (ex. fichier importé depuis le disque).
+    return out.replace(
+      /[^\s"«»/\\:;,()]+\.(campplan|campmodele|jpe?g|png|webp|pdf|svg)\b/gi,
+      '«fichier masqué»',
+    );
+  };
+
   return {
     report: 'Diagnostic CampPlanner',
     generatedAt: now.toISOString(),
@@ -129,8 +149,13 @@ export async function buildDiagnostic(repo: ProjectRepository, options: Diagnost
     lockMode: options.lockMode,
     backup: options.backup,
     plans,
-    health: options.health?.map(({ id, label, status, detail }) => ({ id, label, status, detail })),
-    errorLog: readErrorLog(),
+    health: options.health?.map(({ id, label, status, detail }) => ({
+      id,
+      label,
+      status,
+      detail: redact(detail),
+    })),
+    errorLog: readErrorLog().map((e) => ({ ...e, message: redact(e.message)!, context: redact(e.context) })),
     privacy:
       'Ce rapport ne contient ni la photo, ni les objets, textes ou notes des plans' +
       (options.includeNames

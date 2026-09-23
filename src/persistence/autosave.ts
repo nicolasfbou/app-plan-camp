@@ -17,8 +17,12 @@ export interface AutosaveOptions {
 }
 
 export interface Autosave {
-  /** Écrit immédiatement les modifications en attente (ex. avant fermeture). */
-  flush(): Promise<void>;
+  /**
+   * Écrit immédiatement les modifications en attente (ex. avant fermeture). `target` : document
+   * précis à écrire (capturé avant qu'un autre plan ne soit chargé). Une écriture refusée ou
+   * échouée (erreur levée par `save`) laisse le plan « non enregistré ».
+   */
+  flush(target?: { doc: PlanDocument; revision: number }): Promise<void>;
   dispose(): void;
 }
 
@@ -26,11 +30,14 @@ export function startAutosave({ store, save, delayMs = 1500, onError }: Autosave
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inFlight: Promise<void> = Promise.resolve();
 
-  const persist = (): Promise<void> => {
+  const persist = (target?: { doc: PlanDocument; revision: number }): Promise<void> => {
     timer = undefined;
     inFlight = inFlight.then(async () => {
-      const { doc, revision, savedRevision, pending } = store.getState();
-      if (!doc || revision === savedRevision || pending) return;
+      const state = store.getState();
+      const doc = target?.doc ?? state.doc;
+      const revision = target?.revision ?? state.revision;
+      if (!doc) return;
+      if (!target && (revision === state.savedRevision || state.pending)) return;
       try {
         await save(doc);
         // Si un autre plan a été ouvert pendant l'écriture, son état ne doit pas être touché.
@@ -60,9 +67,9 @@ export function startAutosave({ store, save, delayMs = 1500, onError }: Autosave
   });
 
   return {
-    flush() {
+    flush(target) {
       if (timer) clearTimeout(timer);
-      return persist();
+      return persist(target);
     },
     dispose() {
       if (timer) clearTimeout(timer);

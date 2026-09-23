@@ -719,14 +719,14 @@ function DiagnosticTab({ planId }: { planId: string | null }) {
 
 /** Rappel global : sauvegarde externe en attente d'autorisation ou de téléchargement. */
 export function BackupReminder({ onOpen }: { onOpen(): void }) {
-  const { folder, due, settings } = useBackupStore();
+  const { folder, overdue: due, settings } = useBackupStore();
   const [dismissed, setDismissed] = useState(false);
   if (dismissed || !settings.enabled || !due.length || folder === 'granted') return null;
   return (
     <div
       role="status"
       data-testid="backup-reminder"
-      className="fixed right-4 bottom-4 z-40 flex max-w-md items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 shadow-lg"
+      className="fixed bottom-12 left-1/2 z-40 flex w-[min(28rem,calc(100vw-2rem))] -translate-x-1/2 items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 shadow-lg"
     >
       <HardDriveDownload size={18} className="mt-0.5 shrink-0" aria-hidden />
       <div className="flex-1">

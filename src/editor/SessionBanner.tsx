@@ -13,6 +13,8 @@ import { planStore, usePlanStore } from '@/store/planStore.ts';
 import { Button } from '@/ui/Button.tsx';
 import { Modal } from '@/ui/Modal.tsx';
 import { useSubmit } from '@/ui/useSubmit.ts';
+import { navigate } from '@/app/router.ts';
+import { TakeoverRefusedError } from '@/persistence/planLock.ts';
 import { useSessionStore } from './session/sessionStore.ts';
 import { reloadOpenPlan } from './session/usePlanSession.ts';
 
@@ -36,7 +38,18 @@ export function LockBanner() {
           setBusy(true);
           void lock
             ?.takeOver()
-            .catch((e: unknown) => logEvent('lock', e))
+            .catch((e: unknown) => {
+              logEvent('lock', e);
+              useEditorStore
+                .getState()
+                .notify(
+                  e instanceof TakeoverRefusedError
+                    ? t('session.takeoverRefused')
+                    : e instanceof Error
+                      ? e.message
+                      : String(e),
+                );
+            })
             .finally(() => setBusy(false));
         }}
       >
@@ -49,10 +62,15 @@ export function LockBanner() {
 export function ConflictDialog() {
   const conflict = useSessionStore((s) => s.conflict);
   const planId = useSessionStore((s) => s.planId);
+  const lockMode = useSessionStore((s) => s.lockMode);
   const [confirmOverwrite, setConfirmOverwrite] = useState(false);
   const { busy, error, submit } = useSubmit();
   if (!conflict || !planId) return null;
   const notify = useEditorStore.getState().notify;
+  const deleted = conflict.reason === 'deleted';
+  // Écraser : jamais sur un plan supprimé ailleurs (ses révisions et sa photo n'existent plus)
+  // ni depuis un onglet en lecture seule.
+  const canOverwrite = !deleted && lockMode !== 'readonly';
 
   const reload = () =>
     submit(async () => {
@@ -72,24 +90,33 @@ export function ConflictDialog() {
         t('session.copyName', { name: doc.plan.name, date: nowIso().slice(0, 16).replace('T', ' ') }),
       );
       await repository.savePlan(copy);
-      await reloadOpenPlan(planId);
       logEvent('conflict', 'Conflit résolu : modifications enregistrées dans une copie.', {
         level: 'info',
         context: `plan ${planId}`,
       });
       notify(t('session.copySaved', { name: copy.plan.name }));
+      // Plan supprimé ailleurs : on ouvre la copie ; sinon on relit la version enregistrée.
+      if ((await repository.getPlanVersion(planId)) === undefined) {
+        const state = planStore.getState();
+        state.markSaved(state.revision);
+        useSessionStore.getState().setConflict(planId, null);
+        navigate({ name: 'plan', siteId: copy.plan.siteId, planId: copy.plan.id });
+      } else await reloadOpenPlan(planId);
     });
   const overwrite = () =>
     submit(async () => {
-      const doc = planStore.getState().doc;
-      if (!doc) return;
-      const stored = (await repository.getPlanVersion(planId)) ?? 0;
-      const version = await repository.savePlan(doc, { expectedVersion: stored });
       const state = planStore.getState();
-      state.markSaved(state.revision);
-      useSessionStore.getState().setVersion(version);
-      useSessionStore.getState().setConflict(null);
-      useSessionStore.getState().lock?.announceSaved(version);
+      const doc = state.doc;
+      const revision = state.revision;
+      if (!doc) return;
+      const stored = await repository.getPlanVersion(planId);
+      if (stored === undefined) throw new Error(t('session.deletedElsewhere'));
+      const version = await repository.savePlan(doc, { expectedVersion: stored });
+      planStore.getState().markSaved(revision);
+      const session = useSessionStore.getState();
+      session.setVersion(planId, version);
+      session.setConflict(planId, null);
+      session.lock?.announceSaved(version);
       logEvent('conflict', 'Conflit résolu : version enregistrée remplacée (choix explicite).', {
         level: 'warn',
         context: `plan ${planId}`,
@@ -104,9 +131,11 @@ export function ConflictDialog() {
       onClose={() => undefined}
       footer={
         <>
-          <Button disabled={busy} onClick={() => void reload()} data-testid="conflict-reload">
-            {t('session.reload')}
-          </Button>
+          {!deleted && (
+            <Button disabled={busy} onClick={() => void reload()} data-testid="conflict-reload">
+              {t('session.reload')}
+            </Button>
+          )}
           <Button
             variant="primary"
             disabled={busy}
@@ -115,36 +144,44 @@ export function ConflictDialog() {
           >
             {t('session.saveCopy')}
           </Button>
-          <Button
-            variant="danger"
-            disabled={busy || !confirmOverwrite}
-            onClick={() => void overwrite()}
-            data-testid="conflict-overwrite"
-          >
-            {t('session.overwrite')}
-          </Button>
+          {canOverwrite && (
+            <Button
+              variant="danger"
+              disabled={busy || !confirmOverwrite}
+              onClick={() => void overwrite()}
+              data-testid="conflict-overwrite"
+            >
+              {t('session.overwrite')}
+            </Button>
+          )}
         </>
       }
     >
       <div className="space-y-3" data-testid="conflict-dialog">
         <p className="flex gap-2 text-amber-900">
           <AlertTriangle size={18} className="shrink-0" aria-hidden />
-          {t('session.conflictBody')}
+          {deleted
+            ? t('session.deletedElsewhere')
+            : conflict.reason === 'handover'
+              ? t('session.handoverBody')
+              : t('session.conflictBody')}
         </p>
         <ul className="list-disc space-y-1 pl-5 text-slate-700">
-          <li>{t('session.reloadHelp')}</li>
+          {!deleted && <li>{t('session.reloadHelp')}</li>}
           <li>{t('session.saveCopyHelp')}</li>
-          <li>{t('session.overwriteHelp')}</li>
+          {canOverwrite && <li>{t('session.overwriteHelp')}</li>}
         </ul>
-        <label className="flex items-start gap-2">
-          <input
-            type="checkbox"
-            checked={confirmOverwrite}
-            onChange={(e) => setConfirmOverwrite(e.target.checked)}
-            className="mt-1"
-          />
-          <span>{t('session.overwriteConfirm')}</span>
-        </label>
+        {canOverwrite && (
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              checked={confirmOverwrite}
+              onChange={(e) => setConfirmOverwrite(e.target.checked)}
+              className="mt-1"
+            />
+            <span>{t('session.overwriteConfirm')}</span>
+          </label>
+        )}
         {error && (
           <p role="alert" className="text-red-700">
             {error}

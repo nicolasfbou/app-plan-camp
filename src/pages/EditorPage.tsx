@@ -184,6 +184,31 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
     return (
       <PageLayout title={t('plans.title')}>
         <Notice tone="error">{state.message}</Notice>
+        {/* Plan illisible : la copie de secours et le centre de santé restent accessibles. */}
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button
+            variant="primary"
+            data-testid="load-error-emergency"
+            onClick={() =>
+              void downloadEmergencyCopy(planId).then(
+                (r) =>
+                  useEditorStore
+                    .getState()
+                    .notify(
+                      r.complete
+                        ? t('maint.emergency.complete', { file: r.fileName })
+                        : t('maint.emergency.partial', { file: r.fileName, list: r.problems.join(' ; ') }),
+                    ),
+                (e: unknown) => window.alert(e instanceof Error ? e.message : String(e)),
+              )
+            }
+          >
+            {t('maint.emergency')}
+          </Button>
+          <Button onClick={() => useMaintenanceStore.getState().show('health')}>
+            {t('maint.openHealth')}
+          </Button>
+        </div>
       </PageLayout>
     );
   }

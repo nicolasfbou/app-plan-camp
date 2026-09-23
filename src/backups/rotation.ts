@@ -1,8 +1,8 @@
 /**
  * Politique de conservation des sauvegardes externes (logique pure, testée) et noms de fichiers.
  *
- * Nom : `<Plan> — AAAA-MM-JJ HHhMM[ss] — <genre>.campplan`, genre : `rapide`, `revision-B`,
- * `approuvee-A`. Seuls les fichiers qui suivent ce modèle sont gérés : un fichier déposé à la main
+ * Nom : `<Plan> - AAAA-MM-JJ HHhMMmSS - <genre>.campplan`, genre : `rapide`, `revision-B`,
+ * `approuvee-A`, suivi de `-partielle` pour une copie de secours incomplète. Seuls les fichiers qui suivent ce modèle sont gérés : un fichier déposé à la main
  * dans le dossier n'est jamais supprimé.
  */
 
@@ -27,6 +27,8 @@ export interface BackupFile {
   kind: BackupKind;
   /** Numéro de révision (sauvegardes de révision ou d'approbation). */
   label?: string;
+  /** Copie de secours incomplète (projet partiellement endommagé au moment de la sauvegarde). */
+  partial?: boolean;
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -35,30 +37,46 @@ export function backupStamp(at: Date): string {
   return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}h${pad(at.getMinutes())}m${pad(at.getSeconds())}`;
 }
 
-const safe = (text: string) =>
+/**
+ * Nom de fichier portable (disques Windows, clés USB, outils de synchronisation) : ASCII seulement,
+ * accents retirés, caractères interdits remplacés.
+ */
+export const asciiName = (text: string) =>
   text
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^\x20-\x7E]+/g, '-')
     .replace(/[\\/:*?"<>|]+/g, '-')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 80) || 'plan';
 
-export function backupFileName(planName: string, at: Date, kind: BackupKind, label?: string): string {
+export function backupFileName(
+  planName: string,
+  at: Date,
+  kind: BackupKind,
+  label?: string,
+  partial = false,
+): string {
   const suffix =
-    kind === 'quick' ? 'rapide' : `${kind === 'approved' ? 'approuvee' : 'revision'}-${safe(label ?? '')}`;
-  return `${safe(planName)} — ${backupStamp(at)} — ${suffix}.campplan`;
+    kind === 'quick'
+      ? 'rapide'
+      : `${kind === 'approved' ? 'approuvee' : 'revision'}-${asciiName(label ?? '')}`;
+  return `${asciiName(planName)} - ${backupStamp(at)} - ${suffix}${partial ? '-partielle' : ''}.campplan`;
 }
 
 const PATTERN =
-  /— (\d{4})-(\d{2})-(\d{2}) (\d{2})h(\d{2})m(\d{2}) — (rapide|revision-(.+)|approuvee-(.+))\.campplan$/;
+  / - (\d{4})-(\d{2})-(\d{2}) (\d{2})h(\d{2})m(\d{2}) - (rapide|revision-(.+?)|approuvee-(.+?))(-partielle)?\.campplan$/;
 
 export function parseBackupFileName(name: string): BackupFile | null {
   const m = PATTERN.exec(name);
   if (!m) return null;
   const at = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6]));
   if (Number.isNaN(at.getTime())) return null;
-  if (m[7] === 'rapide') return { name, at, kind: 'quick' };
-  if (m[8] !== undefined) return { name, at, kind: 'revision', label: m[8] };
-  return { name, at, kind: 'approved', label: m[9] };
+  const partial = m[10] ? { partial: true } : {};
+  if (m[7] === 'rapide') return { name, at, kind: 'quick', ...partial };
+  if (m[8] !== undefined) return { name, at, kind: 'revision', label: m[8], ...partial };
+  return { name, at, kind: 'approved', label: m[9], ...partial };
 }
 
 const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
@@ -75,13 +93,21 @@ function weekKey(d: Date): string {
 /**
  * Fichiers à supprimer selon la politique. Conservés : les `quick` plus récents, le plus récent de
  * chacun des `daily` derniers jours, le plus récent de chacune des `weekly` dernières semaines,
- * et toutes les sauvegardes d'approbation (si `keepApproved`). Jamais la plus récente.
+ * et toutes les sauvegardes d'approbation (si `keepApproved`). Jamais la plus récente, ni la plus
+ * récente COMPLÈTE. Les copies partielles ne comptent pas dans ces quotas (elles ne chassent
+ * jamais une copie complète) ; seules sont gardées celles plus récentes que la dernière complète.
  */
 export function selectBackupsToDelete(files: readonly BackupFile[], policy: RetentionPolicy): string[] {
   const keep = new Set<string>();
   const sorted = [...files].sort((a, b) => b.at.getTime() - a.at.getTime());
   if (sorted[0]) keep.add(sorted[0].name);
-  const rotating = sorted.filter((f) => !(policy.keepApproved && f.kind === 'approved'));
+  const lastComplete = sorted.find((f) => !f.partial);
+  if (lastComplete) keep.add(lastComplete.name);
+  sorted
+    .filter((f) => f.partial && (!lastComplete || f.at > lastComplete.at))
+    .slice(0, Math.max(1, policy.quick))
+    .forEach((f) => keep.add(f.name));
+  const rotating = sorted.filter((f) => !f.partial && !(policy.keepApproved && f.kind === 'approved'));
   for (const f of sorted) if (policy.keepApproved && f.kind === 'approved') keep.add(f.name);
   rotating.slice(0, Math.max(0, policy.quick)).forEach((f) => keep.add(f.name));
   const byBucket = (key: (d: Date) => string, count: number) => {

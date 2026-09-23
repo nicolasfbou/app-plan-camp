@@ -20,6 +20,7 @@ import { DamagedRevisionsError, exportCampplan } from '@/persistence/campplan.ts
 import { exportEmergency } from '@/persistence/emergency.ts';
 import type { ProjectRepository } from '@/persistence/ProjectRepository.ts';
 import {
+  asciiName,
   backupFileName,
   DEFAULT_POLICY,
   parseBackupFileName,
@@ -132,8 +133,16 @@ interface BackupState {
   folderName: string | null;
   folder: FolderState;
   log: BackupLogEntry[];
-  /** Plans modifiés depuis leur dernière sauvegarde externe (rappel en mode téléchargement). */
+  /** Plans modifiés depuis leur dernière sauvegarde externe. */
   due: string[];
+  /**
+   * Plans EN RETARD (rappel affiché) : modifiés depuis leur dernière sauvegarde et, soit en
+   * attente depuis plus que l'intervalle choisi, soit marqués urgents (révision créée ou approuvée).
+   */
+  overdue: string[];
+  /** Premier constat « à sauvegarder » (ms) par plan, et plans urgents. */
+  dueSince: Record<string, number>;
+  urgent: string[];
   running: boolean;
   setSettings(settings: BackupSettings): void;
   setLog(log: BackupLogEntry[]): void;
@@ -146,6 +155,9 @@ export const useBackupStore = create<BackupState>()((set) => ({
   folder: 'none',
   log: [],
   due: [],
+  overdue: [],
+  dueSince: {},
+  urgent: [],
   running: false,
   setSettings: (settings) => set({ settings }),
   setLog: (log) => set({ log }),
@@ -197,11 +209,8 @@ export async function regrantBackupFolder(repo: ProjectRepository = repository):
   return granted;
 }
 
-const folderSafe = (text: string) =>
-  text
-    .replace(/[\\/:*?"<>|]+/g, '-')
-    .trim()
-    .slice(0, 60) || 'sans-nom';
+// Dossiers : même règle que les fichiers (ASCII, portable).
+const folderSafe = (text: string) => asciiName(text).slice(0, 60) || 'sans-nom';
 
 async function planFolder(root: DirectoryHandle, siteName: string, planName: string, planId: string) {
   const camp = await root.getDirectoryHandle(folderSafe(siteName || 'Camp'), { create: true });
@@ -238,7 +247,20 @@ export async function backupPlan(
   const summary = await repo.getPlanSummary(req.planId);
   const planName = summary?.name ?? req.planId;
   const siteName = summary ? ((await repo.getSite(summary.siteId))?.name ?? '') : '';
-  const fileName = backupFileName(planName, now, req.kind, req.label);
+  let bytes: Uint8Array;
+  let partial = false;
+  try {
+    bytes = (await exportCampplan(repo, req.planId)).bytes;
+  } catch (error) {
+    // Révision altérée ou autre défaut : copie de secours plutôt qu'aucune sauvegarde (signalé).
+    if (!(error instanceof DamagedRevisionsError))
+      logEvent('backup', error, { context: `plan ${req.planId}` });
+    const emergency = await exportEmergency(repo, req.planId, { now });
+    bytes = emergency.bytes;
+    partial = !emergency.complete;
+  }
+  // Nom connu seulement maintenant : une copie incomplète est marquée « -partielle ».
+  const fileName = backupFileName(planName, now, req.kind, req.label, partial);
   const base: Omit<BackupLogEntry, 'ok' | 'bytes' | 'destination'> = {
     planId: req.planId,
     at: now.toISOString(),
@@ -246,17 +268,6 @@ export async function backupPlan(
     ...(req.label ? { label: req.label } : {}),
     fileName,
   };
-  let bytes: Uint8Array;
-  let partial = false;
-  try {
-    bytes = (await exportCampplan(repo, req.planId)).bytes;
-  } catch (error) {
-    // Révision altérée ou autre défaut : copie de secours plutôt qu'aucune sauvegarde (signalé).
-    if (!(error instanceof DamagedRevisionsError)) logEvent('backup', error, { context: fileName });
-    const emergency = await exportEmergency(repo, req.planId, now);
-    bytes = emergency.bytes;
-    partial = !emergency.complete;
-  }
   const dir = supportsFolderBackups() ? await storedDirectory(repo) : undefined;
   try {
     if (dir && (await permissionOf(dir)) === 'granted') {
@@ -304,13 +315,31 @@ export async function backupPlan(
       ok: false,
       error: error instanceof Error ? error.message : String(error),
     };
-    logEvent('backup', error, { context: fileName });
+    logEvent('backup', error, { context: `plan ${req.planId}` });
     await appendLog(entry, repo);
     return entry;
   }
 }
 
 /** Plans modifiés depuis leur dernière sauvegarde externe réussie. */
+/** Met à jour `due` et `overdue` (voir `BackupState.overdue`). */
+export function setDue(due: string[], now = Date.now()) {
+  const s = useBackupStore.getState();
+  const interval = (s.settings.intervalMinutes || 15) * 60_000;
+  const last = new Map<string, number>();
+  for (const e of s.log) if (e.ok) last.set(e.planId, Date.parse(e.at));
+  const dueSince: Record<string, number> = {};
+  for (const id of due) dueSince[id] = s.dueSince[id] ?? now;
+  const urgent = s.urgent.filter((id) => due.includes(id));
+  const overdue = due.filter((id) => {
+    const at = last.get(id);
+    return (
+      urgent.includes(id) || (at !== undefined && now - at >= interval) || now - dueSince[id]! >= interval
+    );
+  });
+  s.set({ due, dueSince, urgent, overdue });
+}
+
 export async function plansDue(repo: ProjectRepository = repository): Promise<string[]> {
   const log = await readBackupLog(repo);
   const last = new Map<string, string>();
@@ -336,13 +365,13 @@ export async function backupDuePlans(
     const due = await plansDue(repo);
     const folder = await refreshFolderState(repo);
     if (folder !== 'granted' && !options.allowDownload) {
-      useBackupStore.getState().set({ due });
+      setDue(due);
       return [];
     }
     const results = [];
     for (const planId of due)
       results.push(await backupPlan({ planId, kind: 'quick', allowDownload: options.allowDownload }, repo));
-    useBackupStore.getState().set({ due: await plansDue(repo) });
+    setDue(await plansDue(repo));
     return results;
   } finally {
     useBackupStore.getState().set({ running: false });
@@ -357,7 +386,13 @@ export async function startBackupScheduler(repo: ProjectRepository = repository)
   const settings = await loadBackupSettings(repo);
   useBackupStore.getState().set({ settings, log: await readBackupLog(repo) });
   await refreshFolderState(repo);
-  useBackupStore.getState().set({ due: await plansDue(repo) });
+  setDue(await plansDue(repo));
+  // Rappel (tous les onglets) : réévalué chaque minute, sans rien écrire.
+  const reminder = setInterval(() => {
+    void plansDue(repo)
+      .then((due) => setDue(due))
+      .catch(() => undefined);
+  }, 60_000);
   let stopped = false;
   let release: () => void = () => undefined;
   const run = () => {
@@ -391,6 +426,7 @@ export async function startBackupScheduler(repo: ProjectRepository = repository)
   else release = lead();
   return () => {
     stopped = true;
+    clearInterval(reminder);
     release();
   };
 }
@@ -412,7 +448,8 @@ export function backupAfterRevision(planId: string, label: string, approved: boo
   const s = useBackupStore.getState();
   if (!s.settings.enabled || !s.settings.afterRevision) return;
   if (s.folder !== 'granted') {
-    useBackupStore.getState().set({ due: [...new Set([...s.due, planId])] });
+    s.set({ urgent: [...new Set([...s.urgent, planId])] });
+    setDue([...new Set([...s.due, planId])]);
     return;
   }
   void backupPlan({ planId, kind: approved ? 'approved' : 'revision', label }).catch((error: unknown) =>

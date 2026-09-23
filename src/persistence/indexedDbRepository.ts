@@ -180,7 +180,9 @@ export class IndexedDbRepository implements ProjectRepository {
     return this.db.transaction('rw', this.db.plans, async () => {
       const current = await this.db.plans.get(doc.plan.id);
       const version = current?.version ?? 0;
-      if (current && options.expectedVersion !== undefined && options.expectedVersion !== version)
+      // Plan supprimé ailleurs (version attendue > 0 mais plus d'enregistrement) : conflit aussi,
+      // jamais une recréation silencieuse sans ses révisions ni sa photo.
+      if (options.expectedVersion !== undefined && options.expectedVersion !== version)
         throw new PlanConflictError(doc.plan.id, version, options.expectedVersion);
       await this.db.plans.put({
         id: doc.plan.id,
@@ -213,12 +215,25 @@ export class IndexedDbRepository implements ProjectRepository {
     return { id, siteId, name, kind, updatedAt };
   }
 
-  /** Fichier encore référencé par un plan ou par une révision figée. */
-  private async blobInUse(blobId: string): Promise<boolean> {
-    return (
-      (await this.db.plans.where('blobIds').equals(blobId).count()) > 0 ||
-      (await this.db.revisions.where('blobIds').equals(blobId).count()) > 0
-    );
+  /**
+   * Fichiers référencés par un plan ou une révision : index secondaires + recherche des
+   * identifiants dans le contenu brut (documents, instantanés, correspondances), lisible ou non.
+   * À appeler dans une transaction couvrant plans, révisions et instantanés.
+   */
+  private async referencedBlobs(candidates: readonly string[], protectedTexts: readonly string[] = []) {
+    const used = new Set<string>();
+    const texts: string[] = [...protectedTexts];
+    await this.db.plans.each((record) => {
+      for (const id of record.blobIds ?? []) used.add(id);
+      texts.push(JSON.stringify(record.document ?? null));
+    });
+    await this.db.revisions.each((record) => {
+      for (const id of record.blobIds ?? []) used.add(id);
+      texts.push(JSON.stringify(record.blobMap ?? {}), JSON.stringify(record.meta ?? null));
+    });
+    await this.db.revisionSnapshots.each((snapshot) => texts.push(String(snapshot.json)));
+    for (const id of candidates) if (!used.has(id) && texts.some((t) => t.includes(id))) used.add(id);
+    return used;
   }
 
   async saveImportedPlan(
@@ -244,8 +259,9 @@ export class IndexedDbRepository implements ProjectRepository {
           if (await this.db.revisions.get(record.id)) continue;
           await this.putRevision(record);
         }
-        for (const blobId of previous?.blobIds ?? [])
-          if (!(await this.blobInUse(blobId))) await this.db.blobs.delete(blobId);
+        const stale = previous?.blobIds ?? [];
+        const used = await this.referencedBlobs(stale);
+        for (const blobId of stale) if (!used.has(blobId)) await this.db.blobs.delete(blobId);
       },
     );
   }
@@ -270,8 +286,9 @@ export class IndexedDbRepository implements ProjectRepository {
         await this.db.viewPrefs.delete(id);
         // Un fichier peut être partagé par plusieurs plans (duplication) : on ne supprime
         // que ceux qui ne sont plus référencés par aucun plan ni aucune révision restante.
-        const blobIds = new Set([...record.blobIds, ...revisions.flatMap((r) => r.blobIds)]);
-        for (const blobId of blobIds) if (!(await this.blobInUse(blobId))) await this.db.blobs.delete(blobId);
+        const blobIds = [...new Set([...record.blobIds, ...revisions.flatMap((r) => r.blobIds)])];
+        const used = await this.referencedBlobs(blobIds);
+        for (const blobId of blobIds) if (!used.has(blobId)) await this.db.blobs.delete(blobId);
       },
     );
   }
@@ -417,8 +434,8 @@ export class IndexedDbRepository implements ProjectRepository {
         if (!parsed.success) throw new RevisionError('Révision illisible : suppression refusée.');
         await this.db.revisions.delete(id);
         await this.db.revisionSnapshots.delete(id);
-        for (const blobId of record.blobIds)
-          if (!(await this.blobInUse(blobId))) await this.db.blobs.delete(blobId);
+        const used = await this.referencedBlobs(record.blobIds);
+        for (const blobId of record.blobIds) if (!used.has(blobId)) await this.db.blobs.delete(blobId);
       },
     );
   }
@@ -443,13 +460,18 @@ export class IndexedDbRepository implements ProjectRepository {
     return this.db.blobs.get(id);
   }
 
-  async deleteOrphanBlobs(minAgeMs = 60 * 60 * 1000): Promise<number> {
+  async deleteOrphanBlobs(
+    minAgeMs = 60 * 60 * 1000,
+    protectedTexts: readonly string[] = [],
+  ): Promise<number> {
     const cutoff = Date.now() - minAgeMs;
-    return this.db.transaction('rw', this.db.plans, this.db.blobs, this.db.revisions, async () => {
+    const tables = [this.db.plans, this.db.blobs, this.db.revisions, this.db.revisionSnapshots];
+    return this.db.transaction('rw', tables, async () => {
       const ids = (await this.db.blobs.toCollection().primaryKeys()) as string[];
+      const used = await this.referencedBlobs(ids, protectedTexts);
       let deleted = 0;
       for (const id of ids) {
-        if (await this.blobInUse(id)) continue;
+        if (used.has(id)) continue;
         // Lecture complète nécessaire pour la date ; seuls les orphelins sont lus.
         const blob = await this.db.blobs.get(id);
         const created = blob?.createdAt ? Date.parse(blob.createdAt) : 0;
@@ -472,25 +494,34 @@ export class IndexedDbRepository implements ProjectRepository {
 
   // --- Maintenance ---------------------------------------------------------------------------
 
-  async listOrphanBlobs(): Promise<OrphanBlob[]> {
-    const ids = (await this.db.blobs.toCollection().primaryKeys()) as string[];
-    const out: OrphanBlob[] = [];
-    for (const id of ids) {
-      if (await this.blobInUse(id)) continue;
-      const blob = await this.db.blobs.get(id); // seuls les orphelins sont lus
-      if (blob)
-        out.push({ id, byteLength: blob.byteLength, mimeType: blob.mimeType, createdAt: blob.createdAt });
-    }
-    return out;
+  async listOrphanBlobs(protectedTexts: readonly string[] = []): Promise<OrphanBlob[]> {
+    const tables = [this.db.plans, this.db.blobs, this.db.revisions, this.db.revisionSnapshots];
+    return this.db.transaction('r', tables, async () => {
+      const ids = (await this.db.blobs.toCollection().primaryKeys()) as string[];
+      const used = await this.referencedBlobs(ids, protectedTexts);
+      const out: OrphanBlob[] = [];
+      for (const id of ids) {
+        if (used.has(id)) continue;
+        const blob = await this.db.blobs.get(id); // seuls les orphelins sont lus
+        if (blob)
+          out.push({ id, byteLength: blob.byteLength, mimeType: blob.mimeType, createdAt: blob.createdAt });
+      }
+      return out;
+    });
   }
 
-  async deleteBlobs(ids: readonly string[]): Promise<{ deleted: number; bytes: number }> {
-    return this.db.transaction('rw', this.db.plans, this.db.blobs, this.db.revisions, async () => {
+  async deleteBlobs(
+    ids: readonly string[],
+    protectedTexts: readonly string[] = [],
+  ): Promise<{ deleted: number; bytes: number }> {
+    const tables = [this.db.plans, this.db.blobs, this.db.revisions, this.db.revisionSnapshots];
+    return this.db.transaction('rw', tables, async () => {
+      // Jamais un fichier référencé par un plan ou une révision (revérifié ici, par le contenu).
+      const used = await this.referencedBlobs(ids, protectedTexts);
       let deleted = 0;
       let bytes = 0;
       for (const id of ids) {
-        // Jamais un fichier référencé par un plan ou une révision (revérifié ici).
-        if (await this.blobInUse(id)) continue;
+        if (used.has(id)) continue;
         const blob = await this.db.blobs.get(id);
         if (!blob) continue;
         await this.db.blobs.delete(id);
@@ -499,6 +530,14 @@ export class IndexedDbRepository implements ProjectRepository {
       }
       return { deleted, bytes };
     });
+  }
+
+  async getPlanBlobIds(planId: string): Promise<string[]> {
+    return (await this.db.plans.get(planId))?.blobIds ?? [];
+  }
+
+  async listPlanIds(): Promise<string[]> {
+    return (await this.db.plans.toCollection().primaryKeys()) as string[];
   }
 
   private async expectedIndexes(planId: string) {
@@ -540,11 +579,16 @@ export class IndexedDbRepository implements ProjectRepository {
     await this.db.transaction('rw', this.db.plans, this.db.revisions, async () => {
       if (plan) {
         const current = await this.db.plans.get(planId);
+        // Le plan a été enregistré pendant le calcul : index périmé, rien n'est écrit.
+        if (current && current.version !== plan.record.version)
+          throw new Error('Plan modifié pendant la réparation : relancez le contrôle.');
         // Seul l'index change (le document et sa version restent identiques).
         if (current) await this.db.plans.put({ ...current, blobIds: plan.blobIds });
       }
       for (const r of revisions) {
         const current = await this.db.revisions.get(r.record.id);
+        if (current && JSON.stringify(current.blobMap) !== JSON.stringify(r.record.blobMap))
+          throw new Error('Révision modifiée pendant la réparation : relancez le contrôle.');
         if (current) await this.db.revisions.put({ ...current, blobIds: r.blobIds });
       }
     });

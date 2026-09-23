@@ -20,7 +20,7 @@
  * plan.json, présence, taille et SHA-256 de chaque fichier, cohérence avec le plan. Un fichier
  * corrompu est refusé avec un message précis ; rien n'est écrit tant que tout n'est pas valide.
  */
-import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
+import { inflateSync, strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import { z } from 'zod';
 import { newId, nowIso } from '@/domain/model/factories.ts';
 import type { BaseImageRef, PlanDocument, Site } from '@/domain/model/types.ts';
@@ -299,7 +299,10 @@ function unzipEach(
       },
     });
   } catch {
-    return {};
+    // Répertoire central illisible (fichier tronqué : il est à la FIN de l'archive) : lecture
+    // directe des en-têtes locaux, élément par élément.
+    problems.push('Archive tronquée ou endommagée : lecture élément par élément.');
+    return scanLocalEntries(bytes, accept, problems);
   }
   const out: Record<string, Uint8Array> = {};
   for (const wanted of names) {
@@ -308,6 +311,52 @@ function unzipEach(
     } catch {
       problems.push(`Élément illisible dans l’archive : ${wanted}.`);
     }
+  }
+  return out;
+}
+
+/** Lecture des en-têtes locaux ZIP (`PK\x03\x04`) sans répertoire central. */
+export function scanLocalEntries(
+  bytes: Uint8Array,
+  accept: (name: string, size: number) => boolean,
+  problems: string[],
+): Record<string, Uint8Array> {
+  const out: Record<string, Uint8Array> = {};
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const decoder = new TextDecoder();
+  let i = 0;
+  while (i + 30 <= bytes.length) {
+    if (view.getUint32(i, true) !== 0x04034b50) {
+      i++;
+      continue;
+    }
+    const flags = view.getUint16(i + 6, true);
+    const method = view.getUint16(i + 8, true);
+    const compressed = view.getUint32(i + 18, true);
+    const size = view.getUint32(i + 22, true);
+    const nameLength = view.getUint16(i + 26, true);
+    const extraLength = view.getUint16(i + 28, true);
+    const start = i + 30 + nameLength + extraLength;
+    const name = decoder.decode(bytes.subarray(i + 30, i + 30 + nameLength));
+    const unknownSize = (flags & 8) !== 0 && compressed === 0;
+    const end = unknownSize ? bytes.length : start + compressed;
+    if (!name.endsWith('/') && accept(name, size)) {
+      try {
+        if (end > bytes.length) throw new Error('tronqué');
+        const data = bytes.subarray(start, end);
+        let content: Uint8Array;
+        if (method === 0 && !unknownSize) content = data.slice();
+        else if (method === 8) content = inflateSync(data);
+        else throw new Error(`méthode ${method}`);
+        if (!unknownSize && content.length !== size) throw new Error('taille incohérente');
+        out[name] = content;
+      } catch (error) {
+        problems.push(
+          `Élément illisible dans l’archive : ${name} (${error instanceof Error ? error.message : String(error)}).`,
+        );
+      }
+    }
+    i = unknownSize || end > bytes.length ? i + 4 : end;
   }
   return out;
 }
@@ -537,13 +586,20 @@ export async function readCampplan(bytes: Uint8Array, options: ReadOptions = {})
     if (resolve(needed.blobId, needed.sha256)) continue;
     fail(`Le fichier ${needed.label} ne correspond pas aux fichiers de l’archive.`);
     // Récupération : photo absente → plan SANS photo ; pictogramme absent → retiré.
-    if (needed.role === 'symbol')
+    if (needed.role === 'symbol') {
       for (const [id, asset] of Object.entries(doc.assets))
-        if (asset.blobId === needed.blobId) delete doc.assets[id];
-        else if (doc.plan.baseImage) {
-          doc.plan.baseImage = null;
-          problems.push('Plan importé SANS sa photo (photo absente ou endommagée).');
+        if (asset.blobId === needed.blobId) {
+          delete doc.assets[id];
+          if (doc.plan.titleBlock.logoAssetId === id) doc.plan.titleBlock.logoAssetId = null;
         }
+    } else if (needed.role === 'pdf' && doc.plan.baseImage?.source.kind === 'pdf') {
+      // PDF d'origine perdu : l'image rastérisée (le fond affiché) est conservée.
+      doc.plan.baseImage = { ...doc.plan.baseImage, source: { kind: 'image' } };
+      problems.push('PDF d’origine perdu : l’image du plan (rastérisée) est conservée.');
+    } else if (needed.role === 'background' && doc.plan.baseImage) {
+      doc.plan.baseImage = null;
+      problems.push('Plan importé SANS sa photo (photo absente ou endommagée).');
+    }
   }
 
   // Pictogrammes importés : mêmes vérifications qu'à l'import depuis l'éditeur (un fichier

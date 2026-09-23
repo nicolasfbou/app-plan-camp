@@ -3,6 +3,7 @@ import {
   Download,
   GitBranch,
   LayoutTemplate,
+  LifeBuoy,
   Map as MapIcon,
   Pencil,
   Plus,
@@ -13,6 +14,8 @@ import { createPlanFromTemplate } from '@/app/templateActions.ts';
 import { VariantDialog } from '@/app/VariantDialog.tsx';
 import { downloadBytes } from '@/app/download.ts';
 import { exportCampplan } from '@/persistence/campplan.ts';
+import { openPlanIds } from '@/persistence/planLock.ts';
+import { downloadEmergencyCopy } from '@/maintenance/emergencyDownload.ts';
 import { useState } from 'react';
 import { createPlanDocument, duplicatePlanDocument, nowIso } from '@/domain/model/factories.ts';
 import type { StoredTemplate } from '@/persistence/ProjectRepository.ts';
@@ -141,6 +144,25 @@ export function CampPage({ siteId }: { siteId: string }) {
                     <Copy size={16} />
                   </IconButton>
                   <IconButton
+                    label={t('maint.emergencyOf', { name: plan.name })}
+                    onClick={() =>
+                      void downloadEmergencyCopy(plan.id).then(
+                        (r) =>
+                          window.alert(
+                            r.complete
+                              ? t('maint.emergency.complete', { file: r.fileName })
+                              : t('maint.emergency.partial', {
+                                  file: r.fileName,
+                                  list: r.problems.join(' ; '),
+                                }),
+                          ),
+                        (e: unknown) => window.alert(e instanceof Error ? e.message : String(e)),
+                      )
+                    }
+                  >
+                    <LifeBuoy size={16} />
+                  </IconButton>
+                  <IconButton
                     label={`${t('common.delete')} ${plan.name}`}
                     onClick={() => setDialog({ kind: 'delete', plan })}
                   >
@@ -252,6 +274,9 @@ export function CampPage({ siteId }: { siteId: string }) {
           confirmName={dialog.plan.name}
           onCancel={close}
           onConfirm={async () => {
+            // Jamais supprimé sous les pieds d'un onglet qui l'édite (il le recréerait sans révisions).
+            if ((await openPlanIds().catch(() => new Set<string>())).has(dialog.plan.id))
+              throw new Error(t('plans.delete.openElsewhere'));
             await repository.deletePlan(dialog.plan.id);
             close();
             reload();

@@ -10,6 +10,7 @@ import type { PlanDocument } from '@/domain/model/types.ts';
 import { checkSymbolFile } from '@/domain/symbols/importSymbol.ts';
 import { exportCampplan } from '@/persistence/campplan.ts';
 import type { ProjectRepository } from '@/persistence/ProjectRepository.ts';
+import { recoveryJournalTexts } from '@/persistence/recovery.ts';
 import { oldEnough } from './cleanup.ts';
 
 export type HealthStatus = 'ok' | 'warn' | 'error';
@@ -48,10 +49,9 @@ export function recoveryJournalPlanIds(): string[] {
   return ids;
 }
 
+/** Tous les plans ENREGISTRÉS (clés de la table, même si leur camp manque). */
 async function allPlanIds(repo: ProjectRepository): Promise<Set<string>> {
-  const ids = new Set<string>();
-  for (const site of await repo.listSites()) for (const p of await repo.listPlans(site.id)) ids.add(p.id);
-  return ids;
+  return new Set(await repo.listPlanIds());
 }
 
 export async function runPlanHealth(
@@ -224,7 +224,7 @@ export async function runPlanHealth(
 
   // Ressources orphelines (tout le stockage).
   await guard('orphans', 'Ressources orphelines', async () => {
-    const orphans = (await repo.listOrphanBlobs()).filter((o) => oldEnough(o));
+    const orphans = (await repo.listOrphanBlobs(recoveryJournalTexts())).filter((o) => oldEnough(o));
     const bytes = orphans.reduce((s, o) => s + o.byteLength, 0);
     add({
       id: 'orphans',
@@ -343,8 +343,11 @@ export async function applyRepair(
       await repo.reindexPlan(planId);
       return 'Index recalculés à partir des documents (contenu inchangé).';
     case 'delete-orphans': {
-      const orphans = (await repo.listOrphanBlobs()).filter((o) => oldEnough(o));
-      const r = await repo.deleteBlobs(orphans.map((o) => o.id));
+      const orphans = (await repo.listOrphanBlobs(recoveryJournalTexts())).filter((o) => oldEnough(o));
+      const r = await repo.deleteBlobs(
+        orphans.map((o) => o.id),
+        recoveryJournalTexts(),
+      );
       return `${r.deleted} fichier(s) orphelin(s) supprimé(s), ${mb(r.bytes)} récupérés.`;
     }
     case 'clear-view-prefs':

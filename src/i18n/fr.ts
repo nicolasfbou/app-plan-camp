@@ -768,6 +768,10 @@ export const fr = {
   'maint.tab.journal': 'Journal des erreurs',
   'maint.tab.diagnostic': 'Diagnostic',
   'maint.emergency': 'Exporter une copie de secours maintenant',
+  'maint.emergencyOf': 'Copie de secours de {name}',
+  'maint.openHealth': 'Ouvrir « Santé et sauvegardes »',
+  'plans.delete.openElsewhere':
+    'Ce plan est ouvert en édition dans un autre onglet : fermez-le d’abord (ses modifications en cours seraient perdues).',
   'maint.emergency.complete': 'Copie de secours COMPLÈTE téléchargée : {file}',
   'maint.emergency.partial': 'Copie de secours INCOMPLÈTE téléchargée : {file}. Manque : {list}',
   'maint.health.ok': 'Tout est en ordre',
@@ -854,6 +858,13 @@ export const fr = {
   'session.readOnly': 'Ce plan est déjà ouvert ailleurs (autre onglet ou fenêtre) : lecture seule.',
   'session.takeOver': 'Reprendre la main',
   'session.conflictTitle': 'Conflit : plan modifié ailleurs',
+  'session.recoveredCopyName': '{name} (récupéré — modifié ailleurs, {date})',
+  'session.deletedElsewhere':
+    'Ce plan a été supprimé ailleurs (autre onglet). Vos modifications non enregistrées sont encore ici : enregistrez-les dans une copie.',
+  'session.handoverBody':
+    'La main a été reprise par un autre onglet alors que des modifications de cet onglet n’étaient pas enregistrées. Elles sont conservées ici : enregistrez-les dans une copie, ou rechargez la version enregistrée (elles seront perdues).',
+  'session.takeoverRefused':
+    'L’autre onglet a des modifications qu’il n’a pas pu enregistrer : il garde la main. Réglez la situation dans cet onglet (conflit, espace de stockage) ou fermez-le.',
   'session.conflictBody':
     'Le plan enregistré a changé depuis son ouverture dans cet onglet (autre onglet, autre fenêtre ou import). Vos modifications ne sont PAS enregistrées tant que vous n’avez pas choisi.',
   'session.reload': 'Recharger la version enregistrée',

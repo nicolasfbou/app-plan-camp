@@ -7,7 +7,7 @@ beforeEach(() => localStorage.clear());
 describe('journal de récupération', () => {
   it('écrit puis relit exactement le document, avec sa date', () => {
     const doc = makeLargeDocument(50);
-    writeRecovery(doc, 1000);
+    writeRecovery(doc, undefined, 1000);
     expect(readRecovery(doc.plan.id)).toEqual({ doc, writtenAt: 1000 });
     clearRecovery(doc.plan.id);
     expect(readRecovery(doc.plan.id)).toBeNull();
@@ -15,7 +15,7 @@ describe('journal de récupération', () => {
 
   it('une sauvegarde commencée AVANT le journal ne l’efface pas ; une sauvegarde commencée après, oui', () => {
     const doc = makeLargeDocument(3);
-    writeRecovery(doc, 2000);
+    writeRecovery(doc, undefined, 2000);
     clearRecoveryIfCovered(doc.plan.id, 1999);
     expect(readRecovery(doc.plan.id)).not.toBeNull();
     clearRecoveryIfCovered(doc.plan.id, 2000);

@@ -66,7 +66,7 @@ export function ImportProjectDialog({ file, onClose }: { file: File; onClose(): 
       if (cancelled) return;
       const message = e instanceof CampplanError ? e.message : String(e);
       logEvent(/corrompu|altéré|illisible|invalide/i.test(message) ? 'corrupt' : 'import', e, {
-        context: file.name,
+        context: `fichier .campplan de ${Math.round(file.size / 1024)} Kio`,
       });
       // Version plus récente : pas de « récupération » (il faut mettre l'application à jour).
       setState({ kind: 'error', message, recoverable: !recovery && !/plus récente/.test(message) });

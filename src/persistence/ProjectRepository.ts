@@ -137,7 +137,7 @@ export interface ProjectRepository {
    * plus de `minAgeMs` : un fichier tout juste importé dans un autre onglet, pas encore
    * référencé par la sauvegarde automatique, n'est donc jamais supprimé.
    */
-  deleteOrphanBlobs(minAgeMs?: number): Promise<number>;
+  deleteOrphanBlobs(minAgeMs?: number, protectedTexts?: readonly string[]): Promise<number>;
 
   /**
    * Préférence d'affichage (dernier zoom / centre de vue) : confort uniquement. Stockée à part,
@@ -154,10 +154,22 @@ export interface ProjectRepository {
   setSetting(key: string, value: unknown): Promise<void>;
 
   // --- Maintenance (centre de santé, nettoyage) ---------------------------------------------
-  /** Fichiers stockés que plus aucun plan ni aucune révision ne référence (sans lire les octets inutiles). */
-  listOrphanBlobs(): Promise<OrphanBlob[]>;
-  /** Supprime ces fichiers s'ils sont TOUJOURS orphelins (vérifié dans la transaction). */
-  deleteBlobs(ids: readonly string[]): Promise<{ deleted: number; bytes: number }>;
+  /**
+   * Fichiers stockés que plus aucun plan ni aucune révision ne référence. La référence est
+   * établie par les index ET par le CONTENU (documents, instantanés, correspondances de fichiers,
+   * même illisibles) : un index périmé ne suffit jamais à rendre un fichier orphelin.
+   * `protectedTexts` : autres textes à respecter (ex. journaux de récupération).
+   */
+  listOrphanBlobs(protectedTexts?: readonly string[]): Promise<OrphanBlob[]>;
+  /** Supprime ces fichiers s'ils sont TOUJOURS orphelins (revérifié dans la transaction). */
+  deleteBlobs(
+    ids: readonly string[],
+    protectedTexts?: readonly string[],
+  ): Promise<{ deleted: number; bytes: number }>;
+  /** Fichiers indexés pour un plan (même si son document est illisible). */
+  getPlanBlobIds(planId: string): Promise<string[]>;
+  /** Identifiants de TOUS les plans enregistrés (même ceux dont le camp est absent). */
+  listPlanIds(): Promise<string[]>;
   /** Index secondaires d'un plan et de ses révisions (fichiers référencés) : cohérents ou non. */
   checkPlanIndex(planId: string): Promise<{ consistent: boolean; details: string[] }>;
   /** Recalcule ces index à partir des documents (aucun contenu modifié). */

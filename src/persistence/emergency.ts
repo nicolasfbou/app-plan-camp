@@ -23,7 +23,7 @@ export interface EmergencyResult {
   problems: string[];
   /** Ce qui a été inclus. */
   included: {
-    plan: 'intact' | 'partiel' | 'depuis-revision' | 'brut';
+    plan: 'intact' | 'partiel' | 'depuis-revision' | 'brut' | 'memoire';
     photo: boolean;
     revisions: number;
     files: number;
@@ -40,11 +40,21 @@ const EXT: Record<string, string> = {
 
 const safeName = (text: string) => text.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'plan';
 
+export interface EmergencyOptions {
+  now?: Date;
+  /**
+   * Document ouvert en mémoire, s'il contient des modifications NON enregistrées (ex. stockage
+   * plein) : il devient le plan de la copie (le plan enregistré est joint à part).
+   */
+  memoryDoc?: PlanDocument | null;
+}
+
 export async function exportEmergency(
   repo: ProjectRepository,
   planId: string,
-  now = new Date(),
+  options: EmergencyOptions = {},
 ): Promise<EmergencyResult> {
+  const now = options.now ?? new Date();
   const problems: string[] = [];
   const entries: Zippable = {};
   let siteName = '';
@@ -66,7 +76,11 @@ export async function exportEmergency(
     } catch (error) {
       const salvaged = salvagePlanDocument(raw);
       problems.push(`Plan endommagé : ${error instanceof Error ? error.message : String(error)}`);
-      if (salvaged) {
+      // Récupération utile seulement si le plan garde son identité et ses calques ; sinon la
+      // dernière révision valide est un meilleur point de départ (les données brutes sont jointes).
+      const useful =
+        salvaged && !salvaged.problems.some((p) => /Aucun calque lisible|« id »|« siteId »/.test(p));
+      if (salvaged && useful) {
         doc = salvaged.doc;
         planState = 'partiel';
         problems.push(...salvaged.problems.map((p) => `Plan : ${p}`));
@@ -79,6 +93,17 @@ export async function exportEmergency(
       }
     }
   } else problems.push('Plan introuvable dans le stockage.');
+  // Modifications en mémoire non enregistrées : elles priment (rien de ce qui est à l'écran
+  // n'est perdu) ; la version enregistrée est jointe telle quelle.
+  const memory = options.memoryDoc?.plan.id === planId ? options.memoryDoc : null;
+  if (memory) {
+    if (doc) entries['plan-enregistre.json'] = strToU8(serializePlanDocument(doc));
+    doc = structuredClone(memory);
+    planState = 'memoire';
+    problems.push(
+      'Plan pris dans l’éditeur (modifications non enregistrées dans le navigateur) ; la dernière version enregistrée est jointe (plan-enregistre.json).',
+    );
+  }
   try {
     siteName = doc ? ((await repo.getSite(doc.plan.siteId))?.name ?? '') : '';
   } catch {
@@ -113,8 +138,22 @@ export async function exportEmergency(
       revisionDocs.push(loaded.doc);
     } catch (error) {
       problems.push(
-        `Révision ${entry.meta?.label ?? entry.id.slice(0, 8)} non incluse : ${error instanceof Error ? error.message : String(error)}`,
+        `Révision ${entry.meta?.label ?? entry.id.slice(0, 8)} non incluse (altérée ou illisible) : ${error instanceof Error ? error.message : String(error)} — données brutes jointes (revisions-brutes/, NON vérifiées).`,
       );
+      // Rien n'est jeté : métadonnées et instantané bruts joints pour une expertise manuelle.
+      try {
+        const rawSnapshot = await repo.readRevisionSnapshot(entry.id).catch(() => null);
+        entries[`revisions-brutes/${entry.id.replace(/[^\w.-]/g, '_')}.json`] = strToU8(
+          JSON.stringify({
+            avertissement: 'Révision NON vérifiée (empreinte ou sceau invalide, ou illisible).',
+            meta: entry.meta ?? null,
+            instantane: rawSnapshot?.json ?? null,
+            correspondanceFichiers: rawSnapshot?.blobMap ?? null,
+          }),
+        );
+      } catch {
+        problems.push(`Révision ${entry.id.slice(0, 8)} : données brutes non récupérables.`);
+      }
     }
   }
   if (!doc && revisionDocs.length) {
@@ -178,6 +217,29 @@ export async function exportEmergency(
       problems.push(
         `Fichier illisible (${w.label}) : ${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+  }
+  // Fichiers indexés pour ce plan mais que le document (illisible) ne décrit plus : joints bruts,
+  // pour que la photo originale ne soit jamais perdue avec un plan endommagé.
+  let indexed: string[] = [];
+  try {
+    indexed = await repo.getPlanBlobIds(planId);
+  } catch {
+    // index illisible : rien de plus à joindre
+  }
+  for (const blobId of indexed) {
+    if (seen.has(blobId)) continue;
+    seen.add(blobId);
+    try {
+      const blob = await repo.getBlob(blobId);
+      if (!blob) continue;
+      const path = `fichiers-bruts/${blobId.replace(/[^\w.-]/g, '_')}.${EXT[blob.mimeType] ?? 'bin'}`;
+      entries[path] = [new Uint8Array(blob.bytes), { level: 0 }];
+      problems.push(
+        `Fichier du plan joint sans description (document illisible ; probablement la photo ou un pictogramme) : ${path}, SHA-256 ${await sha256Hex(blob.bytes)}.`,
+      );
+    } catch {
+      problems.push(`Fichier du plan illisible : ${blobId.slice(0, 8)}.`);
     }
   }
   if (doc?.plan.baseImage && !photo) problems.push('Photo originale NON incluse ou altérée.');

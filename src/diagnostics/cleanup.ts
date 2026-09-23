@@ -6,6 +6,8 @@
  */
 import type { PlanDocument } from '@/domain/model/types.ts';
 import type { OrphanBlob, ProjectRepository } from '@/persistence/ProjectRepository.ts';
+import { openPlanIds } from '@/persistence/planLock.ts';
+import { recoveryJournalTexts } from '@/persistence/recovery.ts';
 import { recoveryJournalPlanIds } from './health.ts';
 
 export type CleanupKind =
@@ -47,7 +49,7 @@ export const oldEnough = (o: OrphanBlob, now = Date.now()) =>
 
 export async function planCleanup(repo: ProjectRepository): Promise<CleanupItem[]> {
   const items: CleanupItem[] = [];
-  const orphans = (await repo.listOrphanBlobs()).filter((o) => oldEnough(o));
+  const orphans = (await repo.listOrphanBlobs(recoveryJournalTexts())).filter((o) => oldEnough(o));
   const group = (kind: CleanupKind, label: string, filter: (o: OrphanBlob) => boolean) => {
     const list = orphans.filter(filter);
     if (list.length)
@@ -75,10 +77,10 @@ export async function planCleanup(repo: ProjectRepository): Promise<CleanupItem[
   // Pictogrammes importés présents dans un brouillon mais utilisés par aucun objet ni logo.
   const unused: { planId: string; assetIds: string[] }[] = [];
   let bytes = 0;
-  const planIds = new Set<string>();
+  // Plans enregistrés (clés de la table) : un plan dont le camp manque n'est jamais « supprimé ».
+  const planIds = new Set(await repo.listPlanIds());
   for (const site of await repo.listSites())
     for (const summary of await repo.listPlans(site.id)) {
-      planIds.add(summary.id);
       let doc: PlanDocument | undefined;
       try {
         doc = await repo.loadPlan(summary.id);
@@ -136,15 +138,6 @@ export interface CleanupResult {
 }
 
 /** Plans ouverts en édition (verrou détenu, dans cet onglet ou un autre). */
-async function openPlanIds(): Promise<Set<string>> {
-  const held = (await navigator.locks?.query?.())?.held ?? [];
-  return new Set(
-    held.flatMap((l) =>
-      l.name?.startsWith('campplanner-plan-') ? [l.name.slice('campplanner-plan-'.length)] : [],
-    ),
-  );
-}
-
 export async function applyCleanup(
   repo: ProjectRepository,
   items: readonly CleanupItem[],
@@ -155,7 +148,7 @@ export async function applyCleanup(
   for (const item of items) {
     const result: CleanupResult = { kind: item.kind, done: 0, bytes: 0, skipped: [] };
     if (item.orphanIds) {
-      const r = await repo.deleteBlobs(item.orphanIds);
+      const r = await repo.deleteBlobs(item.orphanIds, recoveryJournalTexts());
       result.done = r.deleted;
       result.bytes = r.bytes;
     }
@@ -181,7 +174,7 @@ export async function applyCleanup(
           // Version contrôlée : un plan modifié ailleurs entre-temps n'est pas touché.
           await repo.savePlan(doc, { expectedVersion: opened.version });
           result.done += blobIds.length;
-          const r = await repo.deleteBlobs(blobIds); // seulement ceux devenus orphelins
+          const r = await repo.deleteBlobs(blobIds, recoveryJournalTexts()); // seulement ceux devenus orphelins
           result.bytes += r.bytes;
         } catch (error) {
           result.skipped.push(`${doc.plan.name} : ${error instanceof Error ? error.message : String(error)}`);
