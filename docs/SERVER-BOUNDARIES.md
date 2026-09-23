@@ -17,22 +17,22 @@
 3. **Le domaine ne connaît pas le réseau** : `src/domain/**` reste pur ; un serveur se branchera
    derrière `ProjectRepository` (même interface, autre implémentation) et un futur `AuthContext`.
 4. **Versions optimistes déjà en place** : chaque plan a un numéro de `version` ; `savePlan(doc,
-   { expectedVersion })` refuse d'écraser une version plus récente (`PlanConflictError`). C'est le
+{ expectedVersion })` refuse d'écraser une version plus récente (`PlanConflictError`). C'est le
    même contrat qu'un futur `PUT /plans/:id` avec `If-Match`.
 
 ## 2. Entités
 
-| Entité | Aujourd'hui (local) | Demain (serveur) | Champs prêts |
-| --- | --- | --- | --- |
-| **User** | aucune ; noms en texte libre (`author`, `approval.approver`) | compte authentifié (OIDC) | `authorUserId`, `approval.approverUserId`, `statusLog[].userId` (optionnels, **inclus dans le sceau** lorsqu'ils sont présents) |
-| **Organization** | aucune ; un « camp » (`Site`) n'appartient à personne | propriétaire des camps, gère les membres | — (à ajouter : `Site.organizationId`) |
-| **Project** | `Site` (camp) + `Plan` (IndexedDB `sites`, `plans`) | ressources serveur ; `Plan.version` → ETag | `plan.version` (entier croissant) |
-| **Revision** | `revisions` + `revisionSnapshots` ; instantané JSON exact + SHA-256 + sceau | immuable côté serveur (écriture unique), vérifiée par SHA-256 | `snapshot.sha256`, `seal`, `parentId` (hors sceau, voir § 5) |
-| **Approval** | `approval { approver, date, comment, recordedAt, revisionAuthor }`, choisie explicitement | acte signé par un utilisateur autorisé (permission `approve`) | `changeRevisionStatus(meta, { to, by, userId?, … })` accepte déjà un `userId` réel |
-| **AuditEvent** | `statusLog` par révision ; journal local des erreurs (non partagé) | journal serveur append-only (qui, quoi, quand, empreinte avant / après) | `statusLog[] { to, at, by, comment, userId? }` |
-| **Permission** | aucune (quiconque ouvre le navigateur peut tout faire) | rôles par organisation / camp : lecture, édition, révision, approbation, administration | — (vérifiée côté serveur, jamais seulement dans l'interface) |
-| **Stockage de fichiers** | `blobs` IndexedDB, dédupliqués par SHA-256 ; révisions → `blobIds` | stockage adressé par contenu (clé = SHA-256), URL signées | `baseImage.sha256`, `revisions.blobIds`, `findBlobBySha256` |
-| **Synchronisation** | aucune ; copies externes `.campplan` horodatées ; verrou **local** entre onglets | pousser / tirer par plan avec `expectedVersion` ; conflit → même dialogue que le conflit local | `PlanConflictError`, `ConflictDialog` (recharger / copie / écraser confirmé) |
+| Entité                   | Aujourd'hui (local)                                                                       | Demain (serveur)                                                                               | Champs prêts                                                                                                                    |
+| ------------------------ | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **User**                 | aucune ; noms en texte libre (`author`, `approval.approver`)                              | compte authentifié (OIDC)                                                                      | `authorUserId`, `approval.approverUserId`, `statusLog[].userId` (optionnels, **inclus dans le sceau** lorsqu'ils sont présents) |
+| **Organization**         | aucune ; un « camp » (`Site`) n'appartient à personne                                     | propriétaire des camps, gère les membres                                                       | — (à ajouter : `Site.organizationId`)                                                                                           |
+| **Project**              | `Site` (camp) + `Plan` (IndexedDB `sites`, `plans`)                                       | ressources serveur ; `Plan.version` → ETag                                                     | `plan.version` (entier croissant)                                                                                               |
+| **Revision**             | `revisions` + `revisionSnapshots` ; instantané JSON exact + SHA-256 + sceau               | immuable côté serveur (écriture unique), vérifiée par SHA-256                                  | `snapshot.sha256`, `seal`, `parentId` (hors sceau, voir § 5)                                                                    |
+| **Approval**             | `approval { approver, date, comment, recordedAt, revisionAuthor }`, choisie explicitement | acte signé par un utilisateur autorisé (permission `approve`)                                  | `changeRevisionStatus(meta, { to, by, userId?, … })` accepte déjà un `userId` réel                                              |
+| **AuditEvent**           | `statusLog` par révision ; journal local des erreurs (non partagé)                        | journal serveur append-only (qui, quoi, quand, empreinte avant / après)                        | `statusLog[] { to, at, by, comment, userId? }`                                                                                  |
+| **Permission**           | aucune (quiconque ouvre le navigateur peut tout faire)                                    | rôles par organisation / camp : lecture, édition, révision, approbation, administration        | — (vérifiée côté serveur, jamais seulement dans l'interface)                                                                    |
+| **Stockage de fichiers** | `blobs` IndexedDB, dédupliqués par SHA-256 ; révisions → `blobIds`                        | stockage adressé par contenu (clé = SHA-256), URL signées                                      | `baseImage.sha256`, `revisions.blobIds`, `findBlobBySha256`                                                                     |
+| **Synchronisation**      | aucune ; copies externes `.campplan` horodatées ; verrou **local** entre onglets          | pousser / tirer par plan avec `expectedVersion` ; conflit → même dialogue que le conflit local | `PlanConflictError`, `ConflictDialog` (recharger / copie / écraser confirmé)                                                    |
 
 ## 3. Points d'insertion prévus
 

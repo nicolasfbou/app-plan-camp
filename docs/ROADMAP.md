@@ -111,10 +111,23 @@ Règle : le parcours complet doit être fiable avant toute fonction avancée.
 - Démonstration sur la photo réelle du Camp 105 (`bench/camp105-phase7.mjs`) ; mesures de
   performance (`revisions.perf.test.ts`, `bench/revisions-browser-perf.mjs`)
 
-## Phase 8 — À définir
+## Phase 8 — Fiabilité, portabilité et exploitation terrain ✅
 
-Collaboration, serveur, comptes et permissions, synchronisation, commentaires : non développés
-(demande explicite), à planifier.
+- Copies externes `.campplan` horodatées (dossier choisi, File System Access API ; repli par
+  rappel + téléchargement) : toutes les 15 min, à la fermeture, après révision / approbation ;
+  rotation modifiable (10 / 7 / 4, approuvées conservées)
+- Santé du projet (vert / jaune / rouge), réparations contrôlées, nettoyage avec espace annoncé,
+  journal local des erreurs, diagnostic exportable (sans photo, contenu ni noms)
+- Verrou d'édition entre onglets (lecture seule, reprise de la main sans perte), versions et
+  conflits affichés, récupération après plantage (journal à version contrôlée)
+- Import sûr avec mode récupération partielle ; copie de secours d'urgence (même plan illisible)
+- Tests de plantage réel (processus tué), multi-onglets, portabilité, performances 50 MP
+- Frontières d'un futur serveur documentées (`docs/SERVER-BOUNDARIES.md`)
+
+## Phase 9 — À définir
+
+Collaboration, serveur, comptes et permissions, synchronisation, commentaires partagés : non
+développés (demande explicite), à planifier.
 
 ## V2
 

@@ -97,10 +97,18 @@ const importProject = async () => {
   await page.getByTestId('campplan-input').setInputFiles(campplan);
   await page.getByTestId('import-verified').waitFor({ timeout: 180_000 });
   await page.getByRole('button', { name: 'Importer', exact: true }).click();
-  await page.getByTestId('plan-title').waitFor({ timeout: 120_000 });
   await background();
 };
 const r = { image: { largeur: W, hauteur: H, megapixels: (W * H) / 1e6 } };
+const save = () => writeFileSync(join(out, 'perf-navigateur-phase8.json'), JSON.stringify(r, null, 2));
+const fail = async (e) => {
+  r.erreur = String(e);
+  save();
+  await page.screenshot({ path: join(out, 'perf-erreur.png') }).catch(() => undefined);
+  process.exit(1);
+};
+process.on('uncaughtException', fail);
+process.on('unhandledRejection', fail);
 r.heapInitialMo = await heap();
 r.importEtOuvertureMs = await time(importProject);
 const planUrl = page.url();
@@ -143,6 +151,7 @@ r.ouvertureMsMin = Math.min(...openClose);
 r.ouvertureMsMax = Math.max(...openClose);
 r.ouvertureMsMediane = openClose.sort((a, b) => a - b)[10];
 r.heapOuvrirFermerx20Mo = heapOpenClose;
+save();
 
 // Comparer des révisions (5 fois).
 const heapCompare = [];
@@ -178,6 +187,7 @@ for (let i = 0; i < 5; i++) {
 }
 r.comparaisonMs = compareMs;
 r.heapComparaisonsMo = heapCompare;
+save();
 
 // Exporter plusieurs PDF (3).
 const pdfMs = [];
@@ -200,6 +210,7 @@ for (let i = 0; i < 3; i++) {
 }
 r.exportPdfMs = pdfMs;
 r.heapExportsPdfMo = heapPdf;
+save();
 
 // Importer puis supprimer des projets (3).
 const heapImport = [];

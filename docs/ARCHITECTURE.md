@@ -904,12 +904,12 @@ sont données que si les deux états ont la même calibration (sinon en pixels i
 
 ### 18.5 Mesures (`revisions.perf.test.ts`, fake-indexeddb, Node)
 
-| Objets | Révisions | Création (moy.) | Liste | Chargement | Comparaison | Export .campplan | Import |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 300 | 5 | 35 ms | 0,9 ms | 6 ms | 4,5 ms | 131 ms | 140 ms |
-| 300 | 20 | 18 ms | 1,6 ms | 3,5 ms | 3,1 ms | 226 ms | 211 ms |
-| 600 | 10 | 29 ms | 1,0 ms | 6,8 ms | 6,2 ms | 217 ms | 199 ms |
-| 600 | 20 | 32 ms | 2,3 ms | 6,5 ms | 8,1 ms | 400 ms | 376 ms |
+| Objets | Révisions | Création (moy.) | Liste  | Chargement | Comparaison | Export .campplan | Import |
+| ------ | --------- | --------------- | ------ | ---------- | ----------- | ---------------- | ------ |
+| 300    | 5         | 35 ms           | 0,9 ms | 6 ms       | 4,5 ms      | 131 ms           | 140 ms |
+| 300    | 20        | 18 ms           | 1,6 ms | 3,5 ms     | 3,1 ms      | 226 ms           | 211 ms |
+| 600    | 10        | 29 ms           | 1,0 ms | 6,8 ms     | 6,2 ms      | 217 ms           | 199 ms |
+| 600    | 20        | 32 ms           | 2,3 ms | 6,5 ms     | 8,1 ms      | 400 ms           | 376 ms |
 
 Navigateur (Chromium, 20 révisions × 600 objets) : historique affiché en 72 ms, comparaison
 première ↔ dernière rendue en 0,5 s, mémoire JS ≈ 28 Mo (les instantanés ne sont pas chargés pour
@@ -943,3 +943,93 @@ lister).
   ajouté.
 - Tableau des révisions au cartouche limité aux six plus récentes (mention des antérieures).
 - Pas d'objets liés entre plans, ni de fusion d'historiques divergents (refusée à l'import).
+
+## 19. Fiabilité, portabilité et exploitation terrain (phase 8)
+
+### 19.1 Principe : ne jamais perdre le projet
+
+Trois copies indépendantes : IndexedDB (travail courant), journal de récupération synchrone
+(`localStorage`, fermeture brutale) et **copies externes** `.campplan` horodatées hors du
+navigateur (un navigateur qui vide son stockage ne fait plus perdre le projet).
+
+### 19.2 Versions, verrou et conflits (`persistence/planLock.ts`, `editor/session/*`)
+
+- Chaque enregistrement de plan porte une `version` ; `savePlan(doc, { expectedVersion })` lit
+  et écrit dans UNE transaction et lève `PlanConflictError` si la version a changé, **ou si le
+  plan a été supprimé ailleurs** (jamais de recréation silencieuse).
+- Verrou d'édition par plan (Web Locks) : un onglet édite, les autres sont en **lecture seule**
+  (« Ce plan est déjà ouvert ailleurs »), attendent dans la file et prennent la main à la
+  fermeture de l'éditeur. « Reprendre la main » (BroadcastChannel) : l'éditeur répond
+  « releasing », écrit, puis cède **seulement si tout est enregistré** — sinon il refuse
+  (`TakeoverRefusedError`). Un éditeur muet (figé) se voit retirer le verrou (`steal`) ; s'il
+  avait des modifications, elles sont journalisées et un conflit « main reprise » est ouvert :
+  elles ne sont jamais remplacées par la version d'un autre onglet.
+- Session PAR PLAN (`sessionStore.sessions`) : l'écriture finale d'un plan quitté vérifie SA
+  version, même si un autre plan est déjà ouvert. Une écriture refusée (lecture seule, conflit)
+  laisse le plan « non enregistré » (avertissement de fermeture, journal).
+- Conflit : recharger la version enregistrée, enregistrer ses modifications dans une copie, ou
+  écraser (case de confirmation ; impossible sur un plan supprimé ailleurs ou en lecture seule).
+- Journal de récupération : porte la version de base ; appliqué seulement si le plan n'a pas
+  changé depuis, sinon enregistré comme **copie** « (récupéré — modifié ailleurs) ». Un journal
+  illisible est mis de côté (jamais détruit en silence).
+
+### 19.3 Copies externes (`backups/*`)
+
+- File System Access API (`showDirectoryPicker`, Chromium) : dossier choisi une fois, handle
+  conservé (IndexedDB `settings`), permission redemandée si nécessaire. Arborescence
+  `<Camp>/<Plan> [id8]/<Plan> - AAAA-MM-JJ HHhMMmSS - rapide|revision-X|approuvee-X[-partielle].campplan`
+  (noms ASCII portables).
+- Déclencheurs : toutes les N minutes (15 par défaut, un seul onglet planifie), à la fermeture /
+  au masquage (au mieux), après la création d'une révision, après une approbation.
+- Repli (Firefox, Safari, pas de dossier) : rappel non bloquant quand une copie est **en retard**
+  (au-delà de l'intervalle, ou révision créée) → téléchargement en un clic.
+- Rotation (modifiable) : 10 rapides, 7 quotidiennes, 4 hebdomadaires, approuvées toujours
+  conservées ; jamais la plus récente ni la plus récente complète ; les copies partielles ne
+  comptent pas dans les quotas. Un fichier déposé à la main n'est jamais supprimé.
+- Si l'export normal échoue (révision altérée…), la copie de secours est écrite à la place
+  (marquée `-partielle`, signalée dans l'historique).
+
+### 19.4 Santé, réparation, nettoyage, diagnostic (`diagnostics/*`, `maintenance/*`)
+
+- Contrôles vert / jaune / rouge : document, version du format, photo présente et SHA-256,
+  fichiers PDF / pictogrammes, révisions (empreinte + sceau), index, ressources orphelines,
+  préférences de vue, journaux, espace IndexedDB, stockage persistant, export `.campplan`
+  possible, dernière copie externe, verrou. Aucune erreur cachée : chaque contrôle qui échoue
+  est affiché avec son message.
+- Réparations contrôlées : proposées une à une, précédées au choix d'une copie de secours ;
+  jamais sur une révision figée (seuls index, orphelins, préférences, journaux périmés).
+- Orphelins : un fichier n'est orphelin que si AUCUN contenu ne le cite — index, documents,
+  instantanés, correspondances de fichiers et journaux de récupération, même illisibles. Âge
+  minimum 1 h ; balayage de démarrage suspendu si un plan est ouvert dans un autre onglet.
+- Nettoyage : espace libérable affiché avant toute suppression ; plans ouverts non touchés ;
+  jamais un fichier référencé par une révision.
+- Diagnostic JSON : version, navigateur, tailles, nombres, empreintes, mémoire, contrôles,
+  journal. Jamais la photo ni le contenu du plan ; noms de camps, plans, fichiers, pictogrammes
+  et modèles **masqués** (sauf demande explicite).
+- Journal local borné (200 entrées) : import, export, stockage, récupération, fichier corrompu,
+  migration, sauvegarde, verrou, conflit, réparation ; vidable, joint au diagnostic.
+
+### 19.5 Import sûr et copie de secours (`persistence/campplan.ts`, `emergency.ts`)
+
+- Mode « récupération » : lecture élément par élément (et, archive tronquée, par les en-têtes
+  locaux), manifeste reconstruit, plan récupéré champ par champ (`domain/schema/salvage.ts`) ou
+  repris de la dernière révision valide ; révisions et fichiers invalides écartés ; chaque perte
+  listée ; le plan importé porte « (récupéré — incomplet) » et un bandeau permanent. Jamais
+  présenté comme complet.
+- « Exporter une copie de secours maintenant » (barre d'outils, liste des plans, page d'erreur
+  d'un plan illisible) : 1. plan (en mémoire s'il n'a pas pu être enregistré ; brut s'il est
+  illisible), 2. photo originale, 3. révisions valides (les altérées jointes brutes, non
+  vérifiées), 4. autres ressources ; `LISEZ-MOI.txt` et manifeste disent ce qui manque. N'utilise
+  que le stockage et le format.
+
+### 19.6 Mesures (`bench/phase8-browser-perf.mjs`, `phase8.perf.test.ts`)
+
+Voir `local-test-data/phase8/perf` : image d'essai de 50 MP, 1 000 objets, 4 vues, 3
+pictogrammes importés, un modèle, 20 révisions ; ouverture / fermeture × 20, comparaisons,
+exports PDF, import / suppression, tas JS après ramasse-miettes forcé.
+
+### 19.7 Frontières d'un futur serveur
+
+`docs/SERVER-BOUNDARIES.md` : User, Organization, Project, Revision, Approval, AuditEvent,
+Permission, stockage de fichiers, synchronisation. Rien n'est construit ; aucun utilisateur
+fictif ; les fonctions d'approbation acceptent déjà un `userId` vérifié (absent en local).
