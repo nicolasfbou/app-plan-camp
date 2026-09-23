@@ -13,6 +13,7 @@ import type { PlanDocument } from '@/domain/model/types.ts';
 import { referencedBlobIds } from '@/domain/revisions/revision.ts';
 import { salvagePlanDocument } from '@/domain/schema/salvage.ts';
 import { parsePlanDocument, serializePlanDocument } from '@/domain/schema/serialization.ts';
+import { asciiName } from '@/backups/rotation.ts';
 import { CAMPPLAN_FORMAT_VERSION, type CampplanManifest } from './campplan.ts';
 import type { ProjectRepository } from './ProjectRepository.ts';
 
@@ -37,8 +38,6 @@ const EXT: Record<string, string> = {
   'application/pdf': 'pdf',
   'image/svg+xml': 'svg',
 };
-
-const safeName = (text: string) => text.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'plan';
 
 export interface EmergencyOptions {
   now?: Date;
@@ -276,7 +275,8 @@ export async function exportEmergency(
   const stamp = now.toISOString().slice(0, 16).replace('T', ' ').replace(':', 'h');
   return {
     bytes: zipSync(entries, { level: 6 }),
-    fileName: `${safeName(`${siteName ? `${siteName} - ` : ''}${doc?.plan.name ?? planId}`)} - SECOURS ${stamp}.campplan`,
+    // Nom ASCII portable (clés USB, disques Windows, navigateurs) comme les sauvegardes externes.
+    fileName: `${asciiName(`${siteName ? `${siteName} - ` : ''}${doc?.plan.name ?? planId}`)} - SECOURS ${stamp}.campplan`,
     complete,
     problems,
     included: {

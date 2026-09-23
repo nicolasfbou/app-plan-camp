@@ -39,7 +39,7 @@ const browser = await chromium.launch({
 });
 const newContext = async () => {
   const context = await browser.newContext({
-    viewport: { width: 1600, height: 1000 },
+    viewport: { width: 1600, height: 1500 },
     acceptDownloads: true,
   });
   // Dossier de sauvegarde : le sélecteur natif exige un geste humain ; dossier privé équivalent.
@@ -251,9 +251,22 @@ await fresh.goto(APP);
 const before = await idb(fresh, 'plans');
 await importFile(fresh, emergencyPath, { recovery: manifest.emergency?.complete === false });
 const [reDoc] = (await idb(fresh, 'plans')).map((r) => r.document);
-const blobs = await idb(fresh, 'blobs');
-const photoBlob = blobs.find((b) => b.id === reDoc.plan.baseImage.blobId);
-const reSha = sha(Buffer.from(photoBlob.bytes));
+// Empreinte recalculée dans le navigateur, sur les octets stockés dans IndexedDB.
+const reSha = await fresh.evaluate(
+  (blobId) =>
+    new Promise((resolve) => {
+      const open = indexedDB.open('campplanner');
+      open.onsuccess = () => {
+        const r = open.result.transaction('blobs').objectStore('blobs').get(blobId);
+        r.onsuccess = async () => {
+          const digest = await crypto.subtle.digest('SHA-256', r.result.bytes);
+          resolve([...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join(''));
+          open.result.close();
+        };
+      };
+    }),
+  reDoc.plan.baseImage.blobId,
+);
 await fresh.getByRole('tab', { name: 'Révisions' }).click();
 await fresh.getByTestId('revision-card').first().waitFor();
 await fresh.screenshot({ path: out('camp105-phase8-navigateur-vide-reimport.png') });
