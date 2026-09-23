@@ -97,7 +97,8 @@ function entryFor(o: PlanObject, doc: PlanDocument): Omit<LegendEntry, 'count'> 
         ? (doc.assets[assetIdOf(o.symbolId)]?.name ?? 'Pictogramme')
         : (findSymbol(o.symbolId)?.name ?? 'Pictogramme');
       return {
-        key: `icon:${o.symbolId}`,
+        // Le texte fait partie du pictogramme (ex. « 20 » ou « 50 » km/h) : deux entrées distinctes.
+        key: `icon:${o.symbolId}:${o.text ?? ''}`,
         group: 'signage',
         defaultLabel: name,
         swatch: { kind: 'symbol', symbolId: o.symbolId, text: o.text },

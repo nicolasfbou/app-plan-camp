@@ -178,6 +178,9 @@ export function rasterPlan(
     const page = pageSize(print);
     return { page, pxPerMm: print.dpi / 25.4, input: composeInput(src, print, legend, page, 'paper') };
   }
+  // Plan à la résolution de la photo : une légende « automatique » va à côté (jamais de repli qui
+  // réduirait la carte sous la résolution demandée).
+  if (legend.placement === 'map-auto') legend = { ...legend, placement: 'side' };
   const extent = exportExtent(src.doc, print);
   // mm de « page » par pixel image : carte d'environ 400 mm, mais au moins 4 px par mm pour que la
   // légende et le cartouche restent lisibles sur une petite photo.

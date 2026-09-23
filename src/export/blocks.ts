@@ -374,6 +374,8 @@ export interface TitleBlockFit {
   font: number;
   labelFont: number;
   padding: number;
+  /** Texte raccourci faute de place (signalé sur le plan et dans les avertissements). */
+  truncated: boolean;
 }
 
 /**
@@ -390,7 +392,7 @@ export function fitTitleBlock(
   sizeFactor = 1,
 ): TitleBlockFit {
   const font = 7.5 * sizeFactor;
-  const labelFont = 6 * sizeFactor;
+  const labelFont = Math.max(MIN_PRINT_PT, 6 * sizeFactor);
   const padding = 2;
   const gap = 1.5;
   const inner = width - 2 * padding;
@@ -432,7 +434,62 @@ export function fitTitleBlock(
     else if (++col >= columns) flush();
   }
   if (col > 0) flush();
-  return { width, height: y - gap + padding, cells, logo: logoFit, font, labelFont, padding };
+  return {
+    width,
+    height: y - gap + padding,
+    cells,
+    logo: logoFit,
+    font,
+    labelFont,
+    padding,
+    truncated: false,
+  };
+}
+
+const TRUNCATION_NOTE = '… (suite non imprimée : place insuffisante)';
+
+/**
+ * Cartouche tenant dans `maxHeight` : taille réduite jusqu'à 6 pt ; s'il dépasse encore, les
+ * dernières lignes (les notes d'abord) sont remplacées par une mention visible « … suite non
+ * imprimée » — jamais coupées en silence, jamais dessinées hors de la page.
+ */
+export function fitTitleBlockWithin(
+  p: Painter,
+  rows: TitleBlockRow[],
+  width: number,
+  columns: number,
+  logo: { aspect: number } | null,
+  status: 'approved' | 'pending',
+  maxHeight: number,
+): TitleBlockFit {
+  let fit = fitTitleBlock(p, rows, width, columns, logo, status, 1);
+  for (const f of [0.9, 0.8]) {
+    if (fit.height <= maxHeight) return fit;
+    fit = fitTitleBlock(p, rows, width, columns, logo, status, f);
+  }
+  if (fit.height <= maxHeight) return fit;
+  const line = fit.font * MM_PER_PT * 1.2;
+  let excess = fit.height - maxHeight;
+  const cells = fit.cells.map((c) => ({ ...c, lines: [...c.lines] }));
+  // Les notes, puis les cellules suivantes en partant de la fin, perdent des lignes.
+  const order = [...cells].sort(
+    (a, b) => Number(b.label === 'Notes') - Number(a.label === 'Notes') || b.y - a.y,
+  );
+  for (const cell of order) {
+    if (excess <= 0) break;
+    const removable = Math.max(0, cell.lines.length - 1);
+    const n = Math.min(removable, Math.ceil(excess / line) + 1);
+    if (n <= 0) continue;
+    cell.lines.splice(cell.lines.length - n, n);
+    cell.lines[cell.lines.length - 1] = TRUNCATION_NOTE;
+    cell.height -= n * line;
+    excess -= n * line;
+    // Les cellules situées en dessous remontent d'autant.
+    for (const other of cells) if (other.y > cell.y) other.y -= n * line;
+  }
+  // En dernier recours : les cellules qui dépassent encore ne sont pas dessinées (signalé).
+  const kept = cells.filter((c) => c.y + c.height <= maxHeight - fit.padding + 1e-6);
+  return { ...fit, cells: kept, height: maxHeight, truncated: true };
 }
 
 export function drawTitleBlock(p: Painter, fit: TitleBlockFit, rect: Rect, logo: PainterImage | null) {
@@ -451,6 +508,7 @@ export function drawTitleBlock(p: Painter, fit: TitleBlockFit, rect: Rect, logo:
   const line = fit.font * MM_PER_PT * 1.2;
   const labelH = fit.labelFont * MM_PER_PT * 1.4;
   for (const cell of fit.cells) {
+    if (cell.y + cell.height > rect.height + 1e-6) continue; // jamais hors du cadre
     const x = rect.x + cell.x;
     const y = rect.y + cell.y;
     // Séparateur discret au-dessus de chaque cellule.

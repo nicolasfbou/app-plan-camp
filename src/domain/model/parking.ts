@@ -7,7 +7,7 @@
  */
 import { newId, nowIso } from './factories.ts';
 import { segmentIntersection } from './paths.ts';
-import { geometryCenter, rotatePoint } from './shapes.ts';
+import { geometryCenter, rotatePoint, roundedRectPoints } from './shapes.ts';
 import type { PlanDocument, PlanObject, Point, Style } from './types.ts';
 
 export interface StallParams {
@@ -34,13 +34,8 @@ export function zoneOutline(zone: PlanObject): Point[] {
   const g = zone.geometry;
   const c = geometryCenter(g);
   let pts: Point[];
-  if (g.kind === 'rect')
-    pts = [
-      { x: g.x, y: g.y },
-      { x: g.x + g.width, y: g.y },
-      { x: g.x + g.width, y: g.y + g.height },
-      { x: g.x, y: g.y + g.height },
-    ];
+  // Coins arrondis compris : le contour testé est exactement celui qui est dessiné.
+  if (g.kind === 'rect') pts = roundedRectPoints(g.x, g.y, g.width, g.height, g.cornerRadius);
   else if (g.kind === 'ellipse')
     pts = Array.from({ length: 72 }, (_, k) => {
       const a = (k / 72) * 2 * Math.PI;
@@ -130,6 +125,16 @@ export function layoutStalls(outline: readonly Point[], params: StallParams): St
   return specs;
 }
 
+/** Nombre maximal de cases par génération (au-delà, l'éditeur deviendrait très lent). */
+export const MAX_STALLS = 2000;
+
+export class StallLimitError extends Error {
+  override name = 'StallLimitError';
+  constructor(readonly count: number) {
+    super(`${count} cases : au-delà de la limite de ${MAX_STALLS} par génération.`);
+  }
+}
+
 export const STALL_STYLE: Style = {
   fill: '#ffffff',
   fillOpacity: 0.08,
@@ -142,7 +147,7 @@ export const STALL_STYLE: Style = {
 
 /**
  * Remplace les cases de la zone par une nouvelle génération (une seule action d'historique pour
- * l'appelant). Retourne le nombre de cases créées. Les cases sont des objets indépendants :
+ * l'appelant). Retourne le nombre de cases créées ; `StallLimitError` si plus de `MAX_STALLS`. Les cases sont des objets indépendants :
  * chacune peut ensuite être déplacée, modifiée ou supprimée.
  */
 export function generateStalls(
@@ -154,9 +159,11 @@ export function generateStalls(
 ): number {
   const zone = doc.objects[zoneId];
   if (!zone || (zone.type !== 'zone' && zone.type !== 'building')) return 0;
+  const specs = layoutStalls(zoneOutline(zone), params);
+  // Trop de cases (dimensions trop petites) : rien n'est modifié, l'appelant prévient l'utilisateur.
+  if (specs.length > MAX_STALLS) throw new StallLimitError(specs.length);
   for (const o of Object.values(doc.objects))
     if (o.type === 'stall' && o.parentZoneId === zoneId) delete doc.objects[o.id];
-  const specs = layoutStalls(zoneOutline(zone), params);
   let z = Math.max(
     -1,
     ...Object.values(doc.objects)

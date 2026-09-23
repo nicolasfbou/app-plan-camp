@@ -18,6 +18,7 @@ import {
   drawTitleBlock,
   fitLegend,
   fitTitleBlock,
+  fitTitleBlockWithin,
   type LegendFit,
   type Rect,
   type TitleBlockFit,
@@ -34,6 +35,7 @@ export interface ExportWarning {
     | 'legend-overflow'
     | 'legend-over-building'
     | 'title-block-overflow'
+    | 'approval-stale'
     | 'not-calibrated'
     | 'north-undefined'
     | 'north-estimated'
@@ -220,8 +222,8 @@ export function layoutPage(p: Painter, input: ComposeInput, symbols: SymbolSourc
   const logo = logoAspect(doc, print, symbols);
   const status = doc.plan.titleBlock.status === 'approved' ? ('approved' as const) : ('pending' as const);
 
-  // Échelle provisoire pour le texte du cartouche (le cartouche ne change pas la taille de la carte
-  // au point de modifier l'échelle affichée de plus que l'arrondi : on recalcule ensuite).
+  // Cartouche en bas : sa hauteur est réservée avec une échelle provisoire ; son texte est recalculé
+  // à la fin avec l'échelle DÉFINITIVE de la carte (l'échelle imprimée est toujours exacte).
   let mapBox: Rect = { ...body, width: body.width - (hasColumn ? columnWidth + GAP : 0) };
   let titleBlock: PageLayout['titleBlock'] = null;
   if (inc.titleBlock && tbPlacement === 'bottom') {
@@ -229,12 +231,8 @@ export function layoutPage(p: Painter, input: ComposeInput, symbols: SymbolSourc
     const columns = Math.max(2, Math.floor(width / 48));
     const guess = fitMap({ ...mapBox, height: mapBox.height * 0.8 }, extent).k;
     const fit = fitTitleBlock(p, composeTitleRows(input, guess), width, columns, logo, status);
-    const height = Math.min(fit.height, body.height * 0.45);
-    if (fit.height > height)
-      warnings.push({
-        code: 'title-block-overflow',
-        message: 'Le cartouche dépasse la place disponible : agrandissez le format ou réduisez les notes.',
-      });
+    // Une ligne de marge : le texte définitif de l'échelle peut être un peu plus long.
+    const height = Math.min(fit.height + fit.font * MM_PER_PT * 1.2, body.height * 0.45);
     titleBlock = { rect: { x: body.x, y: body.y + body.height - height, width, height }, fit };
     mapBox = { ...mapBox, height: body.height - height - GAP };
   }
@@ -251,12 +249,6 @@ export function layoutPage(p: Painter, input: ComposeInput, symbols: SymbolSourc
   if (sideTitle && column) {
     const fit = fitTitleBlock(p, composeTitleRows(input, k), column.width, 2, logo, status);
     const height = Math.min(fit.height, column.height * (sideLegend ? 0.7 : 1));
-    if (fit.height > height)
-      warnings.push({
-        code: 'title-block-overflow',
-        message:
-          'Le cartouche dépasse la colonne : agrandissez le format, passez-le en bas de page ou réduisez les notes.',
-      });
     titleBlock = {
       rect: { x: column.x, y: column.y + column.height - height, width: column.width, height },
       fit,
@@ -284,7 +276,12 @@ export function layoutPage(p: Painter, input: ComposeInput, symbols: SymbolSourc
       legendSettings.placement === 'map-auto' ? undefined : (legendSettings.placement as 'top-left'),
     );
     if (corner.overBuilding) {
-      if (legendSettings.placement === 'map-auto') {
+      if (legendSettings.placement === 'map-auto' && column && titleBlock && sideTitle) {
+        // Aucun coin libre : la légende rejoint la colonne du cartouche (la carte ne change pas).
+        const space = { ...column, height: titleBlock.rect.y - column.y - GAP };
+        const f2 = fitLegend(p, entries, legendSettings, space.width, space.height);
+        legend = { rect: { ...space, height: f2.height }, fit: f2, overlay: false };
+      } else if (legendSettings.placement === 'map-auto') {
         // Aucun coin libre : la légende passe à côté du plan plutôt que de cacher un bâtiment.
         const box = { ...mapBox, width: mapBox.width - columnWidth - GAP };
         ({ map, k } = fitMap(box, extent));
@@ -306,6 +303,37 @@ export function layoutPage(p: Painter, input: ComposeInput, symbols: SymbolSourc
     warnings.push({
       code: 'legend-overflow',
       message: `Légende : ${legend.fit.omitted} entrée(s) ne tiennent pas (signalées sur le plan). Réduisez la taille, passez en mode compact ou agrandissez le format.`,
+    });
+
+  // Cartouche définitif : échelle de la carte telle qu'elle sera imprimée ; texte réduit, puis
+  // raccourci de façon visible s'il ne tient pas (jamais dessiné hors de la page).
+  if (titleBlock) {
+    const { rect } = titleBlock;
+    const columns = rect.width > 120 ? Math.max(2, Math.floor(rect.width / 48)) : 2;
+    const fit = fitTitleBlockWithin(
+      p,
+      composeTitleRows(input, k),
+      rect.width,
+      columns,
+      logo,
+      status,
+      rect.height,
+    );
+    const height = Math.min(rect.height, fit.height);
+    titleBlock = { rect: { ...rect, y: rect.y + rect.height - height, height }, fit };
+    if (fit.truncated)
+      warnings.push({
+        code: 'title-block-overflow',
+        message:
+          'Cartouche trop long pour la place disponible : la fin des notes n’est pas imprimée (mention « suite non imprimée » sur le plan). Agrandissez le format, placez le cartouche en bas ou raccourcissez les notes.',
+      });
+  }
+  const block = doc.plan.titleBlock;
+  if (block.status === 'approved' && block.approvedAt && doc.plan.updatedAt > block.approvedAt)
+    warnings.push({
+      code: 'approval-stale',
+      message:
+        'Plan modifié après son approbation : le bandeau l’indique ; faites approuver la nouvelle version.',
     });
 
   // Nord : jamais supposé. Affiché seulement s'il a été orienté (estimé ou vérifié).
@@ -486,21 +514,36 @@ export function drawPage(
   if (layout.title) {
     const t = layout.title;
     const block = doc.plan.titleBlock;
-    p.text(block.title || doc.plan.name, t.x, t.y + t.height / 2, {
-      size: 14,
-      bold: true,
-      color: '#0f172a',
-      baseline: 'middle',
-    });
     const approved = block.status === 'approved';
-    const badge = approved ? 'APPROUVÉ' : `${STATUS_LABELS[block.status].toUpperCase()} — NON APPROUVÉ`;
+    const stale = approved && !!block.approvedAt && doc.plan.updatedAt > block.approvedAt;
+    const badge = stale
+      ? 'APPROUVÉ PUIS MODIFIÉ — À RÉAPPROUVER'
+      : approved
+        ? 'APPROUVÉ'
+        : `${STATUS_LABELS[block.status].toUpperCase()} — NON APPROUVÉ`;
+    const badgeWidth = p.textWidth(badge, 8, true);
     p.text(badge, t.x + t.width, t.y + t.height / 2, {
       size: 8,
       bold: true,
-      color: approved ? '#047857' : '#b45309',
+      color: approved && !stale ? '#047857' : '#b45309',
       align: 'right',
       baseline: 'middle',
     });
+    // Titre mesuré : réduit jusqu'à 9 pt, puis raccourci (signalé) ; jamais sur le statut.
+    const room = t.width - badgeWidth - 6;
+    let text = block.title || doc.plan.name;
+    let size = 14;
+    while (size > 9 && p.textWidth(text, size, true) > room) size -= 0.5;
+    if (p.textWidth(text, size, true) > room) {
+      while (text.length > 1 && p.textWidth(`${text}…`, size, true) > room) text = text.slice(0, -1);
+      text = `${text.trimEnd()}…`;
+      warnings.push({
+        code: 'cut-text',
+        message:
+          'Titre trop long pour le bandeau : il est raccourci (le titre complet figure dans le cartouche).',
+      });
+    }
+    p.text(text, t.x, t.y + t.height / 2, { size, bold: true, color: '#0f172a', baseline: 'middle' });
     p.path(
       [
         [

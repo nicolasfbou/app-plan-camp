@@ -146,7 +146,7 @@ export function CorridorProperties({
           onChange={(unit) =>
             set(
               unit === 'meters'
-                ? { ...object, widthMeters: Math.round(object.width * mpp * 100) / 100 }
+                ? { ...object, widthMeters: Math.max(0.01, Math.round(object.width * mpp * 100) / 100) }
                 : { ...object, width: corridorWidthPx(object, doc.plan.calibration), widthMeters: null },
               'Unité de largeur',
             )

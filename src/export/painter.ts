@@ -4,6 +4,7 @@
  * Deux implémentations : canevas (aperçu, PNG, JPG) et PDF (vectoriel). Le même code de mise en
  * page les pilote : l'aperçu montre exactement ce que contiendra le PDF.
  */
+import { roundedRectPoints } from '@/domain/model/shapes.ts';
 import type { Point } from '@/domain/model/types.ts';
 
 export interface FillSpec {
@@ -104,24 +105,8 @@ export function rectPath(x: number, y: number, w: number, h: number): Point[] {
   ];
 }
 
-/** Rectangle à coins arrondis, en polygone (arcs approchés par des segments courts). */
-export function roundedRectPath(x: number, y: number, w: number, h: number, r: number): Point[] {
-  const radius = Math.max(0, Math.min(r, w / 2, h / 2));
-  if (radius <= 0) return rectPath(x, y, w, h);
-  const pts: Point[] = [];
-  const corners = [
-    { cx: x + w - radius, cy: y + radius, a0: -90 },
-    { cx: x + w - radius, cy: y + h - radius, a0: 0 },
-    { cx: x + radius, cy: y + h - radius, a0: 90 },
-    { cx: x + radius, cy: y + radius, a0: 180 },
-  ];
-  for (const c of corners)
-    for (let i = 0; i <= 6; i++) {
-      const a = ((c.a0 + i * 15) * Math.PI) / 180;
-      pts.push({ x: c.cx + radius * Math.cos(a), y: c.cy + radius * Math.sin(a) });
-    }
-  return pts;
-}
+/** Rectangle à coins arrondis, en polygone (même contour que le générateur de cases). */
+export const roundedRectPath = roundedRectPoints;
 
 /**
  * Découpe un texte en lignes d'au plus `maxWidth` mm, par mots entiers ; un mot plus long que la
@@ -131,7 +116,8 @@ export function wrapText(text: string, maxWidth: number, measure: (s: string) =>
   const lines: string[] = [];
   for (const paragraph of text.split('\n')) {
     let line = '';
-    for (let word of paragraph.split(/\s+/).filter(Boolean)) {
+    // Espaces ordinaires seulement : l'espace fine insécable d'un nombre (« 1:2 900 ») ne coupe jamais.
+    for (let word of paragraph.split(/[ \t]+/).filter(Boolean)) {
       const candidate = line ? `${line} ${word}` : word;
       if (measure(candidate) <= maxWidth) {
         line = candidate;

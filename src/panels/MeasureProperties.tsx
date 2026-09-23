@@ -6,7 +6,13 @@
 import { Grid3x3, Unlink } from 'lucide-react';
 import { useState } from 'react';
 import { formatArea, formatLength, measureObject, metersPerPixel } from '@/domain/model/measure.ts';
-import { generateStalls, STALL_DEFAULTS_M, stallCount } from '@/domain/model/parking.ts';
+import {
+  generateStalls,
+  MAX_STALLS,
+  STALL_DEFAULTS_M,
+  StallLimitError,
+  stallCount,
+} from '@/domain/model/parking.ts';
 import type { PlanDocument, PlanObject } from '@/domain/model/types.ts';
 import { t } from '@/i18n/index.ts';
 import { useEditorStore } from '@/store/editorStore.ts';
@@ -72,20 +78,26 @@ export function ParkingGenerator({
   const generate = () => {
     let created = 0;
     const strokeWidth = Math.max(0.5, 2 / useViewportStore.getState().viewport.scale);
-    planStore.getState().update('Générer les cases de stationnement', (d) => {
-      created = generateStalls(
-        d,
-        zone.id,
-        {
-          width: toPx(params.width),
-          length: toPx(params.length),
-          aisle: toPx(params.aisle),
-          rows: params.rows,
-          angleDeg: params.angle,
-        },
-        strokeWidth,
-      );
-    });
+    try {
+      planStore.getState().update('Générer les cases de stationnement', (d) => {
+        created = generateStalls(
+          d,
+          zone.id,
+          {
+            width: toPx(params.width),
+            length: toPx(params.length),
+            aisle: toPx(params.aisle),
+            rows: params.rows,
+            angleDeg: params.angle,
+          },
+          strokeWidth,
+        );
+      });
+    } catch (error) {
+      if (!(error instanceof StallLimitError)) throw error;
+      useEditorStore.getState().notify(t('parking.tooMany', { count: error.count, max: MAX_STALLS }));
+      return;
+    }
     useEditorStore.getState().notify(t('parking.created', { count: created }));
   };
   const field = (key: 'width' | 'length' | 'aisle', label: string) => (

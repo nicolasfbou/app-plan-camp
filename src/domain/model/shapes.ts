@@ -40,6 +40,34 @@ export function geometryBox(geometry: Geometry): Box {
   }
 }
 
+/**
+ * Contour d'un rectangle à coins arrondis (arcs approchés par des segments de 15°). Partagé par
+ * l'export et le générateur de cases : le contour utilisé est exactement celui qui est dessiné.
+ */
+export function roundedRectPoints(x: number, y: number, w: number, h: number, r: number): Point[] {
+  const radius = Math.max(0, Math.min(r, w / 2, h / 2));
+  if (radius <= 0)
+    return [
+      { x, y },
+      { x: x + w, y },
+      { x: x + w, y: y + h },
+      { x, y: y + h },
+    ];
+  const pts: Point[] = [];
+  const corners = [
+    { cx: x + w - radius, cy: y + radius, a0: -90 },
+    { cx: x + w - radius, cy: y + h - radius, a0: 0 },
+    { cx: x + radius, cy: y + h - radius, a0: 90 },
+    { cx: x + radius, cy: y + radius, a0: 180 },
+  ];
+  for (const c of corners)
+    for (let i = 0; i <= 6; i++) {
+      const a = ((c.a0 + i * 15) * Math.PI) / 180;
+      pts.push({ x: c.cx + radius * Math.cos(a), y: c.cy + radius * Math.sin(a) });
+    }
+  return pts;
+}
+
 /** Centre de rotation de la géométrie. */
 export function geometryCenter(geometry: Geometry): Point {
   const box = geometryBox(geometry);

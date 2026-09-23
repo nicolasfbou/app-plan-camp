@@ -362,6 +362,8 @@ export const fr = {
   'parking.created': '{count} case(s) créée(s). Chaque case reste modifiable ; aucune ne dépasse du contour.',
   'parking.help':
     'Régénérer remplace les cases rattachées à la zone (les cases détachées sont conservées). Les dimensions sont des paramètres de dessin, pas une attestation de conformité réglementaire.',
+  'parking.tooMany':
+    '{count} cases : trop nombreuses (au plus {max} par génération). Agrandissez les cases ou réduisez les rangées ; rien n’a été modifié.',
   'parking.stall': 'Case',
   'parking.stallOf': 'Case générée dans « {name} ».',
   'parking.stallFree': 'Case indépendante (non rattachée à une zone).',

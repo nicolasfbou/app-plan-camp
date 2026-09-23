@@ -5,9 +5,13 @@ import {
   createAreaObject,
   createCorridorObject,
   createFlowObject,
+  createIconObject,
   createTextObject,
 } from '@/domain/model/objectFactory.ts';
 import { createPlanDocument, duplicatePlanDocument } from '@/domain/model/factories.ts';
+import { generateStalls, MAX_STALLS, StallLimitError } from '@/domain/model/parking.ts';
+import { pointInPolygon } from '@/domain/model/parking.ts';
+import { roundedRectPoints } from '@/domain/model/shapes.ts';
 import type { PlanDocument, Point } from '@/domain/model/types.ts';
 import { legendEntries, shownLegendEntries } from '@/domain/print/legend.ts';
 import { pageSize } from '@/domain/print/paper.ts';
@@ -363,5 +367,128 @@ describe('outils', () => {
     expect(migrated.plan.titleBlock.status).toBe('draft');
     expect(migrated.plan.print.paper).toBe('tabloid');
     expect((migrated.objects[corridor.id] as unknown as { widthMeters: unknown }).widthMeters).toBeNull();
+  });
+});
+
+describe('corrections issues de la revue', () => {
+  const printed = (layout: ReturnType<typeof layoutPage>) =>
+    layout.titleBlock!.fit.cells.find((c) => c.label === 'Échelle')!.lines.join(' ');
+
+  it('échelle du cartouche = échelle réelle de la carte (cartouche en bas, repli de la légende)', () => {
+    const doc = photoDoc();
+    doc.plan.calibration = { p1: P(0, 0), p2: P(1000, 0), distanceMeters: 250 };
+    doc.plan.titleBlock.placement = 'bottom';
+    doc.plan.titleBlock.notes = 'Note longue. '.repeat(40);
+    let layout = layoutPage(new RecordingPainter(), input(doc), null);
+    expect(printed(layout)).toContain(scaleRatioText(doc.plan.calibration, layout.transform.k)!);
+
+    // Bâtiments dans les quatre coins : la légende « automatique » passe à côté de la carte.
+    doc.plan.legend.placement = 'map-auto';
+    for (const [x, y] of [
+      [0, 0],
+      [3000, 0],
+      [0, 1650],
+      [3000, 1650],
+    ] as const)
+      addObject(
+        doc,
+        createAreaObject(
+          doc,
+          { kind: 'rect', x, y, width: 1000, height: 600, cornerRadius: 0 },
+          'building.dormitory',
+        ),
+      );
+    layout = layoutPage(new RecordingPainter(), input(doc), null);
+    expect(layout.legend!.overlay).toBe(false);
+    expect(printed(layout)).toContain(scaleRatioText(doc.plan.calibration, layout.transform.k)!);
+  });
+
+  it('cartouche trop long : réduit puis raccourci de façon visible, jamais hors de son cadre', () => {
+    const doc = photoDoc();
+    doc.plan.titleBlock.notes = 'Consigne très longue à respecter sur le chantier. '.repeat(200);
+    const print = { ...doc.plan.print, paper: 'letter' as const, orientation: 'portrait' as const };
+    const p = new RecordingPainter();
+    const layout = layoutPage(p, input(doc, { print, page: pageSize(print) }), null);
+    const { rect, fit } = layout.titleBlock!;
+    expect(fit.truncated).toBe(true);
+    expect(layout.warnings.map((w) => w.code)).toContain('title-block-overflow');
+    drawPage(p, input(doc, { print, page: pageSize(print) }), layout, {
+      photo: null,
+      symbols: null,
+      background: 'white',
+    });
+    expect(p.texts.some((t) => t.text.includes('suite non imprimée'))).toBe(true);
+    for (const t of p.texts) expect(t.y).toBeLessThanOrEqual(pageSize(print).height);
+    expect(rect.y + rect.height).toBeLessThanOrEqual(pageSize(print).height - print.marginMm + 1e-6);
+  });
+
+  it('titre trop long : raccourci et signalé, sans chevaucher le statut', () => {
+    const doc = photoDoc();
+    doc.plan.titleBlock.title = 'Plan de circulation '.repeat(20);
+    const p = new RecordingPainter();
+    const layout = layoutPage(p, input(doc), null);
+    const warnings = drawPage(p, input(doc), layout, { photo: null, symbols: null, background: 'white' });
+    expect(warnings.some((w) => w.code === 'cut-text' && w.message.includes('Titre'))).toBe(true);
+    const title = p.texts.find((t) => t.text.startsWith('Plan de circulation'))!;
+    expect(title.text.endsWith('…')).toBe(true);
+  });
+
+  it('plan modifié après approbation : signalé, le bandeau demande une nouvelle approbation', () => {
+    const doc = photoDoc();
+    setPlanStatus(
+      doc,
+      'approved',
+      { confirmed: true, approvedBy: 'A. Tremblay' },
+      '2026-09-01T12:00:00.000Z',
+    );
+    doc.plan.updatedAt = '2026-09-02T12:00:00.000Z';
+    const p = new RecordingPainter();
+    const layout = layoutPage(p, input(doc), null);
+    expect(layout.warnings.map((w) => w.code)).toContain('approval-stale');
+    drawPage(p, input(doc), layout, { photo: null, symbols: null, background: 'white' });
+    expect(p.texts.map((t) => t.text)).toContain('APPROUVÉ PUIS MODIFIÉ — À RÉAPPROUVER');
+  });
+
+  it('légende : un même pictogramme avec des textes différents donne deux entrées', () => {
+    const doc = makeDocument();
+    for (const text of ['20', '50']) {
+      const icon = createIconObject(doc, P(0, 0), 'sign.speed-limit', 'Limite de vitesse');
+      addObject(doc, { ...icon, text } as typeof icon);
+    }
+    expect(legendEntries(doc)).toHaveLength(2);
+  });
+
+  it('cases : zone à coins arrondis respectée ; trop de cases = refus sans modification', () => {
+    const doc = makeDocument();
+    const zone = createAreaObject(
+      doc,
+      { kind: 'rect', x: 0, y: 0, width: 100, height: 60, cornerRadius: 25 },
+      'zone.parking',
+    );
+    addObject(doc, zone);
+    generateStalls(doc, zone.id, { width: 10, length: 20, rows: 2, aisle: 5, angleDeg: 0 }, 1);
+    const outline = roundedRectPoints(0, 0, 100, 60, 25);
+    for (const s of Object.values(doc.objects).filter((o) => o.type === 'stall')) {
+      const g = s.geometry as { x: number; y: number; width: number; height: number };
+      for (const c of [
+        P(g.x, g.y),
+        P(g.x + g.width, g.y),
+        P(g.x + g.width, g.y + g.height),
+        P(g.x, g.y + g.height),
+      ])
+        expect(pointInPolygon(c, outline)).toBe(true);
+    }
+    const before = Object.keys(doc.objects).length;
+    const big = createAreaObject(
+      doc,
+      { kind: 'rect', x: 0, y: 0, width: 4000, height: 3000, cornerRadius: 0 },
+      'zone.parking',
+    );
+    addObject(doc, big);
+    expect(() =>
+      generateStalls(doc, big.id, { width: 2, length: 4, rows: 50, aisle: 1, angleDeg: 0 }, 1),
+    ).toThrow(StallLimitError);
+    expect(Object.keys(doc.objects).length).toBe(before + 1);
+    expect(MAX_STALLS).toBe(2000);
   });
 });

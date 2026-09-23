@@ -329,7 +329,10 @@ test.describe('Phase 5 — plan professionnel et exports', () => {
     await expect(approve.getByRole('button', { name: 'Approuver' })).toBeDisabled();
     await approve.getByLabel('Nom de l’approbateur').fill('A. Tremblay');
     await expect(approve.getByRole('button', { name: 'Approuver' })).toBeDisabled();
-    await approve.getByRole('button', { name: 'Annuler' }).click();
+    // Échap ferme seulement la boîte d'approbation, pas la mise en page.
+    await page.keyboard.press('Escape');
+    await expect(approve).toBeHidden();
+    await expect(page.getByTestId('print-dialog')).toBeVisible();
     doc = await storedDocument(page);
     expect(doc.plan.titleBlock.status).toBe('draft');
     await settings.getByRole('combobox', { name: 'Statut', exact: true }).selectOption('approved');

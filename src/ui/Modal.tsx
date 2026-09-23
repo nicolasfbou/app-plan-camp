@@ -26,6 +26,8 @@ export function Modal({ open, title, onClose, children, footer, wide = false }: 
       aria-label={title}
       onCancel={(event) => {
         event.preventDefault();
+        // Échap ne ferme que cette boîte, jamais une boîte qui la contient.
+        event.stopPropagation();
         onClose();
       }}
       className={`m-auto w-full rounded-lg bg-white p-0 shadow-xl backdrop:bg-slate-900/50 ${wide ? 'max-w-3xl' : 'max-w-md'}`}

@@ -78,8 +78,11 @@ export function PrintDialog({ siteName, onClose }: { siteName: string; onClose()
     let cancelled = false;
     setPreview((p) => ({ ...p, status: 'loading' }));
     const timer = setTimeout(() => {
+      // Rendu dans un canevas hors écran, recopié seulement s'il est toujours d'actualité : un
+      // rendu plus ancien qui se termine en retard n'écrase jamais l'aperçu courant.
+      const offscreen = document.createElement('canvas');
       renderPreview(
-        target,
+        offscreen,
         src,
         src.doc.plan.print,
         src.doc.plan.legend,
@@ -90,7 +93,15 @@ export function PrintDialog({ siteName, onClose }: { siteName: string; onClose()
         },
         raster,
       ).then(
-        (r) => !cancelled && setPreview({ status: 'ready', warnings: r.warnings, page: r.page }),
+        (r) => {
+          if (cancelled) return;
+          target.width = offscreen.width;
+          target.height = offscreen.height;
+          target.style.width = offscreen.style.width;
+          target.style.height = offscreen.style.height;
+          target.getContext('2d')?.drawImage(offscreen, 0, 0);
+          setPreview({ status: 'ready', warnings: r.warnings, page: r.page });
+        },
         (e: unknown) =>
           !cancelled &&
           setPreview({ status: 'error', warnings: [], message: e instanceof Error ? e.message : String(e) }),
@@ -149,7 +160,7 @@ export function PrintDialog({ siteName, onClose }: { siteName: string; onClose()
       data-testid="print-dialog"
       onCancel={(e) => {
         e.preventDefault();
-        onClose();
+        if (e.target === e.currentTarget) onClose(); // pas l'Échap d'une boîte imbriquée
       }}
       className="m-0 h-full max-h-none w-full max-w-none bg-slate-100 p-0 backdrop:bg-slate-900/50"
     >
