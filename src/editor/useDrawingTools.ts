@@ -6,6 +6,8 @@
  * - Ligne : cliquer-glisser, ou deux clics.
  * - Polygone, polyligne : un clic par sommet ; double clic ou Entrée pour terminer, Échap pour annuler,
  *   Retour arrière pour retirer le dernier sommet ; clic sur le premier sommet pour fermer un polygone.
+ * - Circulation véhicules, corridor piéton : comme la polyligne (le tracé suit exactement les clics).
+ * - Pictogramme : un clic place le pictogramme choisi dans la bibliothèque.
  * - Texte, étiquette : un clic, puis saisie directe.
  * Après création, l'objet est sélectionné et l'outil Sélection est réactivé.
  */
@@ -13,7 +15,15 @@ import Konva from 'konva';
 import { expandGroups } from '@/domain/model/multi.ts';
 import { isDisplayed, isEditable } from '@/domain/model/operations.ts';
 import { type RefObject, useEffect } from 'react';
-import { createAreaObject, createLineObject, createTextObject } from '@/domain/model/objectFactory.ts';
+import {
+  createAreaObject,
+  createCorridorObject,
+  createFlowObject,
+  createIconObject,
+  createLineObject,
+  createTextObject,
+} from '@/domain/model/objectFactory.ts';
+import { assetIdOf, findSymbol, isAssetSymbol } from '@/domain/symbols/catalog.ts';
 import type { Point } from '@/domain/model/types.ts';
 import { screenToImage } from '@/domain/viewport/viewport.ts';
 import { type DrawingTool, type Draft, useEditorStore } from '@/store/editorStore.ts';
@@ -57,7 +67,16 @@ export function finishPathDraft(): void {
   if (!draft || draft.kind !== 'path' || !doc) return;
   const points = draft.points;
   editor.setDraft(null);
-  if (draft.tool === 'polygon') {
+  if (draft.tool === 'flow') {
+    if (points.length >= 2)
+      editActions.create(
+        createFlowObject(doc, points, editor.flowCategory, scale()),
+        'Créer un trajet de véhicules',
+      );
+  } else if (draft.tool === 'corridor') {
+    if (points.length >= 2)
+      editActions.create(createCorridorObject(doc, points, scale()), 'Créer un corridor piéton');
+  } else if (draft.tool === 'polygon') {
     if (points.length >= 3)
       editActions.create(
         createAreaObject(doc, { kind: 'polygon', points }, editor.presetId, scale()),
@@ -192,6 +211,17 @@ export function useDrawingTools(stageRef: RefObject<Konva.Stage | null>, enabled
         if (editActions.create(object, drawing === 'label' ? 'Créer une étiquette' : 'Créer un texte')) {
           setTimeout(() => useEditorStore.getState().setEditingText(object.id), 0);
         }
+        return;
+      }
+
+      if (drawing === 'symbol') {
+        const doc = planStore.getState().doc;
+        if (!doc) return;
+        const symbolId = editor.symbolId;
+        const name = isAssetSymbol(symbolId)
+          ? (doc.assets[assetIdOf(symbolId)]?.name ?? 'Pictogramme')
+          : (findSymbol(symbolId)?.name ?? 'Pictogramme');
+        editActions.create(createIconObject(doc, at, symbolId, name, scale()), 'Placer un pictogramme');
         return;
       }
 

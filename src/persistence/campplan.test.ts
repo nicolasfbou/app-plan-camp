@@ -74,8 +74,8 @@ describe('export / import .campplan', () => {
     const content = await readCampplan(bytes);
     expect(content.manifest).toMatchObject({
       format: 'campplan',
-      formatVersion: 1,
-      schemaVersion: 2,
+      formatVersion: 2,
+      schemaVersion: 3,
       counts: { objects: 400 },
     });
     const { siteId, planId } = await importCampplan(target, content, {
@@ -220,6 +220,84 @@ describe('export / import .campplan', () => {
     const imported = (await target.loadPlan(planId))!;
     const source2 = imported.plan.baseImage!.source;
     expect(source2.kind === 'pdf' && (await target.getBlob(source2.pdfBlobId))!.sha256).toBe(pdf.sha256);
+  });
+});
+
+describe('pictogrammes importés', () => {
+  const svg = strToU8(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>',
+  );
+  async function withSymbol(): Promise<PlanDocument> {
+    const blob = await source.putBlob(svg.slice().buffer, 'image/svg+xml');
+    const next: PlanDocument = structuredClone(doc);
+    next.assets = {
+      a1: {
+        id: 'a1',
+        name: 'Borne de recharge',
+        blobId: blob.id,
+        mimeType: 'image/svg+xml',
+        byteLength: blob.byteLength,
+        sha256: blob.sha256,
+        createdAt: '2026-09-22T12:00:00.000Z',
+      },
+    };
+    const layerId = next.layers.find((l) => l.tier === 'signage')!.id;
+    const {
+      icon: _icon,
+      showName: _showName,
+      ...zone
+    } = Object.values(next.objects)[0] as Record<string, unknown>;
+    next.objects.icon1 = {
+      ...zone,
+      id: 'icon1',
+      layerId,
+      type: 'icon',
+      geometry: { kind: 'point', x: 50, y: 60 },
+      symbolId: 'asset:a1',
+      size: 40,
+      text: null,
+    } as PlanDocument['objects'][string];
+    await source.savePlan(next);
+    return next;
+  }
+
+  it('exportés avec le plan, vérifiés, réimportés à l’octet près dans un stockage vide', async () => {
+    const next = await withSymbol();
+    const content = await readCampplan((await exportCampplan(source, doc.plan.id)).bytes);
+    expect(content.manifest.files.map((f) => f.role)).toEqual(['background', 'symbol']);
+    const { planId } = await importCampplan(target, content, {
+      target: { kind: 'new-site', name: 'Camp 105' },
+      mode: 'copy',
+      planName: 'Plan',
+    });
+    const imported = (await target.loadPlan(planId))!;
+    const asset = imported.assets.a1!;
+    expect(asset.blobId).not.toBe(next.assets.a1!.blobId); // nouvel identifiant de stockage
+    const stored = (await target.getBlob(asset.blobId))!;
+    expect(stored.sha256).toBe(next.assets.a1!.sha256);
+    expect(bytesEqual(stored.bytes, svg.slice().buffer)).toBe(true);
+    expect(imported.objects.icon1).toEqual(next.objects.icon1); // le pictogramme placé reste modifiable
+  });
+
+  it('pictogramme altéré dans l’archive : refusé', async () => {
+    await withSymbol();
+    const entries = unzipSync((await exportCampplan(source, doc.plan.id)).bytes);
+    const path = Object.keys(entries).find((p) => p.startsWith('fichiers/symbol-'))!;
+    const altered = entries[path]!.slice();
+    altered[10] = altered[10]! ^ 1;
+    await expect(readCampplan(zipSync({ ...entries, [path]: altered }))).rejects.toThrow(
+      /pictogramme est corrompu/,
+    );
+  });
+
+  it('une archive au format 1 (phase 3) se lit toujours', async () => {
+    const entries = unzipSync((await exportCampplan(source, doc.plan.id)).bytes);
+    const manifest = JSON.parse(new TextDecoder().decode(entries['manifest.json']));
+    manifest.formatVersion = 1;
+    const content = await readCampplan(
+      zipSync({ ...entries, 'manifest.json': strToU8(JSON.stringify(manifest)) }),
+    );
+    expect(content.manifest.formatVersion).toBe(2);
   });
 });
 

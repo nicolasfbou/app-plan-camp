@@ -34,7 +34,7 @@ const rect = (x: number) => ({ kind: 'rect' as const, x, y: 0, width: 10, height
 
 beforeEach(() => {
   doc = makeDocument();
-  addObject(doc, (a = createAreaObject(doc, rect(0), 'zone.parking')));
+  addObject(doc, (a = createAreaObject(doc, rect(0), 'zone.storage')));
   addObject(doc, (b = createAreaObject(doc, rect(20), 'building.dormitory')));
   addObject(
     doc,

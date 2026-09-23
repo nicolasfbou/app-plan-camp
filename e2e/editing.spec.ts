@@ -26,10 +26,10 @@ test.beforeEach(async ({ page }) => {
 test('parcours 1 : rectangle → déplacer → redimensionner → couleur → sauvegarde → rechargement', async ({
   page,
 }) => {
-  await page.getByRole('radio', { name: 'Stationnement' }).click();
+  await page.getByRole('radio', { name: 'Stationnement employés' }).click();
   await dragOnCanvas(page, [300, 300], [500, 420]);
   await expect(page.getByTestId('object-type')).toHaveText('Zone');
-  await expect(page.getByLabel('Nom', { exact: true })).toHaveValue('Stationnement');
+  await expect(page.getByLabel('Nom', { exact: true })).toHaveValue('Stationnement employés');
   await expect(page.getByTestId('canvas-container')).toHaveAttribute('data-tool', 'select');
 
   let [node] = await planNodes(page);

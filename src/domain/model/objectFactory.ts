@@ -2,9 +2,20 @@
  * Création des objets à partir d'un outil de dessin et d'une géométrie en coordonnées image.
  * Les valeurs par défaut viennent des modèles (presets) ; tout reste modifiable ensuite.
  */
+import { findFlowPreset } from '../presets/flowPresets.ts';
 import { findZonePreset } from '../presets/zonePresets.ts';
+import { findSymbol } from '../symbols/catalog.ts';
 import { newId, nowIso } from './factories.ts';
-import type { Geometry, Layer, PlanDocument, PlanObject, RenderTier, Style } from './types.ts';
+import type {
+  FlowCategory,
+  Geometry,
+  Layer,
+  PlanDocument,
+  PlanObject,
+  Point,
+  RenderTier,
+  Style,
+} from './types.ts';
 
 export type AreaGeometry = Extract<Geometry, { kind: 'rect' | 'ellipse' | 'polygon' }>;
 export type LineGeometry = Extract<Geometry, { kind: 'polyline' }>;
@@ -95,9 +106,16 @@ function base(doc: PlanDocument, tier: RenderTier, name: string, style: Style, p
  * qu'on dessine à 20 % ou à 200 %. La valeur stockée est en pixels image (liée à la photo).
  */
 function scaledStyle(style: Style, zoom: number): Style {
-  const width = style.strokeWidth / Math.max(zoom, 1e-6);
-  return { ...style, strokeWidth: Math.round(width * 10) / 10 };
+  return { ...style, strokeWidth: screenToImage(style.strokeWidth, zoom) };
 }
+
+/** Taille en pixels écran au zoom courant → pixels image (arrondie au dixième). */
+function screenToImage(px: number, zoom: number): number {
+  return Math.round((px / Math.max(zoom, 1e-6)) * 10) / 10;
+}
+
+/** Taille par défaut d'un pictogramme de zone, en pixels écran au zoom de création. */
+const ZONE_ICON_PX = 34;
 
 export function createAreaObject(
   doc: PlanDocument,
@@ -109,7 +127,13 @@ export function createAreaObject(
   const common = base(doc, preset.tier, preset.name.fr, scaledStyle(preset.style, zoom), preset.id);
   return preset.objectType === 'building'
     ? { ...common, type: 'building', geometry }
-    : { ...common, type: 'zone', geometry };
+    : {
+        ...common,
+        type: 'zone',
+        geometry,
+        icon: preset.icon ? { symbolId: preset.icon, size: screenToImage(ZONE_ICON_PX, zoom) } : null,
+        showName: preset.showName ?? false,
+      };
 }
 
 export function createLineObject(doc: PlanDocument, geometry: LineGeometry, zoom = 1): PlanObject {
@@ -143,5 +167,72 @@ export function createTextObject(
           cornerRadius: options.fontSize * 0.2,
         }
       : null,
+  };
+}
+
+/** Trajet de véhicules : les points suivent exactement les clics ; flèches calculées à l'affichage. */
+export function createFlowObject(
+  doc: PlanDocument,
+  points: Point[],
+  category: FlowCategory,
+  zoom = 1,
+): PlanObject {
+  const preset = findFlowPreset(category);
+  return {
+    ...base(doc, preset.tier, preset.name, scaledStyle(preset.style, zoom), preset.id),
+    type: 'flow',
+    geometry: { kind: 'polyline', points, curved: false },
+    category: preset.category,
+    arrows: {
+      direction: 'forward',
+      visible: true,
+      size: screenToImage(preset.arrowSizePx, zoom),
+      spacing: screenToImage(preset.arrowSpacingPx, zoom),
+    },
+  };
+}
+
+export const CORRIDOR_STYLE: Style = {
+  fill: '#f97316',
+  fillOpacity: 0.35,
+  stroke: '#c2410c',
+  strokeOpacity: 1,
+  strokeWidth: 2,
+  dash: 'dashed',
+  pattern: 'none',
+};
+
+/** Corridor piéton centré sur le tracé ; largeur en pixels IMAGE (pas en mètres). */
+export function createCorridorObject(doc: PlanDocument, points: Point[], zoom = 1, widthPx = 26): PlanObject {
+  const width = screenToImage(widthPx, zoom);
+  return {
+    ...base(doc, 'pedestrians', 'Corridor piéton', scaledStyle(CORRIDOR_STYLE, zoom), 'corridor.pedestrian'),
+    type: 'corridor',
+    geometry: { kind: 'polyline', points, curved: false },
+    width,
+    showIcons: true,
+    iconSpacing: Math.round(width * 6 * 10) / 10,
+    iconSize: Math.round(width * 0.75 * 10) / 10,
+    iconsOriented: false,
+  };
+}
+
+/** Pictogramme placé en `at` (centre), de la bibliothèque ou importé. */
+export function createIconObject(
+  doc: PlanDocument,
+  at: Point,
+  symbolId: string,
+  name: string,
+  zoom = 1,
+  sizePx = 36,
+): PlanObject {
+  const symbol = findSymbol(symbolId);
+  return {
+    ...base(doc, 'signage', name, { ...TEXT_STYLE, fill: null }, symbolId),
+    type: 'icon',
+    geometry: { kind: 'point', x: at.x, y: at.y },
+    symbolId,
+    size: screenToImage(sizePx, zoom),
+    text: symbol?.defaultText ?? null,
   };
 }

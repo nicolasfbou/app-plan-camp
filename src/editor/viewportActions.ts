@@ -28,6 +28,17 @@ export const viewportActions = {
     const c = context();
     if (c.usable && c.content) c.setViewport(zoomToActualSize(c.viewport, c.stageSize));
   },
+  /** Centre la vue sur un point de l'image, sans changer le zoom. */
+  centerOn(point: { x: number; y: number }) {
+    const c = context();
+    if (!c.usable) return;
+    const { scale } = c.viewport;
+    c.setViewport({
+      scale,
+      x: c.stageSize.width / 2 - point.x * scale,
+      y: c.stageSize.height / 2 - point.y * scale,
+    });
+  },
   recenter() {
     const c = context();
     if (c.usable && c.content) c.setViewport(centerContent(c.viewport, c.content, c.stageSize));

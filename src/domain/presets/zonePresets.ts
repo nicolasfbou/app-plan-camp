@@ -10,14 +10,22 @@ export interface LocalizedText {
   en?: string;
 }
 
+/** Section de la bibliothèque des surfaces (barre latérale). */
+export type PresetGroup = 'zones' | 'parking' | 'deliveries' | 'safety' | 'buildings';
+
 export interface ZonePreset {
   id: string;
   /** Type d'objet créé : zone (surface) ou bâtiment (contour). */
   objectType: 'zone' | 'building';
   name: LocalizedText;
-  /** Niveau de rendu par défaut de la zone créée. */
+  group: PresetGroup;
+  /** Catégorie du calque qui reçoit l'objet (sans calque actif). */
   tier: RenderTier;
   style: Style;
+  /** Pictogramme affiché au centre de la zone créée (modifiable, supprimable). */
+  icon?: string;
+  /** Nom de la zone affiché en son centre. */
+  showName?: boolean;
 }
 
 function zoneStyle(color: string, dash: Style['dash'] = 'dashed', fillOpacity = 0.3): Style {
@@ -32,112 +40,182 @@ function zoneStyle(color: string, dash: Style['dash'] = 'dashed', fillOpacity = 
   };
 }
 
+/** Bordure de délimitation bien visible (livraison, sécurité) : trait plein, plus épais. */
+function boundaryStyle(
+  fill: string,
+  border: string,
+  fillOpacity = 0.22,
+  pattern: Style['pattern'] = 'none',
+): Style {
+  return { fill, fillOpacity, stroke: border, strokeOpacity: 1, strokeWidth: 4, dash: 'solid', pattern };
+}
+
+function zone(
+  id: string,
+  fr: string,
+  group: PresetGroup,
+  style: Style,
+  extra: { tier?: RenderTier; icon?: string; showName?: boolean; en?: string } = {},
+): ZonePreset {
+  return {
+    id,
+    objectType: 'zone',
+    name: { fr, en: extra.en },
+    group,
+    tier: extra.tier ?? (group === 'buildings' ? 'buildings' : group),
+    style,
+    icon: extra.icon,
+    showName: extra.showName,
+  };
+}
+
+const ORANGE = '#ea580c';
+const RED = '#dc2626';
+
 export const ZONE_PRESETS: readonly ZonePreset[] = [
-  {
-    id: 'zone.parking',
-    objectType: 'zone',
-    name: { fr: 'Stationnement', en: 'Parking' },
-    tier: 'zones',
-    style: zoneStyle('#2563eb'),
-  },
-  {
-    id: 'zone.pedestrian',
-    objectType: 'zone',
-    name: { fr: 'Zone piétonne', en: 'Pedestrian area' },
+  // Zones générales
+  zone('zone.pedestrian', 'Zone piétonne', 'zones', zoneStyle('#f97316'), {
     tier: 'pedestrians',
-    style: zoneStyle('#f97316'),
-  },
-  {
-    id: 'zone.vehicle',
-    objectType: 'zone',
-    name: { fr: 'Circulation véhicules', en: 'Vehicle traffic' },
+    icon: 'sign.pedestrian',
+  }),
+  zone('zone.vehicle', 'Circulation véhicules', 'zones', zoneStyle('#1d4ed8', 'solid', 0.2), {
     tier: 'circulation',
-    style: zoneStyle('#1d4ed8', 'solid', 0.2),
-  },
-  {
-    id: 'zone.delivery',
-    objectType: 'zone',
-    name: { fr: 'Livraison', en: 'Delivery' },
-    tier: 'zones',
-    style: zoneStyle('#0891b2'),
-  },
-  {
-    id: 'zone.dropoff',
-    objectType: 'zone',
-    name: { fr: 'Zone de débarquement', en: 'Drop-off' },
-    tier: 'zones',
-    style: zoneStyle('#dc2626'),
-  },
-  {
-    id: 'zone.waste',
-    objectType: 'zone',
-    name: { fr: 'Déchets', en: 'Waste' },
-    tier: 'zones',
-    style: zoneStyle('#b91c1c'),
-  },
-  {
-    id: 'zone.storage',
-    objectType: 'zone',
-    name: { fr: 'Entreposage', en: 'Storage' },
-    tier: 'zones',
-    style: zoneStyle('#eab308'),
-  },
-  {
-    id: 'zone.generator',
-    objectType: 'zone',
-    name: { fr: 'Génératrice', en: 'Generator' },
-    tier: 'zones',
-    style: zoneStyle('#7c3aed'),
-  },
-  {
-    id: 'zone.diesel',
-    objectType: 'zone',
-    name: { fr: 'Diesel', en: 'Diesel' },
-    tier: 'zones',
-    style: zoneStyle('#92400e', 'solid'),
-  },
-  {
-    id: 'zone.propane',
-    objectType: 'zone',
-    name: { fr: 'Propane', en: 'Propane' },
-    tier: 'zones',
-    style: zoneStyle('#be185d', 'solid'),
-  },
-  {
-    id: 'zone.hazmat',
-    objectType: 'zone',
-    name: { fr: 'Matières dangereuses', en: 'Hazardous materials' },
-    tier: 'zones',
-    style: { ...zoneStyle('#dc2626', 'solid', 0.25), pattern: 'hatch' },
-  },
-  {
-    id: 'zone.core-site',
-    objectType: 'zone',
-    name: { fr: 'Site pour carottes', en: 'Core storage site' },
-    tier: 'zones',
-    style: zoneStyle('#ef4444'),
-  },
-  {
-    id: 'zone.snow',
-    objectType: 'zone',
-    name: { fr: 'Zone de neige', en: 'Snow area' },
-    tier: 'zones',
-    style: zoneStyle('#0ea5e9'),
-  },
-  {
-    id: 'zone.technical',
-    objectType: 'zone',
-    name: { fr: 'Zone technique', en: 'Technical area' },
-    tier: 'zones',
-    style: zoneStyle('#9333ea'),
-  },
-  {
-    id: 'zone.custom',
-    objectType: 'zone',
-    name: { fr: 'Zone personnalisée', en: 'Custom area' },
-    tier: 'zones',
-    style: zoneStyle('#6b7280'),
-  },
+  }),
+  zone('zone.waste', 'Déchets', 'zones', zoneStyle('#b91c1c'), { icon: 'sign.waste' }),
+  zone('zone.storage', 'Entreposage', 'zones', zoneStyle('#eab308')),
+  zone('zone.generator', 'Génératrice', 'zones', zoneStyle('#7c3aed'), { icon: 'sign.generator' }),
+  zone('zone.diesel', 'Diesel', 'zones', zoneStyle('#92400e', 'solid'), { icon: 'sign.fuel' }),
+  zone('zone.propane', 'Propane', 'zones', zoneStyle('#be185d', 'solid'), { icon: 'sign.propane' }),
+  zone(
+    'zone.hazmat',
+    'Matières dangereuses',
+    'zones',
+    { ...zoneStyle(RED, 'solid', 0.25), pattern: 'hatch' },
+    {
+      icon: 'sign.hazmat',
+    },
+  ),
+  zone('zone.core-site', 'Site pour carottes', 'zones', zoneStyle('#ef4444')),
+  zone('zone.snow', 'Zone de neige', 'zones', zoneStyle('#0ea5e9')),
+  zone('zone.technical', 'Zone technique', 'zones', zoneStyle('#9333ea'), { icon: 'sign.technical' }),
+  zone('zone.custom', 'Zone personnalisée', 'zones', zoneStyle('#6b7280')),
+  // Stationnement
+  zone('zone.parking', 'Stationnement employés', 'parking', zoneStyle('#2563eb'), {
+    icon: 'sign.parking',
+    showName: true,
+  }),
+  zone('zone.parking-visitors', 'Stationnement visiteurs', 'parking', zoneStyle('#0ea5e9'), {
+    icon: 'sign.parking',
+    showName: true,
+  }),
+  zone('zone.parking-heavy', 'Stationnement véhicules lourds', 'parking', zoneStyle('#1e3a8a'), {
+    icon: 'sign.heavy-vehicles',
+    showName: true,
+  }),
+  zone('zone.parking-service', 'Stationnement véhicules de service', 'parking', zoneStyle('#0891b2'), {
+    icon: 'sign.parking',
+    showName: true,
+  }),
+  zone('zone.parking-temporary', 'Stationnement temporaire', 'parking', zoneStyle('#6366f1', 'dotted', 0.2), {
+    icon: 'sign.parking',
+    showName: true,
+  }),
+  zone('zone.no-parking', 'Stationnement interdit', 'parking', boundaryStyle(RED, RED, 0.18, 'hatch'), {
+    icon: 'sign.no-parking',
+  }),
+  zone('zone.parking-custom', 'Stationnement (personnalisé)', 'parking', zoneStyle('#64748b'), {
+    icon: 'sign.parking',
+  }),
+  // Livraison et débarquement : bordure de délimitation orange (ou rouge si interdit aux piétons)
+  zone('zone.dropoff', 'Débarquement des marchandises', 'deliveries', boundaryStyle('#f59e0b', ORANGE), {
+    icon: 'sign.unloading',
+    showName: true,
+  }),
+  zone('zone.delivery', 'Livraison alimentaire', 'deliveries', boundaryStyle('#0891b2', ORANGE), {
+    icon: 'sign.delivery',
+    showName: true,
+  }),
+  zone(
+    'zone.equipment-unloading',
+    'Déchargement des équipements',
+    'deliveries',
+    boundaryStyle('#a16207', ORANGE),
+    {
+      icon: 'sign.unloading',
+      showName: true,
+    },
+  ),
+  zone('zone.loading', 'Aire de chargement', 'deliveries', boundaryStyle('#d97706', ORANGE), {
+    icon: 'sign.delivery',
+    showName: true,
+  }),
+  zone(
+    'zone.truck-maneuver',
+    'Aire de manœuvre des camions',
+    'deliveries',
+    boundaryStyle('#78350f', ORANGE, 0.15),
+    {
+      icon: 'sign.maneuver',
+      showName: true,
+    },
+  ),
+  zone('zone.waiting', "Zone d'attente", 'deliveries', boundaryStyle('#64748b', ORANGE, 0.18), {
+    icon: 'sign.waiting',
+    showName: true,
+  }),
+  zone('zone.supplier-access', 'Accès fournisseurs', 'deliveries', boundaryStyle('#0369a1', ORANGE, 0.15), {
+    icon: 'sign.entrance',
+    showName: true,
+  }),
+  zone(
+    'zone.no-pedestrians-ops',
+    'Interdit aux piétons pendant les opérations',
+    'deliveries',
+    boundaryStyle(RED, RED, 0.15, 'hatch'),
+    { icon: 'sign.no-pedestrians', showName: true },
+  ),
+  // Sécurité et accès
+  zone('zone.no-access', 'Accès interdit', 'safety', boundaryStyle(RED, RED, 0.2, 'hatch'), {
+    icon: 'sign.no-entry',
+  }),
+  zone(
+    'zone.authorized-only',
+    'Accès réservé au personnel autorisé',
+    'safety',
+    boundaryStyle('#f59e0b', ORANGE, 0.18),
+    {
+      icon: 'sign.authorized',
+      showName: true,
+    },
+  ),
+  zone('zone.danger', 'Zone de danger', 'safety', boundaryStyle(RED, RED, 0.25, 'hatch'), {
+    icon: 'sign.danger',
+  }),
+  zone('zone.maneuver', 'Zone de manœuvre', 'safety', boundaryStyle('#f59e0b', ORANGE, 0.18), {
+    icon: 'sign.maneuver',
+    showName: true,
+  }),
+  zone('zone.assembly', 'Point de rassemblement', 'safety', boundaryStyle('#16a34a', '#15803d', 0.25), {
+    icon: 'sign.assembly',
+    showName: true,
+  }),
+  zone(
+    'zone.restricted-traffic',
+    'Zone de circulation restreinte',
+    'safety',
+    boundaryStyle('#eab308', ORANGE, 0.15),
+    {
+      icon: 'sign.restricted',
+      showName: true,
+    },
+  ),
+  zone('zone.reversing', 'Zone de recul', 'safety', boundaryStyle('#f97316', ORANGE, 0.2), {
+    icon: 'sign.reversing',
+    showName: true,
+  }),
+  zone('zone.no-parking-area', 'Zone sans stationnement', 'safety', boundaryStyle(RED, RED, 0.12, 'hatch'), {
+    icon: 'sign.no-parking',
+  }),
 ];
 
 const buildingStyle = (color: string): Style => ({
@@ -155,6 +233,7 @@ export const BUILDING_PRESETS: readonly ZonePreset[] = [
   {
     id: 'building.generic',
     objectType: 'building',
+    group: 'buildings',
     name: { fr: 'Bâtiment', en: 'Building' },
     tier: 'buildings',
     style: buildingStyle('#334155'),
@@ -162,6 +241,7 @@ export const BUILDING_PRESETS: readonly ZonePreset[] = [
   {
     id: 'building.dormitory',
     objectType: 'building',
+    group: 'buildings',
     name: { fr: 'Dortoir', en: 'Dormitory' },
     tier: 'buildings',
     style: buildingStyle('#475569'),
@@ -169,6 +249,7 @@ export const BUILDING_PRESETS: readonly ZonePreset[] = [
   {
     id: 'building.kitchen',
     objectType: 'building',
+    group: 'buildings',
     name: { fr: 'Cuisine / cafétéria', en: 'Kitchen / cafeteria' },
     tier: 'buildings',
     style: buildingStyle('#0f766e'),
@@ -176,6 +257,7 @@ export const BUILDING_PRESETS: readonly ZonePreset[] = [
   {
     id: 'building.core-shack',
     objectType: 'building',
+    group: 'buildings',
     name: { fr: 'Core shack', en: 'Core shack' },
     tier: 'buildings',
     style: buildingStyle('#92400e'),
@@ -183,6 +265,7 @@ export const BUILDING_PRESETS: readonly ZonePreset[] = [
   {
     id: 'building.office',
     objectType: 'building',
+    group: 'buildings',
     name: { fr: 'Bureau', en: 'Office' },
     tier: 'buildings',
     style: buildingStyle('#1d4ed8'),
@@ -190,6 +273,7 @@ export const BUILDING_PRESETS: readonly ZonePreset[] = [
   {
     id: 'building.warehouse',
     objectType: 'building',
+    group: 'buildings',
     name: { fr: 'Entrepôt', en: 'Warehouse' },
     tier: 'buildings',
     style: buildingStyle('#a16207'),
@@ -197,6 +281,7 @@ export const BUILDING_PRESETS: readonly ZonePreset[] = [
   {
     id: 'building.garage',
     objectType: 'building',
+    group: 'buildings',
     name: { fr: 'Garage / atelier', en: 'Garage / workshop' },
     tier: 'buildings',
     style: buildingStyle('#57534e'),
@@ -204,6 +289,7 @@ export const BUILDING_PRESETS: readonly ZonePreset[] = [
   {
     id: 'building.container',
     objectType: 'building',
+    group: 'buildings',
     name: { fr: 'Conteneur', en: 'Container' },
     tier: 'buildings',
     style: buildingStyle('#15803d'),
@@ -211,6 +297,7 @@ export const BUILDING_PRESETS: readonly ZonePreset[] = [
   {
     id: 'building.generator',
     objectType: 'building',
+    group: 'buildings',
     name: { fr: 'Génératrice', en: 'Generator' },
     tier: 'buildings',
     style: buildingStyle('#7c3aed'),
@@ -218,6 +305,7 @@ export const BUILDING_PRESETS: readonly ZonePreset[] = [
   {
     id: 'building.tank',
     objectType: 'building',
+    group: 'buildings',
     name: { fr: 'Réservoir', en: 'Tank' },
     tier: 'buildings',
     style: buildingStyle('#be185d'),

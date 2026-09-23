@@ -18,7 +18,7 @@ beforeEach(() => {
   rect = createAreaObject(
     doc(),
     { kind: 'rect', x: 100, y: 100, width: 50, height: 40, cornerRadius: 0 },
-    'zone.parking',
+    'zone.storage',
     0.5,
   );
   editActions.create(rect, 'Créer');

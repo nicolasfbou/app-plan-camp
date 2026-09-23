@@ -1,9 +1,13 @@
 import {
   Circle,
+  FolderInput,
+  Footprints,
   Hand,
   type LucideIcon,
   MousePointer2,
   Pentagon,
+  Route,
+  SignpostBig,
   Slash,
   Spline,
   Square,
@@ -12,7 +16,18 @@ import {
   TentTree,
   Type,
 } from 'lucide-react';
-import { BUILDING_PRESETS, ZONE_PRESETS, type ZonePreset } from '@/domain/presets/zonePresets.ts';
+import { useRef } from 'react';
+import { FLOW_PRESETS } from '@/domain/presets/flowPresets.ts';
+import {
+  BUILDING_PRESETS,
+  type PresetGroup,
+  ZONE_PRESETS,
+  type ZonePreset,
+} from '@/domain/presets/zonePresets.ts';
+import { assetSymbolId, SYMBOL_CATEGORIES, SYMBOLS, symbolDataUrl } from '@/domain/symbols/catalog.ts';
+import { importSymbolFile } from '@/editor/symbolActions.ts';
+import { symbolImage, useSymbolImagesVersion } from '@/editor/objects/symbolImages.ts';
+import { usePlanStore } from '@/store/planStore.ts';
 import { type MessageKey, t } from '@/i18n/index.ts';
 import { AREA_TOOLS, type Tool, useEditorStore } from '@/store/editorStore.ts';
 import { useUiStore } from '@/store/uiStore.ts';
@@ -30,6 +45,9 @@ const TOOLS: { tool: Tool; icon: LucideIcon; hint: MessageKey }[] = [
   { tool: 'polyline', icon: Spline, hint: 'tools.hint.polyline' },
   { tool: 'text', icon: Type, hint: 'tools.hint.text' },
   { tool: 'label', icon: Tag, hint: 'tools.hint.text' },
+  { tool: 'flow', icon: Route, hint: 'tools.hint.flow' },
+  { tool: 'corridor', icon: Footprints, hint: 'tools.hint.corridor' },
+  { tool: 'symbol', icon: SignpostBig, hint: 'tools.hint.symbol' },
 ];
 
 const keyOf = (tool: Tool) =>
@@ -108,7 +126,7 @@ function ToolPalette() {
         )}
         <p className="mt-2 px-1 text-xs text-slate-500">{t('tools.navigation')}</p>
       </section>
-      <PresetList />
+      {tool === 'flow' ? <FlowCategories /> : tool === 'symbol' ? <SymbolLibrary /> : <PresetList />}
     </>
   );
 }
@@ -164,8 +182,154 @@ function PresetList() {
         {t('tools.presets')}
       </h2>
       <p className="px-1 text-xs text-slate-500">{t('tools.presets.help')}</p>
-      {group(t('tools.presets.zones'), ZONE_PRESETS)}
+      {group(t('tools.presets.parking'), byGroup('parking'))}
+      {group(t('tools.presets.deliveries'), byGroup('deliveries'))}
+      {group(t('tools.presets.safety'), byGroup('safety'))}
+      <button
+        type="button"
+        onClick={() => {
+          useEditorStore.getState().setFlowCategory('emergency');
+          useEditorStore.getState().setTool('flow');
+        }}
+        className="mt-1 flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm text-slate-300 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-white"
+      >
+        <Route size={16} className="shrink-0 text-red-400" aria-hidden /> {t('tools.presets.emergencyLane')}
+      </button>
+      {group(t('tools.presets.zones'), byGroup('zones'))}
       {group(t('tools.presets.buildings'), BUILDING_PRESETS)}
+    </section>
+  );
+}
+
+const NO_ASSETS: Readonly<Record<string, never>> = {};
+
+const byGroup = (g: PresetGroup) => ZONE_PRESETS.filter((p) => p.group === g);
+
+const sectionTitle = 'px-1 text-xs font-semibold tracking-wide text-slate-400 uppercase';
+const itemClass = (on: boolean) =>
+  `flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm focus-visible:outline-2 focus-visible:outline-white ${
+    on ? 'bg-white/15 text-white' : 'text-slate-300 hover:bg-white/10'
+  }`;
+
+/** Catégories de trajets (outil Circulation véhicules). */
+function FlowCategories() {
+  const category = useEditorStore((s) => s.flowCategory);
+  return (
+    <section className="border-t border-white/10 px-3 py-3">
+      <h2 className={sectionTitle}>{t('tools.flowCategory')}</h2>
+      <ul role="radiogroup" aria-label={t('tools.flowCategory')} className="mt-2 space-y-0.5">
+        {FLOW_PRESETS.map((preset) => (
+          <li key={preset.category}>
+            <button
+              type="button"
+              role="radio"
+              data-flow-category={preset.category}
+              aria-checked={category === preset.category}
+              onClick={() => useEditorStore.getState().setFlowCategory(preset.category)}
+              className={itemClass(category === preset.category)}
+            >
+              <span
+                aria-hidden
+                className="h-1 w-6 shrink-0 rounded"
+                style={{
+                  background: preset.style.stroke ?? undefined,
+                  height: Math.max(3, preset.style.strokeWidth - 1),
+                  opacity: preset.style.dash === 'solid' ? 1 : 0.6,
+                }}
+              />
+              {preset.name}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** Bibliothèque de pictogrammes par catégorie, et pictogrammes importés. */
+function SymbolLibrary() {
+  const symbolId = useEditorStore((s) => s.symbolId);
+  const assets = usePlanStore((s) => s.doc?.assets ?? NO_ASSETS);
+  useSymbolImagesVersion();
+  const input = useRef<HTMLInputElement>(null);
+  const pick = (id: string) => useEditorStore.getState().pickSymbol(id);
+  const cell = (id: string, name: string, src: string | null) => (
+    <li key={id}>
+      <button
+        type="button"
+        role="radio"
+        aria-checked={symbolId === id}
+        aria-label={name}
+        title={name}
+        data-symbol={id}
+        onClick={() => pick(id)}
+        className={`flex h-11 w-11 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-white ${
+          symbolId === id ? 'bg-accent ring-2 ring-white' : 'hover:bg-white/10'
+        }`}
+      >
+        {src ? (
+          <img src={src} alt="" width={32} height={32} draggable={false} />
+        ) : (
+          <SignpostBig size={20} aria-hidden />
+        )}
+      </button>
+    </li>
+  );
+  const custom = Object.values(assets);
+  return (
+    <section className="border-t border-white/10 px-3 py-3" aria-label={t('tools.symbols')}>
+      <h2 className={sectionTitle}>{t('tools.symbols')}</h2>
+      {SYMBOL_CATEGORIES.map((category) => (
+        <div key={category.id} className="mt-2">
+          <h3 className="px-1 text-[11px] font-semibold tracking-wide text-slate-500 uppercase">
+            {category.name}
+          </h3>
+          <ul role="radiogroup" aria-label={category.name} className="mt-1 grid grid-cols-4 gap-1">
+            {SYMBOLS.filter((symbol) => symbol.category === category.id).map((symbol) =>
+              cell(symbol.id, symbol.name, symbolDataUrl(symbol.id)),
+            )}
+          </ul>
+        </div>
+      ))}
+      <div className="mt-3">
+        <h3 className="px-1 text-[11px] font-semibold tracking-wide text-slate-500 uppercase">
+          {t('tools.symbols.custom')}
+        </h3>
+        {custom.length > 0 && (
+          <ul
+            role="radiogroup"
+            aria-label={t('tools.symbols.custom')}
+            className="mt-1 grid grid-cols-4 gap-1"
+          >
+            {custom.map((asset) =>
+              cell(
+                assetSymbolId(asset.id),
+                asset.name,
+                symbolImage(assetSymbolId(asset.id), null, assets)?.src ?? null,
+              ),
+            )}
+          </ul>
+        )}
+        <button
+          type="button"
+          onClick={() => input.current?.click()}
+          className="mt-2 flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-slate-200 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-white"
+        >
+          <FolderInput size={16} aria-hidden /> {t('tools.symbols.import')}
+        </button>
+        <input
+          ref={input}
+          type="file"
+          accept=".png,.svg,image/png,image/svg+xml"
+          className="hidden"
+          data-testid="symbol-input"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (file) void importSymbolFile(file);
+          }}
+        />
+      </div>
     </section>
   );
 }

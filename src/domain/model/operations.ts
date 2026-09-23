@@ -44,8 +44,22 @@ export function removeObject(doc: PlanDocument, id: string, now = nowIso()): boo
   const object = doc.objects[id];
   if (!object || !isEditable(doc, object)) return false;
   delete doc.objects[id];
+  dropCrossingReviews(doc, [id]);
   doc.plan.updatedAt = now;
   return true;
+}
+
+/**
+ * Les décisions sur les croisements d'un trajet ou d'un corridor supprimé disparaissent avec lui
+ * (dans la même action : annuler la suppression les restaure).
+ */
+export function dropCrossingReviews(doc: PlanDocument, removedIds: readonly string[]): void {
+  if (!doc.crossingReviews.length) return;
+  const removed = new Set(removedIds);
+  if (doc.crossingReviews.some((r) => removed.has(r.flowId) || removed.has(r.corridorId)))
+    doc.crossingReviews = doc.crossingReviews.filter(
+      (r) => !removed.has(r.flowId) && !removed.has(r.corridorId),
+    );
 }
 
 export function moveObject(doc: PlanDocument, id: string, dx: number, dy: number, now = nowIso()): void {

@@ -56,6 +56,70 @@ const update = (label: string, recipe: Parameters<ReturnType<typeof planStore.ge
 
 type Dialog = { kind: 'new' } | { kind: 'rename'; layer: Layer } | null;
 
+/** Catégories proposées au filtre d'affichage (dans l'ordre de lecture d'un plan de circulation). */
+const FILTER_TIERS: readonly RenderTier[] = [
+  'circulation',
+  'pedestrians',
+  'parking',
+  'deliveries',
+  'signage',
+  'safety',
+  'zones',
+  'buildings',
+  'texts',
+];
+
+/**
+ * Affichage par catégorie : chaque case affiche ou masque TOUS les calques de la catégorie
+ * (plusieurs catégories à la fois) ; « seulement » n'affiche que cette catégorie.
+ */
+function CategoryFilter() {
+  const layers = usePlanStore((s) => s.doc?.layers);
+  if (!layers) return null;
+  const tiers = FILTER_TIERS.filter((tier) => layers.some((l) => l.tier === tier));
+  const setVisible = (label: string, visible: (l: Layer) => boolean) =>
+    update(label, (d) => {
+      for (const l of d.layers) setLayerFlag(d, l.id, 'visible', visible(l));
+    });
+  return (
+    <fieldset className="rounded-md border border-slate-200 bg-white p-2" data-testid="category-filter">
+      <legend className="px-1 text-xs font-semibold text-slate-700">{t('layers.categories')}</legend>
+      <ul className="grid grid-cols-1 gap-0.5">
+        {tiers.map((tier) => {
+          const ofTier = layers.filter((l) => l.tier === tier);
+          const shown = ofTier.some((l) => l.visible);
+          const name = t(`tier.${tier}`);
+          return (
+            <li key={tier} className="flex items-center gap-2 text-sm">
+              <label className="flex flex-1 items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={shown}
+                  onChange={() =>
+                    setVisible(t(shown ? 'layers.hideCategory' : 'layers.showCategory', { name }), (l) =>
+                      l.tier === tier ? !shown : l.visible,
+                    )
+                  }
+                  className="accent-accent"
+                />
+                {name}
+              </label>
+              <button
+                type="button"
+                className="rounded px-1.5 text-xs text-accent hover:underline"
+                aria-label={t('layers.onlyCategory', { name })}
+                onClick={() => setVisible(t('layers.onlyCategory', { name }), (l) => l.tier === tier)}
+              >
+                {t('layers.only')}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </fieldset>
+  );
+}
+
 /**
  * Calques du plan, du dessus (dessiné en dernier) vers le dessous. Chaque calque a une catégorie
  * logique. Cliquer son nom le rend actif : les nouveaux objets y sont ajoutés.
@@ -95,6 +159,7 @@ export function LayersPanel() {
         </Button>
       </div>
       <p className="text-xs text-slate-500">{t('layers.help')}</p>
+      <CategoryFilter />
 
       <ul className="space-y-2">
         {topDown.map((layer, index) => {

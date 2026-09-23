@@ -50,11 +50,13 @@ describe('création de chaque géométrie (via les modèles)', () => {
   it('rectangle Stationnement : type, nom, style et calque du modèle', () => {
     expect(rect).toMatchObject({
       type: 'zone',
-      name: 'Stationnement',
+      name: 'Stationnement employés',
       presetId: 'zone.parking',
       rotation: 0,
+      showName: true,
+      icon: { symbolId: 'sign.parking' },
     });
-    expect(doc.layers.find((l) => l.id === rect.layerId)?.tier).toBe('zones');
+    expect(doc.layers.find((l) => l.id === rect.layerId)?.tier).toBe('parking');
     expect(rect.style.fillOpacity).toBeLessThan(0.5); // la photo reste visible dessous
   });
 

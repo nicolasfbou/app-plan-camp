@@ -47,10 +47,16 @@ class CampPlannerDatabase extends Dexie {
 }
 
 /** Identifiants des fichiers binaires référencés par un document de plan. */
+/** Fichiers référencés par un plan : photo (et PDF d'origine), pictogrammes importés. */
 function blobIdsOf(doc: PlanDocument): string[] {
   const image = doc.plan.baseImage;
-  if (!image) return [];
-  return image.source.kind === 'pdf' ? [image.blobId, image.source.pdfBlobId] : [image.blobId];
+  const ids = image
+    ? image.source.kind === 'pdf'
+      ? [image.blobId, image.source.pdfBlobId]
+      : [image.blobId]
+    : [];
+  for (const asset of Object.values(doc.assets)) ids.push(asset.blobId);
+  return [...new Set(ids)];
 }
 
 export class IndexedDbRepository implements ProjectRepository {

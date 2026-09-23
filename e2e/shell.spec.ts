@@ -29,6 +29,9 @@ test('éditeur : 3 canevas physiques ; un groupe Konva par calque, portant sa ca
   });
   expect(groups).toEqual([
     'user-layer tier-zones',
+    'user-layer tier-parking',
+    'user-layer tier-deliveries',
+    'user-layer tier-safety',
     'user-layer tier-buildings',
     'user-layer tier-circulation',
     'user-layer tier-pedestrians',
@@ -50,7 +53,7 @@ test('les panneaux latéraux se réduisent et la zone de travail s’agrandit', 
   await expect.poll(async () => (await canvas.boundingBox())!.width).toBeGreaterThan(initialWidth + 400);
 });
 
-test('la palette contient exactement les outils livrés en phase 2', async ({ page }) => {
+test('la palette contient exactement les outils livrés (phases 2 et 4)', async ({ page }) => {
   await openFreshApp(page);
   await createCamp(page, 'Camp');
   await createPlan(page, 'Plan');
@@ -69,6 +72,9 @@ test('la palette contient exactement les outils livrés en phase 2', async ({ pa
     'Polyligne',
     'Texte',
     'Étiquette',
+    'Circulation véhicules',
+    'Corridor piéton',
+    'Pictogramme',
   ]);
 });
 

@@ -6,6 +6,7 @@ import type { PlanObject } from '@/domain/model/types.ts';
 import { useEditorStore } from '@/store/editorStore.ts';
 import { planStore, usePlanStore } from '@/store/planStore.ts';
 import { ObjectNode } from './ObjectNode.tsx';
+import { useSymbolImagesVersion } from './symbolImages.ts';
 
 // Callbacks stables : les nœuds mémorisés ne sont pas redessinés inutilement.
 /**
@@ -40,6 +41,7 @@ export const ObjectsLayer = memo(function ObjectsLayer({ scaleBucket }: { scaleB
   const doc = usePlanStore((s) => s.doc);
   const interactiveTool = useEditorStore((s) => s.tool === 'select');
   const editingTextId = useEditorStore((s) => s.editingTextId);
+  const imagesVersion = useSymbolImagesVersion();
 
   // Répartition par calque recalculée seulement quand le document change.
   const byLayer = useMemo(() => {
@@ -72,6 +74,9 @@ export const ObjectsLayer = memo(function ObjectsLayer({ scaleBucket }: { scaleB
                     interactive={interactiveTool && !layer.locked}
                     hidden={editingTextId === object.id}
                     scale={scaleBucket}
+                    display={doc.plan.display}
+                    assets={doc.assets}
+                    imagesVersion={imagesVersion}
                     onSelect={select}
                     onDoubleClick={openOnDoubleClick}
                   />

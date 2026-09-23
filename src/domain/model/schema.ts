@@ -14,8 +14,12 @@ import { z } from 'zod';
  * Historique du format :
  * - 1 : format initial (phases 0 à 2).
  * - 2 : `groupId` sur chaque objet (regroupement, phase 3).
+ * - 3 : circulation et zones opérationnelles (phase 4) : catégories de calques stationnement,
+ *   livraison et sécurité ; trajets (catégorie, flèches masquables) ; corridors (pictogrammes) ;
+ *   pictogrammes (texte) ; pictogramme et nom affichés dans les zones ; pictogrammes importés
+ *   (`assets`) ; suivi des croisements (`crossingReviews`) ; limites d'affichage (`plan.display`).
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const idSchema = z.string().min(1);
 export const isoDateSchema = z.iso.datetime();
@@ -91,10 +95,20 @@ export const styleSchema = z.object({
 // ---------------------------------------------------------------------------
 
 /**
- * Niveaux de rendu : chaque calque utilisateur appartient à un niveau, et chaque niveau
- * correspond à un `Konva.Layer` distinct (voir `editor/renderTiers.ts`).
+ * Catégories logiques de calques (ordre = ordre des calques par défaut, du dessous au-dessus).
+ * Le rendu suit l'ordre réel des calques du plan (voir `editor/renderTiers.ts`).
  */
-export const RENDER_TIERS = ['zones', 'buildings', 'circulation', 'pedestrians', 'signage', 'texts'] as const;
+export const RENDER_TIERS = [
+  'zones',
+  'parking',
+  'deliveries',
+  'safety',
+  'buildings',
+  'circulation',
+  'pedestrians',
+  'signage',
+  'texts',
+] as const;
 export const renderTierSchema = z.enum(RENDER_TIERS);
 
 export const layerSchema = z.object({
@@ -134,8 +148,23 @@ const objectBase = {
   updatedAt: isoDateSchema,
 };
 
+/** Pictogramme d'une zone (au centre de la zone). `size` en pixels image. */
+export const zoneIconSchema = z.object({ symbolId: z.string().min(1), size: z.number().positive() });
+
+export const FLOW_CATEGORIES = [
+  'light',
+  'heavy',
+  'delivery',
+  'service',
+  'emergency',
+  'general',
+  'custom',
+] as const;
+
 export const arrowSpecSchema = z.object({
+  /** `forward` = sens du tracé (premier → dernier point) ; `both` = double sens. */
   direction: z.enum(['forward', 'backward', 'both']),
+  visible: z.boolean(),
   /** Taille d'une flèche, en pixels image. */
   size: z.number().positive(),
   /** Distance entre deux flèches le long du tracé, en pixels image. */
@@ -163,6 +192,9 @@ export const planObjectSchema = z.discriminatedUnion('type', [
       ellipseGeometrySchema,
       polygonGeometrySchema,
     ]),
+    icon: zoneIconSchema.nullable(),
+    /** Affiche le nom de la zone en son centre. */
+    showName: z.boolean(),
   }),
   z.object({
     ...objectBase,
@@ -178,17 +210,25 @@ export const planObjectSchema = z.discriminatedUnion('type', [
     ...objectBase,
     type: z.literal('flow'),
     geometry: polylineGeometrySchema,
+    category: z.enum(FLOW_CATEGORIES),
     arrows: arrowSpecSchema,
   }),
   z.object({
     ...objectBase,
     type: z.literal('corridor'),
     geometry: polylineGeometrySchema,
-    /** Largeur du corridor en pixels image. */
+    /**
+     * Largeur du corridor en pixels IMAGE (pas en mètres : aucune calibration n'est utilisée).
+     * Remplissage = `style.fill`, bordure = `style.stroke` / `style.dash`.
+     */
     width: z.number().positive(),
-    fillMode: z.enum(['solid', 'transparent', 'dashed', 'hatched']),
-    /** Espacement des icônes piéton en pixels image ; null = pas d'icônes. */
-    pedestrianIconSpacing: z.number().positive().nullable(),
+    showIcons: z.boolean(),
+    /** Espacement des pictogrammes piétons le long du tracé, en pixels image. */
+    iconSpacing: z.number().positive(),
+    /** Taille des pictogrammes, en pixels image. */
+    iconSize: z.number().positive(),
+    /** Pictogrammes orientés dans le sens du déplacement (sinon droits). */
+    iconsOriented: z.boolean(),
   }),
   z.object({
     ...objectBase,
@@ -209,9 +249,12 @@ export const planObjectSchema = z.discriminatedUnion('type', [
     ...objectBase,
     type: z.literal('icon'),
     geometry: pointGeometrySchema,
+    /** Pictogramme de la bibliothèque (`sign.*`) ou importé (`asset:<id>`). */
     symbolId: z.string().min(1),
     /** Taille en pixels image. */
     size: z.number().positive(),
+    /** Texte affiché par certains pictogrammes (ex. limite de vitesse « 20 »). */
+    text: z.string().nullable(),
   }),
 ]);
 
@@ -270,6 +313,15 @@ export const PLAN_KINDS = [
   'other',
 ] as const;
 
+/**
+ * Limites d'affichage des éléments répétés (flèches, pictogrammes des corridors et des zones), en
+ * pixels ÉCRAN : lisibles à tout zoom, sans devenir gigantesques. N'affecte pas la géométrie.
+ */
+export const displaySettingsSchema = z.object({
+  symbolMinPx: z.number().positive(),
+  symbolMaxPx: z.number().positive(),
+});
+
 export const planSchema = z.object({
   id: idSchema,
   siteId: idSchema,
@@ -279,8 +331,34 @@ export const planSchema = z.object({
   calibration: calibrationSchema.nullable(),
   /** Angle du Nord en degrés, sens horaire à partir du haut de l'image. */
   northAngleDeg: z.number(),
+  display: displaySettingsSchema,
   metadata: metadataSchema,
   createdAt: isoDateSchema,
+  updatedAt: isoDateSchema,
+});
+
+export const symbolAssetSchema = z.object({
+  id: idSchema,
+  name: z.string(),
+  blobId: idSchema,
+  mimeType: z.enum(['image/png', 'image/svg+xml']),
+  byteLength: z.number().int().nonnegative(),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  createdAt: isoDateSchema,
+});
+
+/**
+ * Décision de l'utilisateur sur un croisement détecté entre un trajet et un corridor. Retrouvée
+ * par la paire d'objets et la position (tolérance), car la géométrie peut évoluer.
+ */
+export const crossingReviewSchema = z.object({
+  id: idSchema,
+  flowId: idSchema,
+  corridorId: idSchema,
+  point: pointSchema,
+  /** `vigilance` = point de vigilance ; `verified` = vérifié, marqueur masqué. */
+  status: z.enum(['open', 'vigilance', 'verified']),
+  note: z.string(),
   updatedAt: isoDateSchema,
 });
 
@@ -290,6 +368,10 @@ export const planDocumentSchema = z.object({
   /** Ordre du tableau = ordre d'affichage au sein d'un même niveau (index 0 = dessous). */
   layers: z.array(layerSchema).min(1),
   objects: z.record(idSchema, planObjectSchema),
+  /** Pictogrammes importés (PNG ou SVG vérifié) ; octets d'origine stockés à part. */
+  assets: z.record(idSchema, symbolAssetSchema),
+  /** Suivi des croisements piétons / véhicules détectés (aide à la planification seulement). */
+  crossingReviews: z.array(crossingReviewSchema),
 });
 
 export const siteSchema = z.object({

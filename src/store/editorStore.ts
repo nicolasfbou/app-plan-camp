@@ -4,7 +4,8 @@
  */
 import { create } from 'zustand';
 import { DEFAULT_AREA_PRESET_ID } from '@/domain/presets/zonePresets.ts';
-import type { PlanObject, Point } from '@/domain/model/types.ts';
+import { DEFAULT_FLOW_CATEGORY } from '@/domain/presets/flowPresets.ts';
+import type { FlowCategory, PlanObject, Point } from '@/domain/model/types.ts';
 import { type LoadedBackground, releaseBackground } from '@/editor/backgroundImage.ts';
 
 export type BackgroundStatus =
@@ -22,6 +23,9 @@ export const DRAWING_TOOLS = [
   'polyline',
   'text',
   'label',
+  'flow',
+  'corridor',
+  'symbol',
 ] as const;
 export type DrawingTool = (typeof DRAWING_TOOLS)[number];
 export type Tool = 'select' | 'hand' | DrawingTool;
@@ -31,13 +35,31 @@ export const AREA_TOOLS: readonly Tool[] = ['rect', 'roundedRect', 'ellipse', 'p
 /** Forme en cours de création (coordonnées image), affichée dans la couche de surcouche. */
 export type Draft =
   | { kind: 'box'; tool: 'rect' | 'roundedRect' | 'ellipse'; start: Point; end: Point }
-  | { kind: 'path'; tool: 'polygon' | 'polyline' | 'line'; points: Point[]; cursor: Point | null };
+  | {
+      kind: 'path';
+      tool: 'polygon' | 'polyline' | 'line' | 'flow' | 'corridor';
+      points: Point[];
+      cursor: Point | null;
+    };
+
+/** Outils qui se dessinent par clics successifs (double clic ou Entrée pour terminer). */
+export const PATH_TOOLS = ['polygon', 'polyline', 'line', 'flow', 'corridor'] as const;
 
 interface EditorState {
   background: BackgroundStatus;
   tool: Tool;
   /** Modèle appliqué par les outils de surface (rectangle, ellipse, polygone). */
   presetId: string;
+  /** Catégorie appliquée par l'outil « Circulation véhicules ». */
+  flowCategory: FlowCategory;
+  /** Pictogramme placé par l'outil « Pictogramme » (bibliothèque ou importé). */
+  symbolId: string;
+  /** Analyse des croisements piétons / véhicules affichée sur le plan. */
+  showCrossings: boolean;
+  /** Affiche aussi les croisements marqués « vérifiés » (masqués par défaut). */
+  showVerifiedCrossings: boolean;
+  /** Croisement consulté (clé de `detectCrossings`). */
+  selectedCrossing: string | null;
   /** Objets sélectionnés (vide = aucune sélection). */
   selectedIds: string[];
   /** Mode « Modifier les points » d'un polygone / d'une polyligne (sélection d'un seul objet). */
@@ -61,6 +83,13 @@ interface EditorState {
   setBackground(status: BackgroundStatus): void;
   setTool(tool: Tool): void;
   setPreset(presetId: string): void;
+  setFlowCategory(category: FlowCategory): void;
+  /** Choisit un pictogramme et active l'outil de placement. */
+  pickSymbol(symbolId: string): void;
+  setShowCrossings(show: boolean): void;
+  setShowVerifiedCrossings(show: boolean): void;
+  selectCrossing(key: string | null): void;
+
   /** Remplace la sélection (un identifiant, une liste, ou null pour tout désélectionner). */
   select(ids: string | readonly string[] | null): void;
   /** Ajoute ou retire des objets de la sélection (Maj + clic). */
@@ -82,6 +111,11 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   background: { kind: 'none' },
   tool: 'select',
   presetId: DEFAULT_AREA_PRESET_ID,
+  flowCategory: DEFAULT_FLOW_CATEGORY,
+  symbolId: 'sign.stop',
+  showCrossings: false,
+  showVerifiedCrossings: false,
+  selectedCrossing: null,
   selectedIds: [],
   vertexEditing: false,
   selectedVertex: null,
@@ -104,6 +138,13 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   },
   setTool: (tool) => set({ tool, draft: null, vertexEditing: false, editingTextId: null }),
   setPreset: (presetId) => set({ presetId }),
+  setFlowCategory: (flowCategory) => set({ flowCategory }),
+  pickSymbol: (symbolId) =>
+    set({ symbolId, tool: 'symbol', draft: null, vertexEditing: false, editingTextId: null }),
+  setShowCrossings: (showCrossings) => set({ showCrossings }),
+  setShowVerifiedCrossings: (showVerifiedCrossings) => set({ showVerifiedCrossings }),
+  selectCrossing: (selectedCrossing) => set({ selectedCrossing }),
+
   select(ids) {
     const selectedIds = ids === null ? [] : typeof ids === 'string' ? [ids] : [...new Set(ids)];
     set((s) => {
@@ -152,6 +193,7 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
       draft: null,
       spaceHeld: false,
       isPanning: false,
+      selectedCrossing: null,
     });
   },
 }));

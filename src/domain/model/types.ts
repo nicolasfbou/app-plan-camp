@@ -2,6 +2,8 @@ import type { z } from 'zod';
 import type {
   baseImageRefSchema,
   calibrationSchema,
+  crossingReviewSchema,
+  displaySettingsSchema,
   geometrySchema,
   layerSchema,
   planDocumentSchema,
@@ -11,6 +13,8 @@ import type {
   renderTierSchema,
   siteSchema,
   styleSchema,
+  symbolAssetSchema,
+  zoneIconSchema,
 } from './schema.ts';
 
 export type Point = z.infer<typeof pointSchema>;
@@ -26,3 +30,12 @@ export type Plan = z.infer<typeof planSchema>;
 export type PlanKind = Plan['kind'];
 export type PlanDocument = z.infer<typeof planDocumentSchema>;
 export type Site = z.infer<typeof siteSchema>;
+export type SymbolAsset = z.infer<typeof symbolAssetSchema>;
+export type CrossingReview = z.infer<typeof crossingReviewSchema>;
+export type DisplaySettings = z.infer<typeof displaySettingsSchema>;
+export type ZoneIcon = z.infer<typeof zoneIconSchema>;
+export type FlowObject = Extract<PlanObject, { type: 'flow' }>;
+export type CorridorObject = Extract<PlanObject, { type: 'corridor' }>;
+export type IconObject = Extract<PlanObject, { type: 'icon' }>;
+export type ZoneObject = Extract<PlanObject, { type: 'zone' }>;
+export type FlowCategory = FlowObject['category'];

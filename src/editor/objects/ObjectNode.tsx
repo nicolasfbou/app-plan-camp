@@ -1,10 +1,13 @@
 import type Konva from 'konva';
 import { memo } from 'react';
-import { Ellipse, Group, Line, Rect, Text } from 'react-konva';
+import { Ellipse, Group, Image as KImage, Line, Rect, Shape, Text } from 'react-konva';
+import { bandOutline } from '@/domain/model/paths.ts';
 import { geometryCenter } from '@/domain/model/shapes.ts';
-import type { PlanObject } from '@/domain/model/types.ts';
+import type { DisplaySettings, PlanObject, Style, SymbolAsset } from '@/domain/model/types.ts';
 import { editActions } from '../editActions.ts';
+import { drawCorridorIcons, drawFlowArrows, drawZoneBadge, hatchPattern } from './decorations.ts';
 import { areaFill, dashArray, hitStrokeWidth, measureText, rgba, textFontStyle } from './konvaStyle.ts';
+import { symbolImage } from './symbolImages.ts';
 
 interface ObjectNodeProps {
   object: PlanObject;
@@ -14,8 +17,33 @@ interface ObjectNodeProps {
   interactive: boolean;
   hidden: boolean;
   scale: number;
+  /** Limites d'affichage des repères répétés (flèches, pictogrammes). */
+  display: DisplaySettings;
+  /** Pictogrammes importés du plan. */
+  assets: Readonly<Record<string, SymbolAsset>>;
+  /** Change quand une image de pictogramme vient d'être chargée (redessin). */
+  imagesVersion: number;
   onSelect(id: string, additive: boolean): void;
   onDoubleClick(object: PlanObject): void;
+}
+
+/** Remplissage d'une surface : couleur, ou motif de hachures (taille du motif en pixels image). */
+function areaFillProps(style: Style) {
+  const pattern = hatchPattern(style);
+  if (!pattern) return { fill: areaFill(style) };
+  const cell = Math.max(style.strokeWidth * 5, 6) / 32;
+  return {
+    fill: areaFill(style),
+    fillPatternImage: pattern as unknown as HTMLImageElement,
+    fillPatternRepeat: 'repeat',
+    fillPatternScale: { x: cell, y: cell },
+    fillPriority: 'pattern',
+  };
+}
+
+/** Contexte 2D natif d'une forme Konva, et échelle absolue (zoom compris) au moment du dessin. */
+function native(ctx: Konva.Context, shape: Konva.Shape) {
+  return { c: ctx._context, scale: Math.abs(shape.getAbsoluteScale().x) || 1 };
 }
 
 function transformOf(node: Konva.Node) {
@@ -39,6 +67,8 @@ export const ObjectNode = memo(function ObjectNode({
   interactive,
   hidden,
   scale,
+  display,
+  assets,
   onSelect,
   onDoubleClick,
 }: ObjectNodeProps) {
@@ -140,39 +170,157 @@ export const ObjectNode = memo(function ObjectNode({
     );
   }
 
-  switch (g.kind) {
-    case 'rect':
-      return (
-        <Rect
-          {...common}
-          {...stroke}
-          offsetX={g.width / 2}
-          offsetY={g.height / 2}
-          width={g.width}
-          height={g.height}
-          cornerRadius={g.cornerRadius}
-          fill={areaFill(style)}
-        />
-      );
-    case 'ellipse':
-      return <Ellipse {...common} {...stroke} radiusX={g.rx} radiusY={g.ry} fill={areaFill(style)} />;
-    case 'polygon':
-    case 'polyline': {
-      const closed = g.kind === 'polygon';
-      return (
+  if (object.type === 'flow' && g.kind === 'polyline') {
+    return (
+      <Group {...common} offsetX={center.x} offsetY={center.y}>
         <Line
-          {...common}
           {...stroke}
-          offsetX={center.x}
-          offsetY={center.y}
           points={g.points.flatMap((p) => [p.x, p.y])}
-          closed={closed}
-          fill={closed ? areaFill(style) : undefined}
           hitStrokeWidth={hitStrokeWidth(style.strokeWidth, scale)}
+          perfectDrawEnabled={false}
         />
-      );
-    }
-    default:
-      return null;
+        <Shape
+          listening={false}
+          sceneFunc={(ctx, shape) => {
+            const { c, scale: s } = native(ctx, shape);
+            drawFlowArrows(c, { ...object, geometry: g }, s, display);
+          }}
+        />
+      </Group>
+    );
   }
+
+  if (object.type === 'corridor' && g.kind === 'polyline') {
+    const outline = bandOutline(g.points, object.width);
+    const image = object.showIcons
+      ? symbolImage(object.iconsOriented ? 'mark.footprints' : 'mark.walker', null, assets)
+      : null;
+    return (
+      <Group {...common} offsetX={center.x} offsetY={center.y}>
+        <Line
+          {...stroke}
+          points={outline.flatMap((p) => [p.x, p.y])}
+          closed
+          lineJoin="miter"
+          {...areaFillProps(style)}
+          perfectDrawEnabled={false}
+        />
+        {image && (
+          <Shape
+            listening={false}
+            sceneFunc={(ctx, shape) => {
+              const { c, scale: s } = native(ctx, shape);
+              drawCorridorIcons(c, g.points, object, object.rotation, s, display, image);
+            }}
+          />
+        )}
+      </Group>
+    );
+  }
+
+  if (object.type === 'icon') {
+    const image = symbolImage(object.symbolId, object.text, assets);
+    const size = object.size;
+    return (
+      <Group {...common} opacity={style.fillOpacity}>
+        {image ? (
+          <KImage image={image} x={-size / 2} y={-size / 2} width={size} height={size} />
+        ) : (
+          // Pictogramme en cours de chargement ou introuvable : emplacement visible et sélectionnable.
+          <Rect
+            x={-size / 2}
+            y={-size / 2}
+            width={size}
+            height={size}
+            cornerRadius={size * 0.15}
+            fill="rgba(148, 163, 184, 0.5)"
+            stroke="#475569"
+            strokeWidth={size / 24}
+            dash={[size / 8, size / 12]}
+          />
+        )}
+      </Group>
+    );
+  }
+
+  const fillProps = areaFillProps(style);
+  const badge =
+    object.type === 'zone' && (object.icon || object.showName)
+      ? {
+          icon: object.icon,
+          image: object.icon ? symbolImage(object.icon.symbolId, null, assets) : null,
+          name: object.showName ? object.name : null,
+        }
+      : null;
+  const area = (placement: 'node' | 'child') => {
+    const base = placement === 'node' ? common : {};
+    switch (g.kind) {
+      case 'rect':
+        return placement === 'node' ? (
+          <Rect
+            {...base}
+            {...stroke}
+            offsetX={g.width / 2}
+            offsetY={g.height / 2}
+            width={g.width}
+            height={g.height}
+            cornerRadius={g.cornerRadius}
+            {...fillProps}
+          />
+        ) : (
+          <Rect
+            {...stroke}
+            x={-g.width / 2}
+            y={-g.height / 2}
+            width={g.width}
+            height={g.height}
+            cornerRadius={g.cornerRadius}
+            {...fillProps}
+          />
+        );
+      case 'ellipse':
+        return <Ellipse {...base} {...stroke} radiusX={g.rx} radiusY={g.ry} {...fillProps} />;
+      case 'polygon':
+      case 'polyline': {
+        const closed = g.kind === 'polygon';
+        return (
+          <Line
+            {...base}
+            {...stroke}
+            offsetX={center.x}
+            offsetY={center.y}
+            points={g.points.flatMap((p) => [p.x, p.y])}
+            closed={closed}
+            {...(closed ? fillProps : {})}
+            hitStrokeWidth={hitStrokeWidth(style.strokeWidth, scale)}
+          />
+        );
+      }
+      default:
+        return null;
+    }
+  };
+
+  if (!badge) return area('node');
+  // Zone avec pictogramme et / ou nom : un groupe (même position, même rotation) contenant la
+  // surface et le badge, toujours droit à l'écran.
+  return (
+    <Group {...common}>
+      {area('child')}
+      <Shape
+        listening={false}
+        sceneFunc={(ctx, shape) => {
+          const { c, scale: s } = native(ctx, shape);
+          drawZoneBadge(
+            c,
+            { x: 0, y: 0 },
+            { iconSize: badge.icon?.size ?? null, name: badge.name, rotation: object.rotation },
+            s,
+            display,
+            badge.image,
+          );
+        }}
+      />
+    </Group>
+  );
 });

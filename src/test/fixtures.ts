@@ -34,6 +34,8 @@ export function makeZone(layerId: string, x = 100, y = 200, overrides: Partial<P
     createdAt: FIXED_DATE,
     updatedAt: FIXED_DATE,
     geometry: { kind: 'rect', x, y, width: 300, height: 150, cornerRadius: 0 },
+    icon: null,
+    showName: false,
     ...overrides,
   } as PlanObject;
 }
@@ -76,7 +78,8 @@ export function makeLargeDocument(count: number): PlanDocument {
         name: `Flux ${i}`,
         layerId: layerId('circulation'),
         geometry: line,
-        arrows: { direction: 'forward', size: 18, spacing: 90 },
+        category: 'general',
+        arrows: { direction: 'forward', visible: true, size: 18, spacing: 90 },
       },
       {
         ...base,
@@ -87,8 +90,10 @@ export function makeLargeDocument(count: number): PlanDocument {
         layerId: layerId('pedestrians'),
         geometry: line,
         width: 24,
-        fillMode: 'hatched',
-        pedestrianIconSpacing: 120,
+        showIcons: true,
+        iconSpacing: 120,
+        iconSize: 20,
+        iconsOriented: true,
       },
       {
         ...base,

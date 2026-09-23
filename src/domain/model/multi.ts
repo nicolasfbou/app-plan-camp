@@ -6,7 +6,7 @@
 import { translateGeometry } from './geometry.ts';
 import { newId, nowIso } from './factories.ts';
 import { isLayerUsable, tierForType, layerForTier, topZIndex } from './objectFactory.ts';
-import { isDisplayed, isEditable } from './operations.ts';
+import { dropCrossingReviews, isDisplayed, isEditable } from './operations.ts';
 import type { PlanDocument, PlanObject, Style } from './types.ts';
 
 /** Ajoute à la sélection tous les membres des groupes qu'elle touche. */
@@ -53,6 +53,10 @@ export function removeObjects(
 ): { removed: number; skipped: number } {
   const objects = editableObjects(doc, ids);
   for (const object of objects) delete doc.objects[object.id];
+  dropCrossingReviews(
+    doc,
+    objects.map((o) => o.id),
+  );
   if (objects.length) doc.plan.updatedAt = now;
   return { removed: objects.length, skipped: ids.length - objects.length };
 }

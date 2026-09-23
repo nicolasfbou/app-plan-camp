@@ -273,7 +273,7 @@ async function draw(a) {
 await page.getByRole('tab', { name: 'Calques' }).click();
 await page.getByRole('button', { name: 'Nouveau calque' }).click();
 await page.getByLabel('Nom du calque').fill('Dortoirs (test)');
-await page.getByLabel('Catégorie').selectOption('buildings');
+await page.getByRole('dialog').getByLabel('Catégorie').selectOption('buildings');
 await page.getByRole('button', { name: 'Créer', exact: true }).click();
 for (const d of DORTOIRS) await draw({ ...d, preset: 'building.dormitory', tool: 'rect' });
 await page.getByRole('tab', { name: 'Calques' }).click();

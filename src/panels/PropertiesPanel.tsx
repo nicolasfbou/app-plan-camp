@@ -28,6 +28,13 @@ import {
   TextField,
   Toggle,
 } from './fields.tsx';
+import {
+  CorridorProperties,
+  DisplayLimits,
+  FlowProperties,
+  IconProperties,
+  ZoneMarkerProperties,
+} from './OperationalProperties.tsx';
 
 type TextObject = Extract<PlanObject, { type: 'text' }>;
 
@@ -151,6 +158,9 @@ function ObjectProperties({ object, doc }: { object: PlanObject; doc: PlanDocume
   const box = geometryBox(object.geometry);
   const isText = object.type === 'text';
   const isArea = object.type === 'zone' || object.type === 'building';
+  const isPoint = object.geometry.kind === 'point';
+  const hasFill = isArea || object.type === 'corridor';
+  const hasStroke = !isText && object.type !== 'icon';
   const hasPoints = object.geometry.kind === 'polygon' || object.geometry.kind === 'polyline';
 
   return (
@@ -184,13 +194,17 @@ function ObjectProperties({ object, doc }: { object: PlanObject; doc: PlanDocume
         <Row>
           <NumberField
             label={t('props.x')}
-            value={isText ? object.geometry.x : box.x}
+            value={isPoint ? (object.geometry as { x: number }).x : box.x}
             disabled={disabled}
             onCommit={(x) =>
               set(
                 {
                   ...object,
-                  geometry: moveGeometryTo(object.geometry, x, isText ? object.geometry.y : box.y),
+                  geometry: moveGeometryTo(
+                    object.geometry,
+                    x,
+                    isPoint ? (object.geometry as { y: number }).y : box.y,
+                  ),
                 } as PlanObject,
                 'Déplacer',
               )
@@ -198,7 +212,7 @@ function ObjectProperties({ object, doc }: { object: PlanObject; doc: PlanDocume
           />
           <NumberField
             label={t('props.y')}
-            value={isText ? (object.geometry as { y: number }).y : box.y}
+            value={isPoint ? (object.geometry as { y: number }).y : box.y}
             disabled={disabled}
             onCommit={(y) =>
               set(
@@ -206,7 +220,7 @@ function ObjectProperties({ object, doc }: { object: PlanObject; doc: PlanDocume
                   ...object,
                   geometry: moveGeometryTo(
                     object.geometry,
-                    isText ? (object.geometry as { x: number }).x : box.x,
+                    isPoint ? (object.geometry as { x: number }).x : box.x,
                     y,
                   ),
                 } as PlanObject,
@@ -267,7 +281,11 @@ function ObjectProperties({ object, doc }: { object: PlanObject; doc: PlanDocume
         </Row>
       </Section>
 
-      {isArea && (
+      {object.type === 'flow' && <FlowProperties object={object} disabled={disabled} set={set} />}
+      {object.type === 'corridor' && <CorridorProperties object={object} disabled={disabled} set={set} />}
+      {object.type === 'icon' && <IconProperties object={object} doc={doc} disabled={disabled} set={set} />}
+
+      {hasFill && (
         <Section title={t('props.fill')}>
           <ColorField
             label={t('props.fill')}
@@ -285,8 +303,14 @@ function ObjectProperties({ object, doc }: { object: PlanObject; doc: PlanDocume
         </Section>
       )}
 
-      {!isText && (
-        <Section title={t('props.stroke')}>
+      {object.type === 'zone' && (
+        <ZoneMarkerProperties object={object} doc={doc} disabled={disabled} set={set} />
+      )}
+
+      {hasStroke && (
+        <Section
+          title={object.type === 'flow' || object.type === 'line' ? t('props.line') : t('props.stroke')}
+        >
           <ColorField
             label={t('props.strokeColor')}
             value={object.style.stroke}
@@ -323,6 +347,10 @@ function ObjectProperties({ object, doc }: { object: PlanObject; doc: PlanDocume
       )}
 
       {object.type === 'text' && <TextProperties object={object} disabled={disabled} set={set} />}
+
+      {(object.type === 'flow' || object.type === 'corridor' || (object.type === 'zone' && object.icon)) && (
+        <DisplayLimits display={doc.plan.display} />
+      )}
 
       <Section title={t('props.visible')}>
         <div className="flex gap-4">

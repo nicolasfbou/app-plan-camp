@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { t } from '@/i18n/index.ts';
+import { AnalysisPanel } from '@/panels/AnalysisPanel.tsx';
 import { BackgroundPanel } from '@/panels/BackgroundPanel.tsx';
 import { LayersPanel } from '@/panels/LayersPanel.tsx';
 import { PropertiesPanel } from '@/panels/PropertiesPanel.tsx';
@@ -8,6 +9,7 @@ import { type RightTab, useUiStore } from '@/store/uiStore.ts';
 const TABS: { id: RightTab; label: () => string; content: () => ReactNode }[] = [
   { id: 'properties', label: () => t('panel.properties'), content: () => <PropertiesPanel /> },
   { id: 'layers', label: () => t('panel.layers'), content: () => <LayersPanel /> },
+  { id: 'analysis', label: () => t('panel.analysis'), content: () => <AnalysisPanel /> },
   { id: 'background', label: () => t('panel.background'), content: () => <BackgroundPanel /> },
 ];
 

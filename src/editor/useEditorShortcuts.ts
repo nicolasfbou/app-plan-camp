@@ -10,6 +10,7 @@
  */
 import { useEffect } from 'react';
 import { type Tool, useEditorStore } from '@/store/editorStore.ts';
+import { isTypingTarget } from '@/ui/keyboard.ts';
 import { editActions } from './editActions.ts';
 import { finishPathDraft } from './useDrawingTools.ts';
 
@@ -24,16 +25,10 @@ export const TOOL_KEYS: Record<string, Tool> = {
   k: 'polyline',
   t: 'text',
   g: 'label',
+  f: 'flow',
+  c: 'corridor',
+  s: 'symbol',
 };
-
-/** Types de champ qui ne reçoivent pas de texte : les raccourcis du plan y restent actifs. */
-const NON_TEXT_INPUTS = new Set(['checkbox', 'radio', 'button', 'submit', 'reset', 'color', 'file', 'range']);
-
-export function isTypingTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable || ['TEXTAREA', 'SELECT'].includes(target.tagName)) return true;
-  return target instanceof HTMLInputElement && !NON_TEXT_INPUTS.has(target.type);
-}
 
 /** Contrôle d'interface ayant le focus (bouton, onglet, choix…), hors champs de saisie. */
 function isControlTarget(target: EventTarget | null): boolean {

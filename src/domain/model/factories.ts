@@ -11,6 +11,9 @@ export function createSite(name: string): Site {
   return { id: newId(), name, notes: '', createdAt: now, updatedAt: now };
 }
 
+/** Limites d'affichage par défaut des flèches et pictogrammes répétés (pixels écran). */
+export const DEFAULT_DISPLAY = { symbolMinPx: 12, symbolMaxPx: 44 } as const;
+
 export function createLayer(tier: RenderTier, name: string): Layer {
   return { id: newId(), name, tier, visible: true, locked: false, opacity: 1 };
 }
@@ -32,12 +35,15 @@ export function createPlanDocument(params: { siteId: string; name: string; kind?
       baseImage: null,
       calibration: null,
       northAngleDeg: 0,
+      display: { ...DEFAULT_DISPLAY },
       metadata: {},
       createdAt: now,
       updatedAt: now,
     },
     layers: createDefaultLayers(),
     objects: {},
+    assets: {},
+    crossingReviews: [],
   };
 }
 

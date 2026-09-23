@@ -159,6 +159,16 @@ export function normalizeTransform(object: PlanObject, t: NodeTransform): PlanOb
         : null,
     };
   }
+  if (object.type === 'icon') {
+    // Pictogramme : proportions conservées, l'échelle devient une taille.
+    const s = Math.max(Math.abs(t.scaleX), Math.abs(t.scaleY)) || 1;
+    return {
+      ...object,
+      rotation,
+      geometry: { ...object.geometry, x: center.x, y: center.y },
+      size: Math.max(1, object.size * s),
+    };
+  }
   const geometry = scaleGeometryAbout(object.geometry, t.scaleX, t.scaleY, center);
   return { ...object, rotation, geometry } as PlanObject;
 }

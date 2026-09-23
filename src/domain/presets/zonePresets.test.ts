@@ -12,7 +12,13 @@ describe('zones prédéfinies', () => {
   it('couvrent les zones de camp demandées', () => {
     const names = ZONE_PRESETS.map((p) => p.name.fr);
     for (const expected of [
-      'Stationnement',
+      'Stationnement employés',
+      'Stationnement visiteurs',
+      'Stationnement interdit',
+      'Débarquement des marchandises',
+      'Aire de manœuvre des camions',
+      'Accès interdit',
+      'Zone de recul',
       'Zone piétonne',
       'Déchets',
       'Propane',

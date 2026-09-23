@@ -63,7 +63,7 @@ test.describe('.campplan', () => {
     await expect(fresh.getByText('Aucun camp pour l’instant')).toBeVisible();
     await fresh.getByTestId('campplan-input').setInputFiles(file);
     const dialog = fresh.getByTestId('import-project');
-    await expect(dialog).toContainText('2 objets · 6 calques');
+    await expect(dialog).toContainText('2 objets · 9 calques');
     await expect(dialog).toContainText('Camp test');
     await expect(fresh.getByTestId('import-verified')).toBeVisible();
     await fresh.getByRole('button', { name: 'Importer', exact: true }).click();
@@ -144,10 +144,10 @@ test.describe('calques', () => {
     page,
   }) => {
     await page.getByRole('button', { name: 'Nouveau calque' }).click();
-    await page.getByLabel('Nom du calque').fill('Stationnement');
-    await page.getByLabel('Catégorie').selectOption('zones');
+    await page.getByLabel('Nom du calque').fill('Parking est');
+    await page.getByRole('dialog').getByLabel('Catégorie').selectOption('zones');
     await page.getByRole('button', { name: 'Créer' }).click();
-    await expect(page.getByTestId('layer-row').first()).toHaveAttribute('data-layer-name', 'Stationnement');
+    await expect(page.getByTestId('layer-row').first()).toHaveAttribute('data-layer-name', 'Parking est');
 
     // Calque actif : le rectangle y va.
     await page.keyboard.press('r');
@@ -155,23 +155,23 @@ test.describe('calques', () => {
     await page.getByRole('tab', { name: 'Calques' }).click();
     await expect(page.getByTestId('layer-row').first()).toContainText('1');
 
-    await page.getByRole('button', { name: 'Renommer le calque Stationnement' }).click();
-    await page.getByLabel('Nom du calque').fill('Stationnement employés');
+    await page.getByRole('button', { name: 'Renommer le calque Parking est' }).click();
+    await page.getByLabel('Nom du calque').fill('Parking est employés');
     await page.getByRole('button', { name: 'Enregistrer' }).click();
 
     const top = (await renderedLayerOrder(page)).at(-1);
-    await page.getByRole('button', { name: 'Descendre le calque Stationnement employés' }).click();
+    await page.getByRole('button', { name: 'Descendre le calque Parking est employés' }).click();
     const order = await renderedLayerOrder(page);
     expect(order.at(-2)).toBe(top); // le rendu suit l'ordre des calques
     await expect(page.getByTestId('layer-row').nth(1)).toHaveAttribute(
       'data-layer-name',
-      'Stationnement employés',
+      'Parking est employés',
     );
 
-    await page.getByRole('button', { name: 'Dupliquer le calque Stationnement employés' }).click();
+    await page.getByRole('button', { name: 'Dupliquer le calque Parking est employés' }).click();
     await expect.poll(async () => (await planNodes(page)).length).toBe(2);
     await expect(
-      page.getByRole('button', { name: 'Supprimer le calque Stationnement employés', exact: true }),
+      page.getByRole('button', { name: 'Supprimer le calque Parking est employés', exact: true }),
     ).toHaveCount(0);
     await page.getByRole('button', { name: 'Supprimer le calque Piétons' }).click();
     await expect(page.locator('[data-layer-name="Piétons"]')).toHaveCount(0);
@@ -182,7 +182,7 @@ test.describe('calques', () => {
     await page.getByRole('tab', { name: 'Calques' }).click();
     await expect(page.getByTestId('layer-row').nth(1)).toHaveAttribute(
       'data-layer-name',
-      'Stationnement employés (copie)',
+      'Parking est employés (copie)',
     );
   });
 

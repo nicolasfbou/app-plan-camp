@@ -27,7 +27,7 @@ beforeEach(() => {
     createAreaObject(
       doc,
       { kind: 'rect', x: 0, y: 0, width: 10, height: 10, cornerRadius: 0 },
-      'zone.parking',
+      'zone.storage',
     ),
   ])
     addObject(doc, (a = o));

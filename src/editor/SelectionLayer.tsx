@@ -6,6 +6,7 @@ import { geometryBox, segmentMidpoints, worldVertices } from '@/domain/model/sha
 import type { PlanObject } from '@/domain/model/types.ts';
 import { useEditorStore } from '@/store/editorStore.ts';
 import { usePlanStore } from '@/store/planStore.ts';
+import { CrossingMarkers } from './CrossingMarkers.tsx';
 import { editActions } from './editActions.ts';
 
 const ACCENT = '#2563eb';
@@ -39,6 +40,7 @@ export function SelectionLayer({ scale }: { scale: number }) {
   const editingTextId = useEditorStore((s) => s.editingTextId);
   const draft = useEditorStore((s) => s.draft);
   const marquee = useEditorStore((s) => s.marquee);
+  const showCrossings = useEditorStore((s) => s.showCrossings);
   // Hors de l'outil Sélection, le cadre de transformation est retiré (pas de conflit avec le dessin).
   const selectTool = useEditorStore((s) => s.tool === 'select');
   const doc = usePlanStore((s) => s.doc);
@@ -180,6 +182,8 @@ export function SelectionLayer({ scale }: { scale: number }) {
           />
         ))}
 
+      {showCrossings && <CrossingMarkers scale={scale} />}
+
       {marquee && (
         <Rect
           name="marquee"
@@ -230,6 +234,16 @@ export function SelectionLayer({ scale }: { scale: number }) {
 
       {draft?.kind === 'path' && (
         <>
+          {draft.tool === 'corridor' && (
+            // Aperçu de la largeur par défaut du corridor.
+            <Line
+              points={[...draft.points, ...(draft.cursor ? [draft.cursor] : [])].flatMap((p) => [p.x, p.y])}
+              stroke="rgba(249, 115, 22, 0.3)"
+              strokeWidth={26 * px}
+              lineJoin="miter"
+              listening={false}
+            />
+          )}
           <Line
             points={[...draft.points, ...(draft.cursor ? [draft.cursor] : [])].flatMap((p) => [p.x, p.y])}
             closed={draft.tool === 'polygon' && draft.points.length >= 2}
