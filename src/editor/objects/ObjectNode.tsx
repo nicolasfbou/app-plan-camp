@@ -35,6 +35,15 @@ interface ObjectNodeProps {
   onDoubleClick(object: PlanObject): void;
 }
 
+/** Image posée dans un carré de côté `size` centré, proportions d'origine conservées. */
+function fitInSquare(image: HTMLImageElement, size: number) {
+  const w = image.naturalWidth || 1;
+  const h = image.naturalHeight || 1;
+  const width = size * Math.min(1, w / h);
+  const height = size * Math.min(1, h / w);
+  return { x: -width / 2, y: -height / 2, width, height };
+}
+
 /** Remplissage d'une surface : couleur, ou motif de hachures (taille du motif en pixels image). */
 function areaFillProps(style: Style) {
   const pattern = hatchPattern(style);
@@ -142,7 +151,7 @@ export const ObjectNode = memo(function ObjectNode({
     onTransformEnd: (e: Konva.KonvaEventObject<Event>) => {
       const node = e.target;
       const t = transformOf(node);
-      if (object.type === 'icon' && (t.scaleX !== 1 || t.scaleY !== 1)) {
+      if (object.type === 'icon' && (Math.abs(t.scaleX - 1) > 1e-6 || Math.abs(t.scaleY - 1) > 1e-6)) {
         // Pictogramme affiché à une taille bornée : l'échelle s'applique à la taille AFFICHÉE.
         const k = iconSize / object.size;
         t.scaleX *= k;
@@ -263,7 +272,7 @@ export const ObjectNode = memo(function ObjectNode({
     return (
       <Group {...common} opacity={style.fillOpacity}>
         {image ? (
-          <KImage image={image} x={-size / 2} y={-size / 2} width={size} height={size} />
+          <KImage image={image} {...fitInSquare(image, size)} />
         ) : (
           // Pictogramme en cours de chargement ou introuvable : emplacement visible et sélectionnable.
           <Rect

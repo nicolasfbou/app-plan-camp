@@ -103,7 +103,12 @@ export function symbolBitmap(
     const canvas = document.createElement('canvas');
     canvas.width = BITMAP_PX;
     canvas.height = BITMAP_PX;
-    canvas.getContext('2d')?.drawImage(entry.image, 0, 0, BITMAP_PX, BITMAP_PX);
+    // Proportions d'origine conservées (pictogramme importé non carré : centré, jamais étiré).
+    const w = entry.image.naturalWidth || 1;
+    const h = entry.image.naturalHeight || 1;
+    const dw = BITMAP_PX * Math.min(1, w / h);
+    const dh = BITMAP_PX * Math.min(1, h / w);
+    canvas.getContext('2d')?.drawImage(entry.image, (BITMAP_PX - dw) / 2, (BITMAP_PX - dh) / 2, dw, dh);
     entry.bitmap = canvas;
   }
   return entry.bitmap ?? entry.image;

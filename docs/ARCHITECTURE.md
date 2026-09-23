@@ -681,3 +681,33 @@ certification de sécurité. Une voie d'urgence est une catégorie de tracé, pa
   | ------------------- | ----------------- | ----------------- | ------------ | ------------ | ------------- |
   | Camp 105, 9 MP      | 100 / 500 / 1 000 | 0,6 / 1,1 / 1,1 s | 59 / 53 / 38 | 60 / 50 / 38 | 60 / 60 / 40  |
   | Image de test 50 MP | 100 / 500 / 1 000 | 1,1 / 1,2 / 1,4 s | 60 / 50 / 40 | 60 / 45 / 37 | 60 / 58 / 38  |
+
+### 15.6 Revue indépendante : corrections
+
+- Pictogrammes arrivant par un `.campplan` : soumis aux mêmes vérifications qu'à l'import (SVG actif,
+  PNG démesuré refusés) ; type MIME imposé par le plan, pas par le manifeste.
+- Vérification SVG par liste blanche sur le document analysé (entités décodées) : animations
+  (`set`, `animate`), `xml:base`, échappements CSS et règles `@` refusés.
+- Croisements : une décision pour un croisement au plus (vérifier l'un ne masque plus son voisin) ;
+  clés par position ; calcul partagé entre le panneau et les marqueurs.
+- Corridor : demi-tour exact terminé par un bout carré (plus de pointe hors du tracé).
+- Flèches : sur un tracé fait de segments courts, vu de loin, les flèches sont réduites (jamais
+  sous 6 px écran) au lieu de disparaître.
+- Marqueurs de croisement inactifs avec les outils de dessin (le clic ajoute le point).
+- Pictogrammes : proportions d'origine conservées ; taille bornée par paliers (pas de re-rendu à
+  chaque cran de zoom) ; une rotation seule ne change jamais la taille enregistrée.
+- Limites d'affichage validées (4 à 400 px, min ≤ max) dans le schéma et dans l'interface.
+- Import de pictogramme : taille vérifiée avant lecture, erreur de stockage signalée ; retrait des
+  pictogrammes importés inutilisés.
+
+### 15.7 Limites restantes
+
+- Les textes et étiquettes suivent la photo (comme à l'impression) : créés très dézoomés, ils
+  paraissent grands une fois zoomé. Les créer au zoom de travail.
+- Détection des croisements limitée aux trajets × corridors (pas les zones piétonnes dessinées en
+  polygone) ; une décision dont le tracé a été fortement déplacé n'est plus associée (elle reste
+  dans le plan jusqu'à la suppression d'un des deux objets).
+- Pictogrammes importés annulés puis rétablis plus d'une heure après, alors qu'un autre onglet a
+  nettoyé les fichiers orphelins : le fichier peut manquer (pictogramme affiché comme emplacement).
+- Au-delà d'environ 500 objets lourds (trajets de 40 sommets, corridors fléchés), la fluidité
+  descend vers 36-40 ips sur cette machine sans GPU.

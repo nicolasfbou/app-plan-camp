@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { boundedSize, displayedSymbolSize, drawFlowArrows, effectiveSpacing } from './decorations.ts';
+import {
+  boundedSize,
+  displayedSymbolSize,
+  drawFlowArrows,
+  effectiveSpacing,
+  flowArrowMarks,
+} from './decorations.ts';
 
 const display = { symbolMinPx: 12, symbolMaxPx: 44 };
 
@@ -51,13 +57,29 @@ describe('flèches des trajets à l’affichage', () => {
   it('pictogramme placé : taille enregistrée dans les limites, bornée au-delà (sans re-rendu inutile)', () => {
     expect(displayedSymbolSize(40, 0.5, display)).toBe(40); // 20 px écran : inchangé
     expect(displayedSymbolSize(40, 0.9, display)).toBe(40); // 36 px écran : inchangé
-    expect(displayedSymbolSize(40, 4, display) * 4).toBeCloseTo(44, 1); // 160 px → 44 px écran
-    expect(displayedSymbolSize(40, 0.1, display) * 0.1).toBeCloseTo(12, 1); // 4 px → 12 px écran
+    // 160 px → 44 px écran ; 4 px → 12 px écran (à un palier de zoom près : ±9 %).
+    expect(displayedSymbolSize(40, 4, display) * 4).toBeCloseTo(44, 1);
+    expect((displayedSymbolSize(40, 0.1, display) * 0.1) / 12).toBeGreaterThan(0.91);
+    expect((displayedSymbolSize(40, 0.1, display) * 0.1) / 12).toBeLessThan(1.1);
+    // Entre deux paliers proches, la valeur ne change pas : pas de re-rendu à chaque cran.
+    expect(displayedSymbolSize(40, 0.098, display)).toBe(displayedSymbolSize(40, 0.099, display));
   });
 
   it('dézoomé : les flèches s’espacent au lieu de se chevaucher', () => {
     expect(effectiveSpacing(100, 20)).toBe(100);
     expect(effectiveSpacing(100, 120)).toBeCloseTo(264);
+  });
+
+  it('tracé fait de segments courts, vu de loin : des flèches (réduites) restent visibles, sur le tracé', () => {
+    // Courbe de segments de 21 px image, flèches de 14 px : la revue perdait toutes les flèches dézoomé.
+    const points = Array.from({ length: 30 }, (_, k) => ({ x: k * 20, y: k % 2 ? 6 : 0 }));
+    for (const scale of [1, 0.5, 0.4]) {
+      const { marks, length } = flowArrowMarks(points, { size: 14, spacing: 60 }, scale, display);
+      expect(marks.length).toBeGreaterThan(0);
+      expect(length * scale).toBeGreaterThanOrEqual(6 - 1e-9);
+    }
+    // Trop loin pour qu'une flèche de 6 px tienne sur un segment : aucune flèche plutôt qu'une flèche hors du tracé.
+    expect(flowArrowMarks(points, { size: 14, spacing: 60 }, 0.25, display).marks).toEqual([]);
   });
 
   it('sens, double sens, masquage', () => {

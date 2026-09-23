@@ -49,6 +49,23 @@ export function removeObject(doc: PlanDocument, id: string, now = nowIso()): boo
   return true;
 }
 
+/** Pictogrammes importés qu'aucun objet (pictogramme placé ou zone) n'utilise : retirés du plan. */
+export function removeUnusedAssets(doc: PlanDocument, now = nowIso()): number {
+  const used = new Set<string>();
+  for (const o of Object.values(doc.objects)) {
+    if (o.type === 'icon') used.add(o.symbolId);
+    if (o.type === 'zone' && o.icon) used.add(o.icon.symbolId);
+  }
+  let removed = 0;
+  for (const id of Object.keys(doc.assets))
+    if (!used.has(`asset:${id}`)) {
+      delete doc.assets[id];
+      removed++;
+    }
+  if (removed) doc.plan.updatedAt = now;
+  return removed;
+}
+
 /**
  * Les décisions sur les croisements d'un trajet ou d'un corridor supprimé disparaissent avec lui
  * (dans la même action : annuler la suppression les restaure).

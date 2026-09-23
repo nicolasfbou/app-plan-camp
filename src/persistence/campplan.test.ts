@@ -290,6 +290,30 @@ describe('pictogrammes importés', () => {
     );
   });
 
+  it('un .campplan fabriqué avec un SVG actif (empreintes pourtant cohérentes) : refusé', async () => {
+    await withSymbol();
+    const entries = unzipSync((await exportCampplan(source, doc.plan.id)).bytes);
+    const evil = strToU8('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+    const path = Object.keys(entries).find((p) => p.startsWith('fichiers/symbol-'))!;
+    const evilSha = await sha256Hex(evil.slice().buffer);
+    const manifest = JSON.parse(new TextDecoder().decode(entries['manifest.json']));
+    const plan = JSON.parse(new TextDecoder().decode(entries['plan.json']));
+    for (const f of manifest.files)
+      if (f.role === 'symbol') Object.assign(f, { byteLength: evil.byteLength, sha256: evilSha });
+    plan.assets.a1.sha256 = evilSha;
+    plan.assets.a1.byteLength = evil.byteLength;
+    const planBytes = strToU8(JSON.stringify(plan));
+    manifest.planSha256 = await sha256Hex(planBytes.slice().buffer);
+    const forged = zipSync({
+      ...entries,
+      [path]: evil,
+      'plan.json': planBytes,
+      'manifest.json': strToU8(JSON.stringify(manifest)),
+    });
+    await expect(readCampplan(forged)).rejects.toThrow(/refusé/);
+    expect(await target.listSites()).toEqual([]);
+  });
+
   it('une archive au format 1 (phase 3) se lit toujours', async () => {
     const entries = unzipSync((await exportCampplan(source, doc.plan.id)).bytes);
     const manifest = JSON.parse(new TextDecoder().decode(entries['manifest.json']));

@@ -13,6 +13,8 @@ export function CrossingMarkers({ scale }: { scale: number }) {
   const crossings = useCrossings();
   const showVerified = useEditorStore((s) => s.showVerifiedCrossings);
   const selected = useEditorStore((s) => s.selectedCrossing);
+  // Avec un outil de dessin, un marqueur ne capte jamais le clic : le point est ajouté au tracé.
+  const interactive = useEditorStore((s) => s.tool === 'select');
   const px = 1 / scale;
   return (
     <>
@@ -27,6 +29,7 @@ export function CrossingMarkers({ scale }: { scale: number }) {
               id={`crossing-${c.key}`}
               x={c.point.x}
               y={c.point.y}
+              listening={interactive}
               onPointerDown={(e) => {
                 e.cancelBubble = true;
                 useEditorStore.getState().selectCrossing(c.key);

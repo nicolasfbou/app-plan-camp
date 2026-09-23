@@ -93,6 +93,17 @@ describe('contour d’un corridor', () => {
     for (const p of outline) expect(distanceToPath(p, points)).toBeCloseTo(h, 6);
   });
 
+  it('demi-tour exact : aucune pointe hors du tracé (bout carré)', () => {
+    for (const points of [
+      [P(0, 0), P(100, 0), P(50, 0)],
+      [P(0, 0), P(100, 0), P(50, 0.5)],
+      [P(0, 0), P(0, 100), P(0, 20)],
+    ]) {
+      const outline = bandOutline(points, 10);
+      for (const p of outline) expect(distanceToPath(p, points)).toBeLessThanOrEqual(5 * Math.SQRT2 + 1e-6);
+    }
+  });
+
   it('demi-tour et segments très courts : contour fini et borné', () => {
     for (const points of [
       [P(0, 0), P(100, 0), P(0, 0.0001)],
@@ -149,6 +160,21 @@ describe('croisements piétons / véhicules', () => {
     expect(detectCrossings(doc)).toHaveLength(0);
     doc.objects[f.id]!.rotation = 90; // pivoté autour de (200, 0) : devient vertical
     expect(detectCrossings(doc)).toHaveLength(1);
+  });
+
+  it('deux croisements voisins : chacun sa décision (vérifier l’un ne masque jamais l’autre)', () => {
+    setup();
+    corridor([P(0, 100), P(400, 100)], 20);
+    flow([P(100, 0), P(100, 200), P(130, 200), P(130, 0)]);
+    const crossings = detectCrossings(doc);
+    expect(crossings).toHaveLength(2);
+    setCrossingReview(doc, crossings[0]!, { status: 'verified' });
+    expect(reviewFor(doc, crossings[0]!)?.status).toBe('verified');
+    expect(reviewFor(doc, crossings[1]!)).toBeUndefined();
+    setCrossingReview(doc, crossings[1]!, { status: 'vigilance' });
+    expect(doc.crossingReviews).toHaveLength(2);
+    expect(reviewFor(doc, crossings[0]!)?.status).toBe('verified');
+    expect(reviewFor(doc, crossings[1]!)?.status).toBe('vigilance');
   });
 
   it('point de vigilance, note, masquage : conservés si le tracé bouge un peu, supprimés avec l’objet', () => {

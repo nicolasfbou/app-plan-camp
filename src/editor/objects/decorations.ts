@@ -22,7 +22,10 @@ export function boundedSize(imagePx: number, scale: number, display: DisplaySett
 export function displayedSymbolSize(size: number, scale: number, display: DisplaySettings): number {
   const screen = size * scale;
   if (screen >= display.symbolMinPx && screen <= display.symbolMaxPx) return size;
-  return Number(boundedSize(size, scale, display).toPrecision(4));
+  // Limite atteinte : zoom arrondi par paliers de 2^(1/8) (≈ 9 %), pour ne pas re-rendre chaque
+  // pictogramme à chaque cran de molette ; la taille à l'écran reste à ±9 % de la limite.
+  const step = 2 ** (Math.round(Math.log2(Math.max(scale, 1e-9)) * 8) / 8);
+  return boundedSize(size, step, display);
 }
 
 /** Espacement effectif : au moins ~2,2 repères entre deux repères, pour ne jamais se chevaucher. */
@@ -84,6 +87,39 @@ function shaft(
   c.closePath();
 }
 
+/** Taille minimale absolue d'une flèche réduite pour tenir sur un segment court (pixels écran). */
+const MIN_ARROW_PX = 6;
+
+/**
+ * Positions et taille des flèches d'un trajet. Si aucun segment n'est assez long pour une flèche à
+ * la taille minimale d'affichage (tracé fait de nombreux segments courts, vu de loin), les flèches
+ * sont réduites pour tenir sur les plus longs segments (jamais sous 6 px écran) : le sens de
+ * circulation reste visible, et aucune flèche ne déborde du tracé.
+ */
+export function flowArrowMarks(
+  points: readonly Point[],
+  arrows: Pick<FlowObject['arrows'], 'size' | 'spacing'>,
+  scale: number,
+  display: DisplaySettings,
+) {
+  let length = boundedSize(arrows.size, scale, display);
+  let marks = marksAlongPath(points, effectiveSpacing(arrows.spacing, length), length);
+  if (!marks.length && points.length >= 2) {
+    let longest = 0;
+    for (let i = 1; i < points.length; i++)
+      longest = Math.max(
+        longest,
+        Math.hypot(points[i]!.x - points[i - 1]!.x, points[i]!.y - points[i - 1]!.y),
+      );
+    const reduced = longest * 0.8;
+    if (reduced * scale >= MIN_ARROW_PX) {
+      length = reduced;
+      marks = marksAlongPath(points, effectiveSpacing(arrows.spacing, length), length);
+    }
+  }
+  return { marks, length };
+}
+
 /**
  * Flèches d'un trajet, posées sur ses segments et orientées selon eux (sens du tracé, inverse ou
  * double sens). Retourne le nombre de flèches dessinées (utile aux tests).
@@ -96,12 +132,9 @@ export function drawFlowArrows(
   view?: ViewBox | null,
 ): number {
   if (!flow.arrows.visible) return 0;
-  const length = boundedSize(flow.arrows.size, scale, display);
-  const marks = marksAlongPath(
-    flow.geometry.points,
-    effectiveSpacing(flow.arrows.spacing, length),
-    length,
-  ).filter((m) => inView(view, m.x, m.y, length));
+  const placed = flowArrowMarks(flow.geometry.points, flow.arrows, scale, display);
+  const length = placed.length;
+  const marks = placed.marks.filter((m) => inView(view, m.x, m.y, length));
   if (!marks.length) return 0;
   const width = length * 0.8;
   c.save();

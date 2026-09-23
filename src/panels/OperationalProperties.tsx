@@ -4,6 +4,8 @@
  * Toutes les tailles sont en pixels de la PHOTO (aucune mesure réelle sans calibration).
  */
 import { ArrowLeftRight } from 'lucide-react';
+import { useState } from 'react';
+import { displaySettingsSchema } from '@/domain/model/schema.ts';
 import { FLOW_PRESETS, findFlowPreset } from '@/domain/presets/flowPresets.ts';
 import { assetSymbolId, findSymbol, SYMBOLS } from '@/domain/symbols/catalog.ts';
 import type {
@@ -311,9 +313,15 @@ function defaultIconSize(object: ZoneObject): number {
 
 /** Limites d'affichage des repères répétés (flèches, pictogrammes) : réglage du plan entier. */
 export function DisplayLimits({ display }: { display: DisplaySettings }) {
+  const [error, setError] = useState<string | null>(null);
   const update = (patch: Partial<DisplaySettings>) => {
     const next = { ...display, ...patch };
-    if (next.symbolMinPx > next.symbolMaxPx) return;
+    const parsed = displaySettingsSchema.safeParse(next);
+    if (!parsed.success) {
+      setError(t('display.invalid'));
+      return;
+    }
+    setError(null);
     planStore.getState().update('Limites d’affichage', (d) => {
       d.plan.display = next;
     });
@@ -334,6 +342,11 @@ export function DisplayLimits({ display }: { display: DisplaySettings }) {
           onCommit={(symbolMaxPx) => update({ symbolMaxPx })}
         />
       </Row>
+      {error && (
+        <p role="alert" className="text-xs text-red-700">
+          {error}
+        </p>
+      )}
       <p className="text-xs text-slate-500">{t('display.help')}</p>
     </Section>
   );

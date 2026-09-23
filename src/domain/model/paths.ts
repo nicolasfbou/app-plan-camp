@@ -108,6 +108,14 @@ export function bandOutline(points: readonly Point[], width: number, miterLimit 
       right.push(offset(p, n1, -h));
       continue;
     }
+    if (d1.x * d2.x + d1.y * d2.y < -0.99) {
+      // Demi-tour (ou presque) : pas d'onglet (il partirait à l'infini) ; bout carré autour du
+      // sommet côté extérieur, sommet lui-même côté intérieur.
+      const cap = { x: p.x + d1.x * h, y: p.y + d1.y * h };
+      left.push(offset(p, n1, h), offset(cap, n1, h), offset(cap, n2, h), offset(p, n2, h));
+      right.push(p);
+      continue;
+    }
     // Onglet : m = bissectrice des normales, longueur h / cos(demi-angle).
     const m = mlen < EPS ? n1 : { x: mx / mlen, y: my / mlen };
     const cos = Math.max(EPS, m.x * n2.x + m.y * n2.y);

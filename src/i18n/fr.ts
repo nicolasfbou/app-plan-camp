@@ -97,6 +97,9 @@ export const fr = {
   'tools.symbols.import': 'Importer un pictogramme (PNG ou SVG)',
   'tools.symbols.imported': 'Pictogramme « {name} » importé : cliquez sur la photo pour le placer.',
   'tools.symbols.rejected': 'Pictogramme refusé : {reason}',
+  'tools.symbols.failed': 'Import du pictogramme impossible : {message}',
+  'tools.symbols.removeUnused': 'Retirer les pictogrammes importés inutilisés',
+  'tools.symbols.removed': '{count} pictogramme(s) importé(s) inutilisé(s) retiré(s).',
   'tools.presets.parking': 'Stationnement',
   'tools.presets.deliveries': 'Livraison et débarquement',
   'tools.presets.safety': 'Sécurité et accès',
@@ -295,8 +298,9 @@ export const fr = {
   'display.title': 'Affichage des repères (tout le plan)',
   'display.min': 'Taille min. (px écran)',
   'display.max': 'Taille max. (px écran)',
+  'display.invalid': 'Valeurs refusées : entre 4 et 400 px, et le minimum ne peut pas dépasser le maximum.',
   'display.help':
-    'Flèches et pictogrammes des trajets, corridors et zones restent entre ces tailles à l’écran, quel que soit le zoom. La géométrie n’est pas modifiée.',
+    'Flèches, pictogrammes placés et pictogrammes des corridors et des zones restent entre ces tailles à l’écran, quel que soit le zoom. La taille enregistrée et la géométrie ne sont pas modifiées.',
 
   'color.blue': 'Bleu',
   'color.orange': 'Orange',

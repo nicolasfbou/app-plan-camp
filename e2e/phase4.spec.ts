@@ -266,7 +266,7 @@ test.describe('pictogrammes', () => {
     for (const key of ['+', '+', '+', '+', '+', '+']) await page.keyboard.press(key);
     await settledTransform(page);
     const [node] = await planNodes(page);
-    expect(node!.client.width).toBeLessThanOrEqual(44 * Math.SQRT2 + 1); // tourné de 45°
+    expect(node!.client.width).toBeLessThanOrEqual(44 * 1.1 * Math.SQRT2 + 1); // tourné de 45°, palier ±9 %
     expect((await objectsOfType(page, 'icon'))[0]!.size).toBe(40); // la taille enregistrée ne change pas
   });
 

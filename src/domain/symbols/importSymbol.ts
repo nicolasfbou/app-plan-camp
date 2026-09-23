@@ -62,6 +62,8 @@ export function checkSymbolFile(bytes: Uint8Array, fileName: string): SymbolChec
         parsed.documentElement.nodeName.toLowerCase() !== 'svg'
       )
         return { ok: false, reason: 'SVG mal formé.' };
+      const problem = unsafeSvgContent(parsed.documentElement);
+      if (problem) return { ok: false, reason: `SVG refusé pour des raisons de sécurité : ${problem}.` };
     }
     return { ok: true, mimeType: 'image/svg+xml' };
   }
@@ -71,4 +73,87 @@ export function checkSymbolFile(bytes: Uint8Array, fileName: string): SymbolChec
 function looksLikeText(bytes: Uint8Array): boolean {
   const head = bytes.subarray(0, 256);
   return head.every((b) => b === 9 || b === 10 || b === 13 || b >= 32);
+}
+
+/**
+ * Liste blanche appliquée au document SVG analysé (entités et échappements déjà décodés) :
+ * éléments de dessin seulement (aucune animation, aucun script, aucun contenu HTML), attributs sans
+ * gestionnaire d'événement ni base externe, liens et `url()` uniquement internes (`#…`) ou images
+ * intégrées, feuilles de style sans import ni échappement.
+ */
+const SAFE_ELEMENTS = new Set(
+  [
+    'svg',
+    'g',
+    'path',
+    'rect',
+    'circle',
+    'ellipse',
+    'line',
+    'polyline',
+    'polygon',
+    'text',
+    'tspan',
+    'textPath',
+    'defs',
+    'linearGradient',
+    'radialGradient',
+    'stop',
+    'clipPath',
+    'mask',
+    'pattern',
+    'use',
+    'symbol',
+    'title',
+    'desc',
+    'metadata',
+    'image',
+    'style',
+    'marker',
+    'filter',
+    'feGaussianBlur',
+    'feOffset',
+    'feBlend',
+    'feColorMatrix',
+    'feFlood',
+    'feComposite',
+    'feMerge',
+    'feMergeNode',
+    'feDropShadow',
+  ].map((n) => n.toLowerCase()),
+);
+const SAFE_LINK = /^(#|data:image\/(png|jpeg|gif|webp);base64,)/i;
+
+function unsafeCss(css: string): string | null {
+  if (/\\/.test(css)) return 'échappement CSS';
+  if (/@/.test(css)) return 'règle CSS @';
+  if (/expression\s*\(/i.test(css)) return 'expression CSS';
+  for (const m of css.matchAll(/url\(\s*(['"]?)([^)'"]*)\1\s*\)/gi))
+    if (!m[2]!.trim().startsWith('#')) return 'ressource externe (url)';
+  if (/url\(/i.test(css.replace(/url\(\s*(['"]?)\s*#[^)]*\)/gi, ''))) return 'ressource externe (url)';
+  return null;
+}
+
+export function unsafeSvgContent(root: Element): string | null {
+  const all = [root, ...Array.from(root.getElementsByTagName('*'))];
+  for (const el of all) {
+    const name = (el.localName || el.nodeName).toLowerCase();
+    if (!SAFE_ELEMENTS.has(name)) return `élément non autorisé (${name})`;
+    if (name === 'style') {
+      const problem = unsafeCss(el.textContent ?? '');
+      if (problem) return problem;
+    }
+    for (const attr of Array.from(el.attributes)) {
+      const attrName = attr.name.toLowerCase();
+      const value = attr.value;
+      if (attrName.startsWith('on')) return `gestionnaire d’événement (${attr.name})`;
+      if (attrName === 'xml:base' || attrName === 'base') return 'base externe (xml:base)';
+      if (/javascript:/i.test(value.replace(/\s+/g, ''))) return 'lien javascript:';
+      if ((attrName === 'href' || attrName.endsWith(':href')) && !SAFE_LINK.test(value.trim()))
+        return 'lien externe (href)';
+      const problem = unsafeCss(value);
+      if (problem && (attrName === 'style' || /url\(|\\|@/i.test(value))) return problem;
+    }
+  }
+  return null;
 }

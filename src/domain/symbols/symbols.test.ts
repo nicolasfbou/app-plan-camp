@@ -94,6 +94,15 @@ describe('import d’un pictogramme personnalisé', () => {
       svg('<foreignObject><div>x</div></foreignObject>'),
       enc('<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY x "y">]><svg xmlns="http://www.w3.org/2000/svg"/>'),
       svg('<style>@import url(https://exemple.com/a.css);</style>'),
+      // Contournements relevés par la revue : entités, animations, échappements CSS, base externe.
+      svg('<a><set attributeName="href" to="&#106;avascript:alert(1)"/><rect width="1" height="1"/></a>'),
+      svg('<animate attributeName="href" values="https://exemple.com/x.png"/>'),
+      svg('<rect width="1" height="1" style="fill:u&#114;l(https://exemple.com/x)"/>'),
+      svg('<style>.a{fill:\\75 rl(https://exemple.com/x)}</style>'),
+      svg('<style>@\\69mport "https://exemple.com/a.css";</style>'),
+      svg('<rect width="1" height="1"/>', ' xml:base="https://exemple.com/"'),
+      svg('<image href="data:text/html;base64,PHNjcmlwdD4=" width="1" height="1"/>'),
+      svg('<a href="https://exemple.com"><rect width="1" height="1"/></a>'),
     ];
     for (const bytes of bad) expect(checkSymbolFile(bytes, 'x.svg').ok).toBe(false);
   });
@@ -114,5 +123,26 @@ describe('objet pictogramme', () => {
     expect(doc.layers.find((l) => l.id === icon.layerId)?.tier).toBe('signage');
     const scaled = normalizeTransform(icon, { x: 150, y: 250, rotation: 30, scaleX: 2, scaleY: 2 });
     expect(scaled).toMatchObject({ size: 144, rotation: 30, geometry: { x: 150, y: 250 } });
+  });
+});
+
+describe('pictogrammes importés inutilisés', () => {
+  it('retirés du plan seulement s’ils ne sont utilisés ni par un pictogramme placé ni par une zone', async () => {
+    const { addObject, removeUnusedAssets } = await import('../model/operations.ts');
+    const doc = makeDocument();
+    const asset = (id: string) => ({
+      id,
+      name: id,
+      blobId: `b-${id}`,
+      mimeType: 'image/png' as const,
+      byteLength: 1,
+      sha256: '0'.repeat(64),
+      createdAt: '2026-09-22T12:00:00.000Z',
+    });
+    doc.assets = { a: asset('a'), b: asset('b'), c: asset('c') };
+    addObject(doc, createIconObject(doc, { x: 1, y: 1 }, 'asset:a', 'A'));
+    expect(removeUnusedAssets(doc)).toBe(2);
+    expect(Object.keys(doc.assets)).toEqual(['a']);
+    expect(removeUnusedAssets(doc)).toBe(0);
   });
 });

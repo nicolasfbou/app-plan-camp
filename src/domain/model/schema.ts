@@ -317,10 +317,12 @@ export const PLAN_KINDS = [
  * Limites d'affichage des éléments répétés (flèches, pictogrammes des corridors et des zones), en
  * pixels ÉCRAN : lisibles à tout zoom, sans devenir gigantesques. N'affecte pas la géométrie.
  */
-export const displaySettingsSchema = z.object({
-  symbolMinPx: z.number().positive(),
-  symbolMaxPx: z.number().positive(),
-});
+export const displaySettingsSchema = z
+  .object({
+    symbolMinPx: z.number().min(4).max(400),
+    symbolMaxPx: z.number().min(4).max(400),
+  })
+  .refine((d) => d.symbolMinPx <= d.symbolMaxPx, 'La taille minimale dépasse la taille maximale.');
 
 export const planSchema = z.object({
   id: idSchema,

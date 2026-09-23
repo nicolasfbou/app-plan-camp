@@ -348,9 +348,10 @@ function ObjectProperties({ object, doc }: { object: PlanObject; doc: PlanDocume
 
       {object.type === 'text' && <TextProperties object={object} disabled={disabled} set={set} />}
 
-      {(object.type === 'flow' || object.type === 'corridor' || (object.type === 'zone' && object.icon)) && (
-        <DisplayLimits display={doc.plan.display} />
-      )}
+      {(object.type === 'flow' ||
+        object.type === 'corridor' ||
+        object.type === 'icon' ||
+        (object.type === 'zone' && object.icon)) && <DisplayLimits display={doc.plan.display} />}
 
       <Section title={t('props.visible')}>
         <div className="flex gap-4">

@@ -9,7 +9,7 @@ import { worldVertices } from './shapes.ts';
 import type { CorridorObject, CrossingReview, FlowObject, PlanDocument, PlanObject, Point } from './types.ts';
 
 export interface Crossing {
-  /** Clé stable tant que la géométrie ne change pas (paire d'objets + rang). */
+  /** Clé : paire d'objets + position arrondie (ne dépend pas de l'ordre de détection). */
   key: string;
   flowId: string;
   corridorId: string;
@@ -77,9 +77,9 @@ export function detectCrossings(
           found.push({ point: c.point, kind: c.distance === 0 ? 'crossing' : 'overlap' });
         }
       }
-      found.forEach((f, rank) =>
+      found.forEach((f) =>
         result.push({
-          key: `${flow.o.id}:${corridor.o.id}:${rank}`,
+          key: `${flow.o.id}:${corridor.o.id}:${Math.round(f.point.x)}:${Math.round(f.point.y)}`,
           flowId: flow.o.id,
           corridorId: corridor.o.id,
           point: f.point,
@@ -97,20 +97,42 @@ export function reviewTolerance(doc: PlanDocument, crossing: Crossing): number {
   return Math.max(40, corridor?.type === 'corridor' ? corridor.width * 1.5 : 0);
 }
 
-/** Décision enregistrée pour ce croisement (même paire d'objets, position voisine). */
-export function reviewFor(doc: PlanDocument, crossing: Crossing): CrossingReview | undefined {
-  const tolerance = reviewTolerance(doc, crossing);
-  let best: CrossingReview | undefined;
-  let bestDistance = Infinity;
-  for (const review of doc.crossingReviews) {
-    if (review.flowId !== crossing.flowId || review.corridorId !== crossing.corridorId) continue;
-    const d = Math.hypot(review.point.x - crossing.point.x, review.point.y - crossing.point.y);
-    if (d <= tolerance && d < bestDistance) {
-      best = review;
-      bestDistance = d;
+/**
+ * Associe les décisions enregistrées aux croisements détectés, UNE décision pour UN croisement au
+ * plus (même paire d'objets, position voisine, les plus proches d'abord) : deux croisements
+ * voisins ne partagent jamais une décision (vérifier l'un ne masque pas l'autre).
+ */
+export function assignReviews(
+  doc: PlanDocument,
+  crossings: readonly Crossing[],
+): Map<string, CrossingReview> {
+  const candidates: { key: string; review: CrossingReview; d: number }[] = [];
+  for (const crossing of crossings) {
+    const tolerance = reviewTolerance(doc, crossing);
+    for (const review of doc.crossingReviews) {
+      if (review.flowId !== crossing.flowId || review.corridorId !== crossing.corridorId) continue;
+      const d = Math.hypot(review.point.x - crossing.point.x, review.point.y - crossing.point.y);
+      if (d <= tolerance) candidates.push({ key: crossing.key, review, d });
     }
   }
-  return best;
+  candidates.sort((a, b) => a.d - b.d);
+  const byKey = new Map<string, CrossingReview>();
+  const used = new Set<string>();
+  for (const { key, review } of candidates) {
+    if (byKey.has(key) || used.has(review.id)) continue;
+    byKey.set(key, review);
+    used.add(review.id);
+  }
+  return byKey;
+}
+
+/** Décision enregistrée pour ce croisement (association un pour un sur tout le plan). */
+export function reviewFor(doc: PlanDocument, crossing: Crossing): CrossingReview | undefined {
+  const pair = detectCrossings(doc).filter(
+    (c) => c.flowId === crossing.flowId && c.corridorId === crossing.corridorId,
+  );
+  const all = pair.some((c) => c.key === crossing.key) ? pair : [...pair, crossing];
+  return assignReviews(doc, all).get(crossing.key);
 }
 
 /**

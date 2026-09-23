@@ -26,6 +26,7 @@ import { FLOW_PRESETS, type FlowPreset } from '@/domain/presets/flowPresets.ts';
 import { AREA_PRESETS, type ZonePreset } from '@/domain/presets/zonePresets.ts';
 import { ProjectFormatError } from '@/domain/schema/migrations.ts';
 import { parsePlanDocument, serializePlanDocument } from '@/domain/schema/serialization.ts';
+import { checkSymbolFile } from '@/domain/symbols/importSymbol.ts';
 import type { ProjectRepository } from './ProjectRepository.ts';
 
 export const CAMPPLAN_EXTENSION = '.campplan';
@@ -282,6 +283,18 @@ export async function readCampplan(bytes: Uint8Array): Promise<CampplanContent> 
     const file = files.get(needed.blobId);
     if (!file || file.sha256 !== needed.sha256)
       throw new CampplanError(`Le fichier ${needed.label} ne correspond pas aux fichiers de l’archive.`);
+  }
+  // Pictogrammes importés : mêmes vérifications qu'à l'import depuis l'éditeur (un fichier
+  // .campplan fabriqué ne doit pas faire entrer un SVG actif ou une image démesurée), et type MIME
+  // imposé par le plan (jamais celui, libre, du manifeste).
+  for (const asset of Object.values(doc.assets)) {
+    const file = files.get(asset.blobId)!;
+    const check = checkSymbolFile(file.bytes, asset.mimeType === 'image/svg+xml' ? 'x.svg' : 'x.png');
+    if (!check.ok || check.mimeType !== asset.mimeType)
+      throw new CampplanError(
+        `Le pictogramme importé « ${asset.name} » est refusé : ${check.ok ? 'type de fichier incohérent' : check.reason}`,
+      );
+    files.set(asset.blobId, { ...file, mimeType: asset.mimeType, role: 'symbol' });
   }
   return { manifest, doc, files };
 }

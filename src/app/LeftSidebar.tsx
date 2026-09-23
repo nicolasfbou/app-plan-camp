@@ -25,7 +25,7 @@ import {
   type ZonePreset,
 } from '@/domain/presets/zonePresets.ts';
 import { assetSymbolId, SYMBOL_CATEGORIES, SYMBOLS, symbolDataUrl } from '@/domain/symbols/catalog.ts';
-import { importSymbolFile } from '@/editor/symbolActions.ts';
+import { importSymbolFile, removeUnusedSymbols } from '@/editor/symbolActions.ts';
 import { symbolImage, useSymbolImagesVersion } from '@/editor/objects/symbolImages.ts';
 import { usePlanStore } from '@/store/planStore.ts';
 import { type MessageKey, t } from '@/i18n/index.ts';
@@ -309,6 +309,18 @@ function SymbolLibrary() {
               ),
             )}
           </ul>
+        )}
+        {custom.length > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              const count = removeUnusedSymbols();
+              useEditorStore.getState().notify(t('tools.symbols.removed', { count }));
+            }}
+            className="mt-1 w-full rounded px-2 py-1 text-left text-xs text-slate-400 hover:bg-white/10 hover:text-slate-200 focus-visible:outline-2 focus-visible:outline-white"
+          >
+            {t('tools.symbols.removeUnused')}
+          </button>
         )}
         <button
           type="button"
