@@ -354,7 +354,16 @@ export function drawLegend(
 // --- Cartouche -------------------------------------------------------------------------------------------
 
 /** Champs affichés sur toute la largeur du cartouche. */
-const WIDE_FIELDS = new Set(['Camp', 'Titre', 'Notes']);
+const WIDE_FIELDS = new Set(['Camp', 'Titre', 'Notes', 'Révisions']);
+
+interface TitleTable {
+  font: number;
+  line: number;
+  /** Position (mm, depuis la gauche de la cellule) et largeur de chaque colonne. */
+  columns: { x: number; width: number }[];
+  /** Lignes du tableau (la première est l'en-tête) : texte renvoyé à la ligne par colonne. */
+  rows: { cells: string[][]; y: number; height: number }[];
+}
 
 interface TitleCell {
   label: string;
@@ -364,6 +373,33 @@ interface TitleCell {
   width: number;
   height: number;
   highlight?: 'approved' | 'pending';
+  table?: TitleTable;
+}
+
+/** Tableau compact (ex. révisions) : colonnes ajustées au contenu, description renvoyée à la ligne. */
+function fitTable(p: Painter, table: string[][], width: number, baseFont: number): TitleTable {
+  const font = Math.max(MIN_PRINT_PT, baseFont * 0.85);
+  const line = font * MM_PER_PT * 1.2;
+  const pad = 1.2;
+  const natural = (col: number) =>
+    Math.max(...table.map((row, i) => p.textWidth(row[col] ?? '', font, i === 0))) + pad;
+  const rev = Math.min(natural(0), width * 0.14);
+  const date = Math.min(natural(1), width * 0.26);
+  const author = Math.min(natural(3), width * 0.28);
+  const description = Math.max(width * 0.2, width - rev - date - author);
+  const widths = [rev, date, description, author];
+  const columns = widths.map((w, i) => ({ x: widths.slice(0, i).reduce((a, b) => a + b, 0), width: w }));
+  let y = 0;
+  const rows = table.map((row, i) => {
+    const cells = row.map((text, c) =>
+      wrapText(text, Math.max(1, widths[c]! - pad), (s) => p.textWidth(s, font, i === 0)),
+    );
+    const height = Math.max(...cells.map((l) => l.length)) * line + 0.6;
+    const result = { cells, y, height };
+    y += height;
+    return result;
+  });
+  return { font, line, columns, rows };
 }
 
 export interface TitleBlockFit {
@@ -418,9 +454,12 @@ export function fitTitleBlock(
     const wide = WIDE_FIELDS.has(r.label) || columns === 1;
     if (wide && col > 0) flush();
     const w = wide ? inner : colWidth;
-    const lines = wrapText(r.value, w, (s) => p.textWidth(s, font, r.label === 'Titre'));
-    const h = labelH + lines.length * line + 0.8;
+    const table = r.table ? fitTable(p, r.table, w, font) : undefined;
+    const lines = table ? [] : wrapText(r.value, w, (s) => p.textWidth(s, font, r.label === 'Titre'));
+    const tableHeight = table ? table.rows.reduce((sum, row) => sum + row.height, 0) : 0;
+    const h = labelH + lines.length * line + tableHeight + 0.8;
     cells.push({
+      table,
       label: r.label,
       lines,
       x: padding + (wide ? 0 : col * (colWidth + gap)),
@@ -532,6 +571,34 @@ export function drawTitleBlock(p: Painter, fit: TitleBlockFit, rect: Rect, logo:
       bold: true,
       color: '#64748b',
     });
+    if (cell.table) {
+      const tb = cell.table;
+      tb.rows.forEach((row, r) => {
+        const top = y + labelH + row.y;
+        row.cells.forEach((lines, c) =>
+          lines.forEach((l, i) =>
+            p.text(l, x + tb.columns[c]!.x, top + (i + 0.8) * tb.line, {
+              size: tb.font,
+              bold: r === 0,
+              color: r === 0 ? '#334155' : '#0f172a',
+            }),
+          ),
+        );
+        if (r === 0)
+          p.path(
+            [
+              [
+                { x, y: top + row.height - 0.3 },
+                { x: x + cell.width, y: top + row.height - 0.3 },
+              ],
+            ],
+            false,
+            null,
+            { color: '#94a3b8', opacity: 1, width: 0.15 },
+          );
+      });
+      continue;
+    }
     const color =
       cell.highlight === 'approved' ? '#047857' : cell.highlight === 'pending' ? '#b45309' : '#0f172a';
     cell.lines.forEach((l, i) =>

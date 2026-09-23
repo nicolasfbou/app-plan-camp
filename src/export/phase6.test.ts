@@ -1,3 +1,4 @@
+import { SCHEMA_VERSION } from '@/domain/model/schema.ts';
 import { describe, expect, it } from 'vitest';
 import { createVariant } from '@/domain/model/factories.ts';
 import {
@@ -408,7 +409,7 @@ describe('migration 4 → 5', () => {
     delete objects[delivery.id]!.nameOffset;
     delete v4.readabilityReviews;
     const migrated = parsePlanDocument(v4);
-    expect(migrated.schemaVersion).toBe(5);
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION);
     expect(migrated.plan.views).toEqual([]);
     expect(migrated.plan.print.style.preset).toBe('standard');
     expect(migrated.plan.print.detail).toBe('full');

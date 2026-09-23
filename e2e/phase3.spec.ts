@@ -146,7 +146,7 @@ test.describe('calques', () => {
     await page.getByRole('button', { name: 'Nouveau calque' }).click();
     await page.getByLabel('Nom du calque').fill('Parking est');
     await page.getByRole('dialog').getByLabel('Catégorie').selectOption('zones');
-    await page.getByRole('button', { name: 'Créer' }).click();
+    await page.getByRole('button', { name: 'Créer', exact: true }).click();
     await expect(page.getByTestId('layer-row').first()).toHaveAttribute('data-layer-name', 'Parking est');
 
     // Calque actif : le rectangle y va.

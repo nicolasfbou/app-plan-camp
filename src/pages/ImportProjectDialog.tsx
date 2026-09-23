@@ -170,6 +170,12 @@ export function ImportProjectDialog({ file, onClose }: { file: File; onClose(): 
               ? `${image.fileName} · ${formatInteger(image.width)} × ${formatInteger(image.height)} px · ${formatBytes(image.byteLength)}`
               : t('bg.empty')}
           </dd>
+          <dt className="text-slate-500">{t('campplan.import.revisions')}</dt>
+          <dd data-testid="import-revisions">
+            {content.revisions.length
+              ? content.revisions.map((r) => r.meta.label).join(', ')
+              : t('campplan.import.noRevisions')}
+          </dd>
           <dt className="text-slate-500">{t('campplan.import.exportedAt')}</dt>
           <dd>{formatDateTime(manifest.exportedAt)}</dd>
         </dl>

@@ -20,7 +20,7 @@ import { viewportActions } from '@/editor/viewportActions.ts';
 import { nowIso } from '@/domain/model/factories.ts';
 import { t } from '@/i18n/index.ts';
 import { useEditorStore } from '@/store/editorStore.ts';
-import { planStore, selectIsDirty, usePlanStore } from '@/store/planStore.ts';
+import { planStore, usePlanStore } from '@/store/planStore.ts';
 import { downloadBytes } from '@/app/download.ts';
 import { exportCampplan } from '@/persistence/campplan.ts';
 import { Button } from '@/ui/Button.tsx';
@@ -28,6 +28,9 @@ import { TextPromptDialog } from '@/ui/TextPromptDialog.tsx';
 import { TemplatesDialog } from '@/app/TemplatesDialog.tsx';
 import { VariantDialog } from '@/app/VariantDialog.tsx';
 import { navigate } from '@/app/router.ts';
+import { RevisionDialogsHost } from '@/revisions/RevisionDialogs.tsx';
+import { useRevisionsStore } from '@/revisions/revisionsStore.ts';
+import { saveNow } from '@/app/saveNow.ts';
 import { Notice, PageLayout } from './PageLayout.tsx';
 import { useAsync } from './useAsync.ts';
 
@@ -62,15 +65,6 @@ function useNavigationShortcuts() {
   }, []);
 }
 
-/** Écrit tout de suite les modifications en attente (avant un export ou une variante). */
-async function saveNow() {
-  const state = planStore.getState();
-  if (state.doc && selectIsDirty(state)) {
-    await repository.savePlan(state.doc);
-    if (planStore.getState().revision === state.revision) state.markSaved(state.revision);
-  }
-}
-
 export function EditorPage({ siteId, planId }: { siteId: string; planId: string }) {
   const { state, saveError } = usePlanSession(planId);
   const [site] = useAsync(() => repository.getSite(siteId), siteId);
@@ -87,6 +81,12 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
 
   useBackgroundLoader();
   useViewPersistence(planId);
+
+  // Révisions figées du plan (métadonnées seulement).
+  useEffect(() => {
+    void useRevisionsStore.getState().load(planId);
+    return () => void useRevisionsStore.getState().load(null);
+  }, [planId]);
   useNavigationShortcuts();
   useEditorShortcuts();
 
@@ -168,6 +168,10 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
         onPrint={() => setPrinting(true)}
         onTemplates={() => setTemplatesOpen(true)}
         onVariant={() => void saveNow().then(() => setVariantOpen(true))}
+        onRevision={() => {
+          useUiStore.getState().setRightTab('revisions');
+          useRevisionsStore.getState().open({ kind: 'create' });
+        }}
       />
       <div className="flex min-h-0 flex-1">
         <main className="relative min-w-0 flex-1">
@@ -233,6 +237,9 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
         </Suspense>
       )}
       {templatesOpen && <TemplatesDialog onClose={() => setTemplatesOpen(false)} />}
+      {state.status === 'ready' && (
+        <RevisionDialogsHost siteName={site.status === 'ready' ? (site.value?.name ?? '') : ''} />
+      )}
       {variantOpen && (
         <VariantDialog
           planId={planId}

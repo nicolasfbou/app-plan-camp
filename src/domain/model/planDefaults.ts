@@ -135,5 +135,6 @@ export const planDefaults = () => ({
   print: structuredClone(DEFAULT_PRINT),
   views: [],
   variantOf: null,
+  draftBase: null,
   styleOverrides: {},
 });

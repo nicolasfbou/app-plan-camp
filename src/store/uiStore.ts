@@ -1,7 +1,7 @@
 /** Préférences d'interface (panneaux réduits, onglet actif). Hors document et hors historique. */
 import { create } from 'zustand';
 
-export type RightTab = 'background' | 'layers' | 'properties' | 'analysis';
+export type RightTab = 'background' | 'layers' | 'properties' | 'analysis' | 'revisions';
 
 interface UiState {
   leftCollapsed: boolean;

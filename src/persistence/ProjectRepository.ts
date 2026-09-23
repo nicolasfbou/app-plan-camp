@@ -5,6 +5,28 @@
 import type { PlanDocument, PlanKind, Site } from '@/domain/model/types.ts';
 import type { ViewCenter } from '@/domain/viewport/viewport.ts';
 import type { PlanTemplate } from '@/domain/templates/template.ts';
+import type { FrozenRevision, RevisionMeta, StatusChange } from '@/domain/revisions/revision.ts';
+
+/** Révision listée (métadonnées seulement : l'instantané n'est lu qu'à la demande). */
+export interface RevisionEntry {
+  id: string;
+  /** null : métadonnées illisibles (jamais masqué en silence). */
+  meta: RevisionMeta | null;
+  /** Sceau conforme (champs figés et approbation non altérés). */
+  sealIntact: boolean;
+}
+
+/** Révision chargée : instantané vérifié (SHA-256), migré, figé, fichiers locaux résolus. */
+export interface LoadedRevision {
+  meta: RevisionMeta;
+  doc: PlanDocument;
+}
+
+/** Révision importée d'un fichier `.campplan` (identifiants de fichiers locaux). */
+export interface ImportedRevision extends FrozenRevision {
+  /** Identifiant de fichier dans l'instantané → identifiant local. */
+  blobMap: Record<string, string>;
+}
 
 /** Modèle d'entreprise enregistré sur cet ordinateur (avec les octets de son logo). */
 export interface StoredTemplate {
@@ -35,7 +57,7 @@ export interface ProjectRepository {
   listSites(): Promise<Site[]>;
   getSite(id: string): Promise<Site | undefined>;
   saveSite(site: Site): Promise<void>;
-  /** Supprime le site, ses plans et les fichiers qui ne sont plus référencés. */
+  /** Supprime le site, ses plans (et leurs révisions) et les fichiers qui ne sont plus référencés. */
   deleteSite(id: string): Promise<void>;
 
   listPlans(siteId: string): Promise<PlanSummary[]>;
@@ -55,7 +77,26 @@ export interface ProjectRepository {
    * même identifiant), puis supprime les fichiers de l'ancienne version qui ne sont plus
    * référencés. En cas d'échec, rien de tout cela n'est écrit.
    */
-  saveImportedPlan(doc: PlanDocument, newSite: Site | null): Promise<void>;
+  saveImportedPlan(doc: PlanDocument, newSite: Site | null, revisions?: ImportedRevision[]): Promise<void>;
+
+  /**
+   * Révisions figées d'un plan, dans l'ordre de création. Métadonnées seulement : les instantanés
+   * complets ne sont jamais chargés pour lister.
+   */
+  listRevisions(planId: string): Promise<RevisionEntry[]>;
+  /**
+   * Instantané d'une révision. Lève `RevisionIntegrityError` si son empreinte SHA-256 ne
+   * correspond plus (révision altérée), `ProjectFormatError` s'il est illisible.
+   */
+  loadRevision(id: string): Promise<LoadedRevision>;
+  /** Texte exact de l'instantané (export `.campplan`) et correspondance des fichiers locaux. */
+  readRevisionSnapshot(id: string): Promise<{ json: string; blobMap: Record<string, string> }>;
+  /** Enregistre une révision figée (instantané + métadonnées, en une transaction). */
+  createRevision(revision: FrozenRevision): Promise<void>;
+  /** Seul changement possible après la création : le statut (règles de `changeRevisionStatus`). */
+  setRevisionStatus(id: string, change: StatusChange, now?: string): Promise<RevisionMeta>;
+  /** Supprime une révision non approuvée. Lève `RevisionError` pour une révision approuvée. */
+  deleteRevision(id: string): Promise<void>;
 
   /** Stocke des octets tels quels et retourne leur empreinte. */
   putBlob(bytes: ArrayBuffer, mimeType: string): Promise<Omit<StoredBlob, 'bytes'>>;

@@ -35,6 +35,8 @@ import {
 import { StyleSection, ViewSection, ViewSelector } from './ViewSettingsPanel.tsx';
 import { BatchExportDialog } from './BatchExportDialog.tsx';
 import { effectiveSettings } from '@/domain/print/views.ts';
+import { revisionHistoryRows } from '@/domain/revisions/revision.ts';
+import { useRevisionMetas } from '@/revisions/revisionsStore.ts';
 
 const readBlob = async (id: string) => {
   const blob = await repository.getBlob(id);
@@ -49,6 +51,7 @@ export function PrintDialog({ siteName, onClose }: { siteName: string; onClose()
   const backgroundStatus = useEditorStore((s) => s.background);
   const background = backgroundStatus.kind === 'ready' ? backgroundStatus.background : null;
   const viewId = useEditorStore((s) => s.activeViewId);
+  const metas = useRevisionMetas();
   const [batch, setBatch] = useState(false);
   const [output, setOutput] = useState<OutputFormat>('pdf');
   const [framing, setFraming] = useState<RasterOptions['framing']>('page');
@@ -72,7 +75,9 @@ export function PrintDialog({ siteName, onClose }: { siteName: string; onClose()
   }, []);
 
   const raster: RasterOptions | undefined = output === 'pdf' ? undefined : { format: output, framing, scale };
-  const source = (): ExportSource | null => (doc ? { doc, siteName, background, readBlob } : null);
+  // Brouillon : le tableau des révisions déjà figées est imprimé au cartouche.
+  const source = (): ExportSource | null =>
+    doc ? { doc, siteName, background, readBlob, revisionHistory: revisionHistoryRows(metas) } : null;
 
   // Aperçu redessiné (après une courte pause) à chaque changement du plan ou des réglages.
   useEffect(() => {
@@ -116,7 +121,7 @@ export function PrintDialog({ siteName, onClose }: { siteName: string; onClose()
       clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `source` et `raster` dérivent de ces valeurs
-  }, [doc, background, output, framing, scale, siteName, viewId]);
+  }, [doc, background, output, framing, scale, siteName, viewId, metas]);
 
   if (!doc) return null;
   const settings = effectiveSettings(doc, viewId);
@@ -322,7 +327,10 @@ export function PrintDialog({ siteName, onClose }: { siteName: string; onClose()
         </div>
       </div>
       {batch && (
-        <BatchExportDialog source={{ doc, siteName, background, readBlob }} onClose={() => setBatch(false)} />
+        <BatchExportDialog
+          source={{ doc, siteName, background, readBlob, revisionHistory: revisionHistoryRows(metas) }}
+          onClose={() => setBatch(false)}
+        />
       )}
     </dialog>
   );

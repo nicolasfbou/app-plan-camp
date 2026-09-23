@@ -97,6 +97,12 @@ export const MIGRATIONS: MigrationTable = {
       readabilityReviews: Array.isArray(doc.readabilityReviews) ? doc.readabilityReviews : [],
     };
   },
+
+  /** 5 → 6 (phase 7) : `plan.draftBase` (null : le plan n'a encore aucune révision figée). */
+  5: (doc) => {
+    const plan = isRecord(doc.plan) ? doc.plan : {};
+    return { ...doc, plan: { draftBase: null, ...plan } };
+  },
 };
 
 /**

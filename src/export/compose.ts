@@ -11,7 +11,12 @@ import type { LegendSettings, PlanDocument, PrintSettings } from '@/domain/model
 import { exportedObjects, shownLegendEntries, type ShownLegendEntry } from '@/domain/print/legend.ts';
 import { PAPER } from '@/domain/print/paper.ts';
 import { scaleBar, scaleRatioText } from '@/domain/print/scaleBar.ts';
-import { STATUS_LABELS, titleBlockRows } from '@/domain/print/titleBlock.ts';
+import {
+  type RevisionHistoryRow,
+  type RevisionStamp,
+  STATUS_LABELS,
+  titleBlockRows,
+} from '@/domain/print/titleBlock.ts';
 import type { PhotoRegion, SymbolSource } from './assets.ts';
 import {
   drawLegend,
@@ -61,6 +66,10 @@ export interface ComposeInput {
   title?: string;
   audienceNote?: string;
   titleBlockPlacement?: 'side' | 'bottom';
+  /** Export d'une révision figée : numéro, date, auteur, statut et approbation de la révision. */
+  revision?: RevisionStamp;
+  /** Tableau compact des révisions imprimé au cartouche (la plus récente en premier). */
+  revisionHistory?: RevisionHistoryRow[];
 }
 
 export interface PageLayout {
@@ -134,7 +143,32 @@ export function composeTitleRows(input: ComposeInput, k: number) {
     northText: northText(input.doc),
     include: input.print.include,
     now: input.now,
+    revision: input.revision,
+    history: input.revisionHistory,
   });
+}
+
+/** Statut imprimé : celui de la révision figée exportée, sinon celui du plan. */
+function printedStatus(input: ComposeInput): { approved: boolean; stale: boolean; badge: string } {
+  const r = input.revision;
+  if (r)
+    return {
+      approved: r.approved,
+      stale: false,
+      badge: `RÉVISION ${r.label.toUpperCase()} — ${r.statusLabel.toUpperCase()}${r.approved ? '' : ' — NON APPROUVÉ'}`,
+    };
+  const block = input.doc.plan.titleBlock;
+  const approved = block.status === 'approved';
+  const stale = approved && !!block.approvedAt && input.doc.plan.updatedAt > block.approvedAt;
+  return {
+    approved,
+    stale,
+    badge: stale
+      ? 'APPROUVÉ PUIS MODIFIÉ — À RÉAPPROUVER'
+      : approved
+        ? 'APPROUVÉ'
+        : `${STATUS_LABELS[block.status].toUpperCase()} — NON APPROUVÉ`,
+  };
 }
 
 function logoAspect(doc: PlanDocument, print: PrintSettings, symbols: SymbolSource | null) {
@@ -235,7 +269,7 @@ export function layoutPage(p: Painter, input: ComposeInput, symbols: SymbolSourc
   const hasColumn = sideLegend || sideTitle;
   const extent = exportExtent(doc, print);
   const logo = logoAspect(doc, print, symbols);
-  const status = doc.plan.titleBlock.status === 'approved' ? ('approved' as const) : ('pending' as const);
+  const status = printedStatus(input).approved ? ('approved' as const) : ('pending' as const);
 
   // Cartouche en bas : sa hauteur est réservée avec une échelle provisoire ; son texte est recalculé
   // à la fin avec l'échelle DÉFINITIVE de la carte (l'échelle imprimée est toujours exacte).
@@ -343,8 +377,7 @@ export function layoutPage(p: Painter, input: ComposeInput, symbols: SymbolSourc
           'Cartouche trop long pour la place disponible : la fin des notes n’est pas imprimée (mention « suite non imprimée » sur le plan). Agrandissez le format, placez le cartouche en bas ou raccourcissez les notes.',
       });
   }
-  const block = doc.plan.titleBlock;
-  if (block.status === 'approved' && block.approvedAt && doc.plan.updatedAt > block.approvedAt)
+  if (printedStatus(input).stale)
     warnings.push({
       code: 'approval-stale',
       message:
@@ -533,13 +566,7 @@ export function drawPage(
   if (layout.title) {
     const t = layout.title;
     const block = doc.plan.titleBlock;
-    const approved = block.status === 'approved';
-    const stale = approved && !!block.approvedAt && doc.plan.updatedAt > block.approvedAt;
-    const badge = stale
-      ? 'APPROUVÉ PUIS MODIFIÉ — À RÉAPPROUVER'
-      : approved
-        ? 'APPROUVÉ'
-        : `${STATUS_LABELS[block.status].toUpperCase()} — NON APPROUVÉ`;
+    const { approved, stale, badge } = printedStatus(input);
     const badgeWidth = p.textWidth(badge, 8, true);
     p.text(badge, t.x + t.width, t.y + t.height / 2, {
       size: 8,

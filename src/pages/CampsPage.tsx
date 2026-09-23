@@ -7,7 +7,7 @@ import { formatDateTime, t, tPlural } from '@/i18n/index.ts';
 import { repository } from '@/app/repository.ts';
 import { navigate, routeHref } from '@/app/router.ts';
 import { Button } from '@/ui/Button.tsx';
-import { ConfirmDialog } from '@/ui/ConfirmDialog.tsx';
+import { ProtectedDeleteDialog } from '@/revisions/ProtectedDeleteDialog.tsx';
 import { IconButton } from '@/ui/IconButton.tsx';
 import { TextPromptDialog } from '@/ui/TextPromptDialog.tsx';
 import { ListRow } from './ListRow.tsx';
@@ -135,10 +135,10 @@ export function CampsPage() {
         />
       )}
       {dialog?.kind === 'delete' && (
-        <ConfirmDialog
-          danger
+        <ProtectedDeleteDialog
           title={t('camps.delete.title')}
-          confirmLabel={t('common.delete')}
+          planIds={async () => (await repository.listPlans(dialog.entry.site.id)).map((p) => p.id)}
+          confirmName={dialog.entry.site.name}
           onCancel={close}
           onConfirm={async () => {
             await repository.deleteSite(dialog.entry.site.id);
@@ -147,7 +147,7 @@ export function CampsPage() {
           }}
         >
           {t('camps.delete.body', { name: dialog.entry.site.name, count: dialog.entry.planCount })}
-        </ConfirmDialog>
+        </ProtectedDeleteDialog>
       )}
     </PageLayout>
   );

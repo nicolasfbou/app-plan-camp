@@ -24,6 +24,10 @@ export async function inspectPdf(browser, pdfBytes, { renderScale = 0 } = {}) {
       const page = await doc.getPage(1);
       const viewport = page.getViewport({ scale: 1 });
       const text = (await page.getTextContent()).items.map((i) => i.str).join('\n');
+      // Texte de toutes les pages (rapports sur plusieurs pages).
+      let allText = '';
+      for (let n = 1; n <= doc.numPages; n++)
+        allText += `${(await (await doc.getPage(n)).getTextContent()).items.map((i) => i.str).join('\n')}\n`;
       const ops = await page.getOperatorList();
       const names = Object.fromEntries(Object.entries(pdfjs.OPS).map(([k, v]) => [v, k]));
       const counts = {};
@@ -95,6 +99,7 @@ export async function inspectPdf(browser, pdfBytes, { renderScale = 0 } = {}) {
         widthMm: (viewport.width * 25.4) / 72,
         heightMm: (viewport.height * 25.4) / 72,
         text,
+        allText,
         operators: counts,
         fonts: [...fonts],
         texts,

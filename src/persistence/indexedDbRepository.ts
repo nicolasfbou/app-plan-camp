@@ -5,7 +5,30 @@ import { sha256Hex } from '@/domain/image/hash.ts';
 import { parsePlanDocument } from '@/domain/schema/serialization.ts';
 import type { ViewCenter } from '@/domain/viewport/viewport.ts';
 import { templateSchema } from '@/domain/templates/template.ts';
-import type { PlanSummary, ProjectRepository, StoredBlob, StoredTemplate } from './ProjectRepository.ts';
+import {
+  changeRevisionStatus,
+  deepFreeze,
+  type FrozenRevision,
+  isDeletable,
+  isSealIntact,
+  referencedBlobIds,
+  RevisionError,
+  RevisionIntegrityError,
+  type RevisionMeta,
+  revisionMetaSchema,
+  sha256OfText,
+  type StatusChange,
+  withLocalBlobs,
+} from '@/domain/revisions/revision.ts';
+import type {
+  ImportedRevision,
+  LoadedRevision,
+  PlanSummary,
+  ProjectRepository,
+  RevisionEntry,
+  StoredBlob,
+  StoredTemplate,
+} from './ProjectRepository.ts';
 
 /**
  * Enregistrement d'un plan : le document complet (versionné) + un résumé dénormalisé.
@@ -35,6 +58,27 @@ interface TemplateRecord {
   logo: ArrayBuffer | null;
 }
 
+/**
+ * Métadonnées d'une révision (petites : listées sans lire les instantanés). `blobIds` = fichiers
+ * locaux référencés par l'instantané (ils ne sont jamais supprimés tant qu'une révision existe).
+ */
+interface RevisionRecord {
+  id: string;
+  planId: string;
+  createdAt: string;
+  blobIds: string[];
+  /** Identifiant de fichier dans l'instantané → identifiant local (après un import). */
+  blobMap: Record<string, string>;
+  /** Métadonnées brutes : relues et validées à chaque lecture. */
+  meta: unknown;
+}
+
+/** Instantané figé : texte JSON exact, dont l'empreinte est dans les métadonnées. */
+interface RevisionSnapshotRecord {
+  id: string;
+  json: string;
+}
+
 interface ViewPrefsRecord extends ViewCenter {
   planId: string;
 }
@@ -45,6 +89,8 @@ class CampPlannerDatabase extends Dexie {
   blobs!: Table<StoredBlob, string>;
   viewPrefs!: Table<ViewPrefsRecord, string>;
   templates!: Table<TemplateRecord, string>;
+  revisions!: Table<RevisionRecord, string>;
+  revisionSnapshots!: Table<RevisionSnapshotRecord, string>;
 
   constructor(name: string) {
     super(name);
@@ -55,21 +101,12 @@ class CampPlannerDatabase extends Dexie {
     });
     this.version(2).stores({ viewPrefs: 'planId' });
     this.version(3).stores({ templates: 'id, name, updatedAt' });
+    this.version(4).stores({ revisions: 'id, planId, *blobIds', revisionSnapshots: 'id' });
   }
 }
 
-/** Identifiants des fichiers binaires référencés par un document de plan. */
 /** Fichiers référencés par un plan : photo (et PDF d'origine), pictogrammes importés. */
-function blobIdsOf(doc: PlanDocument): string[] {
-  const image = doc.plan.baseImage;
-  const ids = image
-    ? image.source.kind === 'pdf'
-      ? [image.blobId, image.source.pdfBlobId]
-      : [image.blobId]
-    : [];
-  for (const asset of Object.values(doc.assets)) ids.push(asset.blobId);
-  return [...new Set(ids)];
-}
+const blobIdsOf = referencedBlobIds;
 
 export class IndexedDbRepository implements ProjectRepository {
   private readonly db: CampPlannerDatabase;
@@ -97,7 +134,14 @@ export class IndexedDbRepository implements ProjectRepository {
   async deleteSite(id: string): Promise<void> {
     await this.db.transaction(
       'rw',
-      [this.db.sites, this.db.plans, this.db.blobs, this.db.viewPrefs],
+      [
+        this.db.sites,
+        this.db.plans,
+        this.db.blobs,
+        this.db.viewPrefs,
+        this.db.revisions,
+        this.db.revisionSnapshots,
+      ],
       async () => {
         const planIds = (await this.db.plans.where('siteId').equals(id).primaryKeys()) as string[];
         for (const planId of planIds) await this.deletePlan(planId);
@@ -138,16 +182,41 @@ export class IndexedDbRepository implements ProjectRepository {
     return { id, siteId, name, kind, updatedAt };
   }
 
-  async saveImportedPlan(doc: PlanDocument, newSite: Site | null): Promise<void> {
-    await this.db.transaction('rw', this.db.sites, this.db.plans, this.db.blobs, async () => {
-      if (newSite) await this.db.sites.put(newSite);
-      const previous = await this.db.plans.get(doc.plan.id);
-      await this.savePlan(doc);
-      for (const blobId of previous?.blobIds ?? []) {
-        const references = await this.db.plans.where('blobIds').equals(blobId).count();
-        if (references === 0) await this.db.blobs.delete(blobId);
-      }
-    });
+  /** Fichier encore référencé par un plan ou par une révision figée. */
+  private async blobInUse(blobId: string): Promise<boolean> {
+    return (
+      (await this.db.plans.where('blobIds').equals(blobId).count()) > 0 ||
+      (await this.db.revisions.where('blobIds').equals(blobId).count()) > 0
+    );
+  }
+
+  async saveImportedPlan(
+    doc: PlanDocument,
+    newSite: Site | null,
+    revisions: ImportedRevision[] = [],
+  ): Promise<void> {
+    const prepared = await Promise.all(
+      revisions.map((r) =>
+        IndexedDbRepository.prepareRevision({ ...r, meta: { ...r.meta, planId: doc.plan.id } }, r.blobMap),
+      ),
+    );
+    await this.db.transaction(
+      'rw',
+      [this.db.sites, this.db.plans, this.db.blobs, this.db.revisions, this.db.revisionSnapshots],
+      async () => {
+        if (newSite) await this.db.sites.put(newSite);
+        const previous = await this.db.plans.get(doc.plan.id);
+        await this.savePlan(doc);
+        // Révisions du fichier : ajoutées ; une révision déjà présente n'est JAMAIS remplacée
+        // (figée : la version locale, avec son statut et son approbation, fait foi).
+        for (const record of prepared) {
+          if (await this.db.revisions.get(record.id)) continue;
+          await this.putRevision(record);
+        }
+        for (const blobId of previous?.blobIds ?? [])
+          if (!(await this.blobInUse(blobId))) await this.db.blobs.delete(blobId);
+      },
+    );
   }
 
   async getPlanSavedAt(id: string): Promise<number | undefined> {
@@ -155,18 +224,164 @@ export class IndexedDbRepository implements ProjectRepository {
   }
 
   async deletePlan(id: string): Promise<void> {
-    await this.db.transaction('rw', this.db.plans, this.db.blobs, this.db.viewPrefs, async () => {
-      const record = await this.db.plans.get(id);
-      if (!record) return;
-      await this.db.plans.delete(id);
-      await this.db.viewPrefs.delete(id);
-      // Un fichier peut être partagé par plusieurs plans (duplication) : on ne supprime
-      // que ceux qui ne sont plus référencés par aucun plan restant.
-      for (const blobId of record.blobIds) {
-        const references = await this.db.plans.where('blobIds').equals(blobId).count();
-        if (references === 0) await this.db.blobs.delete(blobId);
-      }
+    await this.db.transaction(
+      'rw',
+      [this.db.plans, this.db.blobs, this.db.viewPrefs, this.db.revisions, this.db.revisionSnapshots],
+      async () => {
+        const record = await this.db.plans.get(id);
+        if (!record) return;
+        // Les révisions du plan disparaissent avec lui (l'interface l'exige confirmé, deux fois
+        // si une révision est approuvée).
+        const revisions = await this.db.revisions.where('planId').equals(id).toArray();
+        await this.db.revisions.bulkDelete(revisions.map((r) => r.id));
+        await this.db.revisionSnapshots.bulkDelete(revisions.map((r) => r.id));
+        await this.db.plans.delete(id);
+        await this.db.viewPrefs.delete(id);
+        // Un fichier peut être partagé par plusieurs plans (duplication) : on ne supprime
+        // que ceux qui ne sont plus référencés par aucun plan ni aucune révision restante.
+        const blobIds = new Set([...record.blobIds, ...revisions.flatMap((r) => r.blobIds)]);
+        for (const blobId of blobIds) if (!(await this.blobInUse(blobId))) await this.db.blobs.delete(blobId);
+      },
+    );
+  }
+
+  // --- Révisions ----------------------------------------------------------------------------
+
+  /**
+   * Vérifications d'une révision AVANT toute transaction (le calcul d'empreinte est asynchrone et
+   * fermerait une transaction IndexedDB) : empreinte de l'instantané, métadonnées, plan valide.
+   */
+  private static async prepareRevision(
+    revision: FrozenRevision,
+    blobMap: Record<string, string>,
+  ): Promise<RevisionRecord & { json: string }> {
+    const meta = revisionMetaSchema.parse(revision.meta);
+    if ((await sha256OfText(revision.json)) !== meta.snapshot.sha256)
+      throw new RevisionIntegrityError(`Instantané de la révision ${meta.label} altéré : non enregistré.`);
+    if (!(await isSealIntact(meta)))
+      throw new RevisionIntegrityError(
+        `Révision ${meta.label} altérée (sceau non conforme) : non enregistrée.`,
+      );
+    // L'instantané doit être un plan valide (migré au besoin) : jamais une révision illisible.
+    const doc = withLocalBlobs(parsePlanDocument(revision.json), blobMap);
+    return {
+      id: meta.id,
+      planId: meta.planId,
+      createdAt: meta.createdAt,
+      blobIds: referencedBlobIds(doc),
+      blobMap,
+      meta,
+      json: revision.json,
+    };
+  }
+
+  /** Écriture (dans une transaction ouverte sur `blobs`, `revisions`, `revisionSnapshots`). */
+  private async putRevision(record: RevisionRecord & { json: string }): Promise<void> {
+    const { json, ...meta } = record;
+    const label = (meta.meta as RevisionMeta).label;
+    for (const blobId of meta.blobIds)
+      if (!(await this.db.blobs.get(blobId)))
+        throw new RevisionError(`Révision ${label} : fichier d’origine introuvable (${blobId}).`);
+    await this.db.revisions.put(meta);
+    await this.db.revisionSnapshots.put({ id: meta.id, json });
+  }
+
+  async listRevisions(planId: string): Promise<RevisionEntry[]> {
+    const records = await this.db.revisions.where('planId').equals(planId).toArray();
+    records.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return Promise.all(
+      records.map(async (r) => {
+        const parsed = revisionMetaSchema.safeParse(r.meta);
+        return parsed.success
+          ? { id: r.id, meta: parsed.data, sealIntact: await isSealIntact(parsed.data) }
+          : { id: r.id, meta: null, sealIntact: false };
+      }),
+    );
+  }
+
+  async loadRevision(id: string): Promise<LoadedRevision> {
+    const [record, snapshot] = await Promise.all([
+      this.db.revisions.get(id),
+      this.db.revisionSnapshots.get(id),
+    ]);
+    if (!record || !snapshot) throw new RevisionError('Révision introuvable.');
+    const meta = revisionMetaSchema.parse(record.meta);
+    if (!(await isSealIntact(meta)))
+      throw new RevisionIntegrityError(`Révision ${meta.label} altérée (sceau non conforme).`);
+    if ((await sha256OfText(snapshot.json)) !== meta.snapshot.sha256)
+      throw new RevisionIntegrityError(
+        `Révision ${meta.label} altérée : l’empreinte SHA-256 de l’instantané ne correspond plus.`,
+      );
+    const doc = withLocalBlobs(parsePlanDocument(snapshot.json), record.blobMap);
+    return { meta, doc: deepFreeze(doc) };
+  }
+
+  /** Texte exact de l'instantané et correspondance des fichiers (export `.campplan`). */
+  async readRevisionSnapshot(id: string): Promise<{ json: string; blobMap: Record<string, string> }> {
+    const [record, snapshot] = await Promise.all([
+      this.db.revisions.get(id),
+      this.db.revisionSnapshots.get(id),
+    ]);
+    if (!record || !snapshot) throw new RevisionError('Révision introuvable.');
+    return { json: snapshot.json, blobMap: record.blobMap };
+  }
+
+  async createRevision(revision: FrozenRevision): Promise<void> {
+    const record = await IndexedDbRepository.prepareRevision(revision, {});
+    await this.db.transaction(
+      'rw',
+      [this.db.plans, this.db.blobs, this.db.revisions, this.db.revisionSnapshots],
+      async () => {
+        const { meta } = revision;
+        if (!(await this.db.plans.get(meta.planId))) throw new RevisionError('Plan introuvable.');
+        if (await this.db.revisions.get(meta.id)) throw new RevisionError('Cette révision existe déjà.');
+        const labels = (await this.db.revisions.where('planId').equals(meta.planId).toArray()).map((r) =>
+          String((r.meta as RevisionMeta | undefined)?.label ?? '').toUpperCase(),
+        );
+        if (labels.includes(meta.label.toUpperCase()))
+          throw new RevisionError(`La révision « ${meta.label} » existe déjà pour ce plan.`);
+        await this.putRevision(record);
+      },
+    );
+  }
+
+  async setRevisionStatus(
+    id: string,
+    change: StatusChange,
+    now = new Date().toISOString(),
+  ): Promise<RevisionMeta> {
+    const record = await this.db.revisions.get(id);
+    if (!record) throw new RevisionError('Révision introuvable.');
+    // Calcul (asynchrone) hors transaction, puis écriture seulement si rien n'a changé entre-temps.
+    const next = await changeRevisionStatus(revisionMetaSchema.parse(record.meta), change, now);
+    await this.db.transaction('rw', this.db.revisions, async () => {
+      const current = await this.db.revisions.get(id);
+      if (!current || JSON.stringify(current.meta) !== JSON.stringify(record.meta))
+        throw new RevisionError('La révision a changé entre-temps : recommencez.');
+      await this.db.revisions.put({ ...current, meta: next });
     });
+    return next;
+  }
+
+  async deleteRevision(id: string): Promise<void> {
+    await this.db.transaction(
+      'rw',
+      [this.db.revisions, this.db.revisionSnapshots, this.db.plans, this.db.blobs],
+      async () => {
+        const record = await this.db.revisions.get(id);
+        if (!record) return;
+        const parsed = revisionMetaSchema.safeParse(record.meta);
+        if (parsed.success && !isDeletable(parsed.data))
+          throw new RevisionError(
+            `La révision ${parsed.data.label} est approuvée : elle ne peut pas être supprimée.`,
+          );
+        if (!parsed.success) throw new RevisionError('Révision illisible : suppression refusée.');
+        await this.db.revisions.delete(id);
+        await this.db.revisionSnapshots.delete(id);
+        for (const blobId of record.blobIds)
+          if (!(await this.blobInUse(blobId))) await this.db.blobs.delete(blobId);
+      },
+    );
   }
 
   async putBlob(bytes: ArrayBuffer, mimeType: string): Promise<Omit<StoredBlob, 'bytes'>> {
@@ -187,11 +402,11 @@ export class IndexedDbRepository implements ProjectRepository {
 
   async deleteOrphanBlobs(minAgeMs = 60 * 60 * 1000): Promise<number> {
     const cutoff = Date.now() - minAgeMs;
-    return this.db.transaction('rw', this.db.plans, this.db.blobs, async () => {
+    return this.db.transaction('rw', this.db.plans, this.db.blobs, this.db.revisions, async () => {
       const ids = (await this.db.blobs.toCollection().primaryKeys()) as string[];
       let deleted = 0;
       for (const id of ids) {
-        if ((await this.db.plans.where('blobIds').equals(id).count()) > 0) continue;
+        if (await this.blobInUse(id)) continue;
         // Lecture complète nécessaire pour la date ; seuls les orphelins sont lus.
         const blob = await this.db.blobs.get(id);
         const created = blob?.createdAt ? Date.parse(blob.createdAt) : 0;

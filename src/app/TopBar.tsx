@@ -12,6 +12,7 @@ import {
   Printer,
   LayoutTemplate,
   GitBranch,
+  Stamp,
   Redo2,
   Undo2,
 } from 'lucide-react';
@@ -33,6 +34,7 @@ interface TopBarProps {
   onPrint?(): void;
   onTemplates?(): void;
   onVariant?(): void;
+  onRevision?(): void;
 }
 
 export function TopBar({
@@ -45,6 +47,7 @@ export function TopBar({
   onPrint,
   onTemplates,
   onVariant,
+  onRevision,
 }: TopBarProps) {
   const planName = usePlanStore((s) => s.doc?.plan.name ?? null);
   const hasBackground = usePlanStore((s) => s.doc?.plan.baseImage != null);
@@ -169,6 +172,18 @@ export function TopBar({
         <IconButton label={t('variant.topbar')} onClick={onVariant}>
           <GitBranch size={18} />
         </IconButton>
+      )}
+
+      {onRevision && planName !== null && (
+        <Button
+          onClick={onRevision}
+          aria-label={t('rev.create')}
+          title={t('rev.create')}
+          data-testid="topbar-revision"
+        >
+          <Stamp size={16} />
+          <span className="hidden 2xl:inline">{t('rev.create')}</span>
+        </Button>
       )}
 
       {onPrint && planName !== null && (

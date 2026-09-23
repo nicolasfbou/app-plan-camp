@@ -9,6 +9,7 @@ import type { LoadedBackground } from '@/editor/backgroundImage.ts';
 import type { PlanDocument } from '@/domain/model/types.ts';
 import { pageSize } from '@/domain/print/paper.ts';
 import type { EffectiveSettings } from '@/domain/print/views.ts';
+import type { RevisionHistoryRow, RevisionStamp } from '@/domain/print/titleBlock.ts';
 import {
   canvasFitFactor,
   createCanvas,
@@ -39,6 +40,10 @@ export interface ExportSource {
   background: LoadedBackground | null;
   readBlob: BlobReader;
   now?: Date;
+  /** Révision figée exportée (cartouche : numéro, date, auteur, statut, approbation). */
+  revision?: RevisionStamp;
+  /** Tableau des révisions imprimé au cartouche (la plus récente en premier). */
+  revisionHistory?: RevisionHistoryRow[];
 }
 
 export interface ExportResult {
@@ -63,12 +68,16 @@ const slug = (text: string) =>
     .slice(0, 80);
 
 /** Nom de fichier sûr, dérivé du numéro (ou du nom) du plan, de la vue et de la révision. */
-export function exportFileName(doc: PlanDocument, extension: string, viewName?: string): string {
+export function exportFileName(
+  doc: PlanDocument,
+  extension: string,
+  viewName?: string,
+  revisionLabel?: string,
+): string {
   const base = slug(doc.plan.titleBlock.planNumber || doc.plan.name || 'plan') || 'plan';
   const view = viewName ? `-${slug(viewName)}` : '';
-  const rev = doc.plan.titleBlock.revision
-    ? `-rev${doc.plan.titleBlock.revision.replace(/[^A-Za-z0-9]/g, '')}`
-    : '';
+  const label = revisionLabel ?? doc.plan.titleBlock.revision;
+  const rev = label ? `-rev${label.replace(/[^A-Za-z0-9]/g, '')}` : '';
   return `${base}${view}${rev}.${extension}`;
 }
 
@@ -95,6 +104,8 @@ function composeInput(
     title: settings.title,
     audienceNote: settings.audienceNote,
     titleBlockPlacement: settings.titleBlockPlacement,
+    revision: src.revision,
+    revisionHistory: src.revisionHistory,
   };
 }
 
@@ -168,16 +179,23 @@ export async function exportPdfPages(
   const block = src.doc.plan.titleBlock;
   pdf.setProperties({
     title: pagesSettings.length > 1 ? block.title || src.doc.plan.name : pagesSettings[0]!.title,
-    subject: `${src.siteName} — ${block.status === 'approved' ? 'Approuvé' : 'Non approuvé'}`,
+    subject: src.revision
+      ? `${src.siteName} — Révision ${src.revision.label} — ${src.revision.statusLabel}${src.revision.approved ? '' : ' (non approuvé)'}`
+      : `${src.siteName} — ${block.status === 'approved' ? 'Approuvé' : 'Non approuvé'}`,
     creator: 'CampPlanner',
-    author: block.preparedBy || '',
+    author: src.revision?.author || block.preparedBy || '',
   });
   const bytes = new Uint8Array(pdf.output('arraybuffer'));
   const single = pagesSettings.length === 1 ? pagesSettings[0]! : null;
   return {
     bytes,
     mimeType: 'application/pdf',
-    fileName: exportFileName(src.doc, 'pdf', single ? (single.viewId ? single.name : undefined) : 'vues'),
+    fileName: exportFileName(
+      src.doc,
+      'pdf',
+      single ? (single.viewId ? single.name : undefined) : 'vues',
+      src.revision?.label,
+    ),
     warnings,
     width: first.width,
     height: first.height,
@@ -329,6 +347,7 @@ export async function exportRaster(
       src.doc,
       options.format === 'png' ? 'png' : 'jpg',
       settings.viewId ? settings.name : undefined,
+      src.revision?.label,
     ),
     warnings,
     width: size.width,

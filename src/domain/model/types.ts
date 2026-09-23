@@ -21,6 +21,7 @@ import type {
   planViewSchema,
   printStyleSchema,
   readabilityReviewSchema,
+  draftBaseSchema,
 } from './schema.ts';
 
 export type Point = z.infer<typeof pointSchema>;
@@ -56,3 +57,4 @@ export type PrintStyle = z.infer<typeof printStyleSchema>;
 export type ReadabilityReview = z.infer<typeof readabilityReviewSchema>;
 export type Audience = PlanView['audience'];
 export type TextObject = Extract<PlanObject, { type: 'text' }>;
+export type DraftBase = z.infer<typeof draftBaseSchema>;

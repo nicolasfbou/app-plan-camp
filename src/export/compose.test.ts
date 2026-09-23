@@ -1,3 +1,4 @@
+import { SCHEMA_VERSION } from '@/domain/model/schema.ts';
 import { describe, expect, it } from 'vitest';
 import { addObject } from '@/domain/model/operations.ts';
 import { metersPerPixel } from '@/domain/model/measure.ts';
@@ -362,7 +363,7 @@ describe('outils', () => {
     for (const key of ['northStatus', 'units', 'legend', 'titleBlock', 'print']) delete plan[key];
     delete (v3.objects as Record<string, Record<string, unknown>>)[corridor.id]!.widthMeters;
     const migrated = parsePlanDocument(v3);
-    expect(migrated.schemaVersion).toBe(5);
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION);
     expect(migrated.plan.northStatus).toBe('undefined');
     expect(migrated.plan.titleBlock.status).toBe('draft');
     expect(migrated.plan.print.paper).toBe('tabloid');

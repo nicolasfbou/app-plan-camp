@@ -57,7 +57,7 @@ export function createPlanDocument(params: { siteId: string; name: string; kind?
 export function duplicatePlanDocument(doc: PlanDocument, name: string): PlanDocument {
   const now = nowIso();
   const copy = structuredClone(doc);
-  copy.plan = { ...copy.plan, id: newId(), name, createdAt: now, updatedAt: now };
+  copy.plan = { ...copy.plan, id: newId(), name, createdAt: now, updatedAt: now, draftBase: null };
   // Une copie n'hérite jamais d'une approbation : elle repart en brouillon.
   copy.plan.titleBlock = { ...copy.plan.titleBlock, status: 'draft', approvedAt: null };
   return copy;

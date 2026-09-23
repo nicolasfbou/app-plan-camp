@@ -23,7 +23,7 @@ import type { PlanSummary } from '@/persistence/ProjectRepository.ts';
 import { repository } from '@/app/repository.ts';
 import { navigate, routeHref } from '@/app/router.ts';
 import { Button } from '@/ui/Button.tsx';
-import { ConfirmDialog } from '@/ui/ConfirmDialog.tsx';
+import { ProtectedDeleteDialog } from '@/revisions/ProtectedDeleteDialog.tsx';
 import { IconButton } from '@/ui/IconButton.tsx';
 import { TextPromptDialog } from '@/ui/TextPromptDialog.tsx';
 import { ListRow } from './ListRow.tsx';
@@ -241,10 +241,10 @@ export function CampPage({ siteId }: { siteId: string }) {
         />
       )}
       {dialog?.kind === 'delete' && (
-        <ConfirmDialog
-          danger
+        <ProtectedDeleteDialog
           title={t('plans.delete.title')}
-          confirmLabel={t('common.delete')}
+          planIds={async () => [dialog.plan.id]}
+          confirmName={dialog.plan.name}
           onCancel={close}
           onConfirm={async () => {
             await repository.deletePlan(dialog.plan.id);
@@ -253,7 +253,7 @@ export function CampPage({ siteId }: { siteId: string }) {
           }}
         >
           {t('plans.delete.body', { name: dialog.plan.name })}
-        </ConfirmDialog>
+        </ProtectedDeleteDialog>
       )}
     </PageLayout>
   );

@@ -1,3 +1,4 @@
+import { SCHEMA_VERSION } from '@/domain/model/schema.ts';
 import { strToU8, unzipSync, zipSync } from 'fflate';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createPlanDocument, createSite } from '@/domain/model/factories.ts';
@@ -10,6 +11,7 @@ import {
   exportCampplan,
   importCampplan,
   readCampplan,
+  CAMPPLAN_FORMAT_VERSION,
 } from './campplan.ts';
 import { IndexedDbRepository } from './indexedDbRepository.ts';
 
@@ -74,8 +76,8 @@ describe('export / import .campplan', () => {
     const content = await readCampplan(bytes);
     expect(content.manifest).toMatchObject({
       format: 'campplan',
-      formatVersion: 2,
-      schemaVersion: 5,
+      formatVersion: CAMPPLAN_FORMAT_VERSION,
+      schemaVersion: SCHEMA_VERSION,
       counts: { objects: 400 },
     });
     const { siteId, planId } = await importCampplan(target, content, {
@@ -322,7 +324,7 @@ describe('pictogrammes importés', () => {
     const content = await readCampplan(
       zipSync({ ...entries, 'manifest.json': strToU8(JSON.stringify(manifest)) }),
     );
-    expect(content.manifest.formatVersion).toBe(2);
+    expect(content.manifest.formatVersion).toBe(CAMPPLAN_FORMAT_VERSION);
   });
 });
 

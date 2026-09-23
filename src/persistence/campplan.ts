@@ -8,10 +8,13 @@
  *   plan.json                document du plan (objets, calques, styles, coordonnées, calibration,
  *                            métadonnées, schemaVersion)
  *   fichiers/<rôle>-<sha>.<ext>   photo d'origine, PDF d'origine et pictogrammes importés, octets
- *                            identiques (non recompressés)
+ *                            identiques (non recompressés) — une seule fois, même si plusieurs
+ *                            révisions les référencent
+ *   revisions/<id>.json      instantané figé de chaque révision (texte exact : son SHA-256 est
+ *                            celui des métadonnées de la révision, listées dans le manifeste)
  *
  * Versions du format d'archive : 1 (phase 3) ; 2 (phase 4) ajoute le rôle `symbol` (pictogrammes
- * importés). Un fichier de format 1 se lit tel quel.
+ * importés) ; 3 (phase 7) ajoute les révisions. Un fichier de format 1 ou 2 se lit tel quel.
  *
  * À la lecture, tout est vérifié : structure de l'archive, version du format, empreinte de
  * plan.json, présence, taille et SHA-256 de chaque fichier, cohérence avec le plan. Un fichier
@@ -27,10 +30,17 @@ import { AREA_PRESETS, type ZonePreset } from '@/domain/presets/zonePresets.ts';
 import { ProjectFormatError } from '@/domain/schema/migrations.ts';
 import { parsePlanDocument, serializePlanDocument } from '@/domain/schema/serialization.ts';
 import { checkSymbolFile } from '@/domain/symbols/importSymbol.ts';
-import type { ProjectRepository } from './ProjectRepository.ts';
+import {
+  isSealIntact,
+  referencedBlobIds,
+  type RevisionMeta,
+  revisionMetaSchema,
+  sha256OfText,
+} from '@/domain/revisions/revision.ts';
+import type { ImportedRevision, ProjectRepository } from './ProjectRepository.ts';
 
 export const CAMPPLAN_EXTENSION = '.campplan';
-export const CAMPPLAN_FORMAT_VERSION = 2;
+export const CAMPPLAN_FORMAT_VERSION = 3;
 
 export class CampplanError extends Error {
   override name = 'CampplanError';
@@ -48,6 +58,15 @@ const fileEntrySchema = z.object({
   sha256: sha256Schema,
 });
 
+const revisionEntrySchema = z.object({
+  meta: z.unknown(),
+  path: z.string().regex(/^revisions\/[\w.-]+\.json$/),
+  sha256: sha256Schema,
+  byteLength: z.number().int().positive(),
+  /** Identifiant de fichier dans l'instantané → identifiant du fichier dans l'archive. */
+  blobMap: z.record(z.string(), z.string()),
+});
+
 const manifestSchema = z.object({
   format: z.literal('campplan'),
   formatVersion: z.number().int().positive(),
@@ -61,6 +80,8 @@ const manifestSchema = z.object({
   /** Définition des modèles utilisés par les objets (pour les retrouver même s'ils changent). */
   presets: z.array(z.unknown()),
   counts: z.object({ objects: z.number().int().nonnegative(), layers: z.number().int().positive() }),
+  /** Révisions figées (format 3), dans l'ordre de création. */
+  revisions: z.array(revisionEntrySchema),
 });
 
 export type CampplanManifest = z.infer<typeof manifestSchema>;
@@ -80,6 +101,15 @@ export interface CampplanContent {
   doc: PlanDocument;
   /** Fichiers par identifiant d'origine (`blobId` du plan exporté). */
   files: Map<string, CampplanFile>;
+  /** Révisions vérifiées (empreinte, sceau, plan valide, fichiers présents). */
+  revisions: CampplanRevision[];
+}
+
+export interface CampplanRevision {
+  meta: RevisionMeta;
+  json: string;
+  /** Identifiant de fichier dans l'instantané → identifiant du fichier dans l'archive. */
+  blobMap: Record<string, string>;
 }
 
 const EXTENSIONS: Record<string, string> = {
@@ -149,7 +179,27 @@ export async function exportCampplan(
   const entries: Zippable = {};
   const files: CampplanManifest['files'] = [];
   const seen = new Set<string>();
-  for (const { blobId, role, sha256, label } of referencedFiles(doc)) {
+  // Révisions : instantanés exacts ; leurs fichiers (souvent la même photo) ne sont écrits qu'une fois.
+  const revisionEntries: CampplanManifest['revisions'] = [];
+  const revisionRefs: FileRef[] = [];
+  for (const entry of await repo.listRevisions(planId)) {
+    if (!entry.meta) throw new CampplanError('Une révision du plan est illisible : export annulé.');
+    const loaded = await repo.loadRevision(entry.id); // vérifie sceau et empreinte
+    const { json, blobMap } = await repo.readRevisionSnapshot(entry.id);
+    const path = `revisions/${entry.id.replace(/[^\w.-]/g, '_')}.json`;
+    const bytes = strToU8(json);
+    entries[path] = bytes;
+    const inSnapshot = referencedBlobIds(parsePlanDocument(json));
+    revisionEntries.push({
+      meta: loaded.meta,
+      path,
+      sha256: loaded.meta.snapshot.sha256,
+      byteLength: bytes.byteLength,
+      blobMap: Object.fromEntries(inSnapshot.map((id) => [id, blobMap[id] ?? id])),
+    });
+    revisionRefs.push(...referencedFiles(loaded.doc));
+  }
+  for (const { blobId, role, sha256, label } of [...referencedFiles(doc), ...revisionRefs]) {
     if (seen.has(blobId)) continue;
     seen.add(blobId);
     const blob = await repo.getBlob(blobId);
@@ -179,6 +229,7 @@ export async function exportCampplan(
     files,
     presets: usedPresets(doc),
     counts: { objects: Object.keys(doc.objects).length, layers: doc.layers.length },
+    revisions: revisionEntries,
   };
   entries['manifest.json'] = strToU8(JSON.stringify(manifest, null, 2));
   entries['plan.json'] = planJson;
@@ -200,6 +251,8 @@ const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
 const FORMAT_MIGRATIONS: Record<number, (manifest: Record<string, unknown>) => Record<string, unknown>> = {
   /** 1 → 2 : nouveau rôle de fichier possible (`symbol`) ; un manifeste de format 1 reste valide. */
   1: (manifest) => manifest,
+  /** 2 → 3 : révisions (aucune dans un fichier plus ancien). */
+  2: (manifest) => ({ revisions: [], ...manifest }),
 };
 
 export async function readCampplan(bytes: Uint8Array): Promise<CampplanContent> {
@@ -209,7 +262,8 @@ export async function readCampplan(bytes: Uint8Array): Promise<CampplanContent> 
     // (taille déclarée vérifiée AVANT décompression) : un fichier piégé ne peut pas saturer la mémoire.
     entries = unzipSync(bytes, {
       filter: ({ name, originalSize }) => {
-        const json = name === 'manifest.json' || name === 'plan.json';
+        const json =
+          name === 'manifest.json' || name === 'plan.json' || /^revisions\/[\w.-]+\.json$/.test(name);
         if (!json && !name.startsWith('fichiers/')) return false;
         if (originalSize > (json ? MAX_JSON_BYTES : MAX_FILE_BYTES))
           throw new CampplanError(`Fichier refusé : l’élément « ${name} » dépasse la taille autorisée.`);
@@ -284,19 +338,65 @@ export async function readCampplan(bytes: Uint8Array): Promise<CampplanContent> 
     if (!file || file.sha256 !== needed.sha256)
       throw new CampplanError(`Le fichier ${needed.label} ne correspond pas aux fichiers de l’archive.`);
   }
+  // Révisions : empreinte de l'instantané, sceau, plan valide, fichiers présents et identiques.
+  const revisions: CampplanRevision[] = [];
+  const revisionAssets: { blobId: string; asset: PlanDocument['assets'][string] }[] = [];
+  const revisionIds = new Set<string>();
+  for (const entry of manifest.revisions) {
+    const parsedMeta = revisionMetaSchema.safeParse(entry.meta);
+    if (!parsedMeta.success)
+      throw new CampplanError('Révision invalide dans le fichier : structure inattendue.');
+    const meta = parsedMeta.data;
+    const where = `Révision ${meta.label}`;
+    if (revisionIds.has(meta.id)) throw new CampplanError(`${where} : présente deux fois.`);
+    revisionIds.add(meta.id);
+    const data = entries[entry.path];
+    if (!data) throw new CampplanError(`${where} : instantané manquant dans l’archive.`);
+    const json = strFromU8(data);
+    if (
+      entry.sha256 !== meta.snapshot.sha256 ||
+      data.byteLength !== entry.byteLength ||
+      (await sha256OfText(json)) !== meta.snapshot.sha256
+    )
+      throw new CampplanError(`${where} : instantané corrompu (empreinte SHA-256 différente).`);
+    if (!(await isSealIntact(meta)))
+      throw new CampplanError(`${where} : métadonnées altérées (sceau non conforme).`);
+    let snapshot: PlanDocument;
+    try {
+      snapshot = parsePlanDocument(json);
+    } catch (error) {
+      throw new CampplanError(
+        `${where} : ${error instanceof ProjectFormatError ? error.message : 'plan invalide.'}`,
+      );
+    }
+    for (const needed of referencedFiles(snapshot)) {
+      const file = files.get(entry.blobMap[needed.blobId] ?? needed.blobId);
+      if (!file || file.sha256 !== needed.sha256)
+        throw new CampplanError(
+          `${where} : le fichier ${needed.label} ne correspond pas aux fichiers de l’archive.`,
+        );
+    }
+    for (const asset of Object.values(snapshot.assets))
+      revisionAssets.push({ blobId: entry.blobMap[asset.blobId] ?? asset.blobId, asset });
+    revisions.push({ meta, json, blobMap: entry.blobMap });
+  }
+
   // Pictogrammes importés : mêmes vérifications qu'à l'import depuis l'éditeur (un fichier
   // .campplan fabriqué ne doit pas faire entrer un SVG actif ou une image démesurée), et type MIME
   // imposé par le plan (jamais celui, libre, du manifeste).
-  for (const asset of Object.values(doc.assets)) {
-    const file = files.get(asset.blobId)!;
+  for (const { blobId, asset } of [
+    ...Object.values(doc.assets).map((asset) => ({ blobId: asset.blobId, asset })),
+    ...revisionAssets,
+  ]) {
+    const file = files.get(blobId)!;
     const check = checkSymbolFile(file.bytes, asset.mimeType === 'image/svg+xml' ? 'x.svg' : 'x.png');
     if (!check.ok || check.mimeType !== asset.mimeType)
       throw new CampplanError(
         `Le pictogramme importé « ${asset.name} » est refusé : ${check.ok ? 'type de fichier incohérent' : check.reason}`,
       );
-    files.set(asset.blobId, { ...file, mimeType: asset.mimeType, role: 'symbol' });
+    files.set(blobId, { ...file, mimeType: asset.mimeType, role: 'symbol' });
   }
-  return { manifest, doc, files };
+  return { manifest, doc, files, revisions };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -369,8 +469,36 @@ export async function importCampplan(
   doc.plan.siteId = siteId;
   doc.plan.name = options.planName;
 
-  // Camp éventuel + plan (+ fichiers de la version remplacée) : une seule transaction.
-  await repo.saveImportedPlan(doc, newSite);
+  // Révisions : instantanés intacts (jamais réécrits) ; les fichiers sont résolus par une table de
+  // correspondance. Une copie reçoit de nouveaux identifiants de révision (jamais de collision).
+  const renewIds = doc.plan.id !== content.doc.plan.id;
+  const idMap = new Map(content.revisions.map((r) => [r.meta.id, renewIds ? newId() : r.meta.id]));
+  const revisions: ImportedRevision[] = [];
+  for (const r of content.revisions) {
+    const blobMap: Record<string, string> = {};
+    for (const [inSnapshot, inArchive] of Object.entries(r.blobMap))
+      blobMap[inSnapshot] = await store(inArchive);
+    for (const id of referencedBlobIds(parsePlanDocument(r.json)))
+      if (!blobMap[id]) blobMap[id] = await store(id);
+    revisions.push({
+      meta: {
+        ...r.meta,
+        id: idMap.get(r.meta.id)!,
+        planId: doc.plan.id,
+        parentId: r.meta.parentId ? (idMap.get(r.meta.parentId) ?? null) : null,
+      },
+      json: r.json,
+      blobMap,
+    });
+  }
+  // Le brouillon issu d'une révision garde son lien (identifiant renouvelé le cas échéant).
+  if (doc.plan.draftBase)
+    doc.plan.draftBase = idMap.has(doc.plan.draftBase.revisionId)
+      ? { ...doc.plan.draftBase, revisionId: idMap.get(doc.plan.draftBase.revisionId)! }
+      : doc.plan.draftBase;
+
+  // Camp éventuel + plan (+ fichiers de la version remplacée) + révisions : une seule transaction.
+  await repo.saveImportedPlan(doc, newSite, revisions);
   return { siteId, planId: doc.plan.id };
 }
 

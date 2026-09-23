@@ -4,12 +4,14 @@ import { AnalysisPanel } from '@/panels/AnalysisPanel.tsx';
 import { BackgroundPanel } from '@/panels/BackgroundPanel.tsx';
 import { LayersPanel } from '@/panels/LayersPanel.tsx';
 import { PropertiesPanel } from '@/panels/PropertiesPanel.tsx';
+import { RevisionsPanel } from '@/revisions/RevisionsPanel.tsx';
 import { type RightTab, useUiStore } from '@/store/uiStore.ts';
 
 const TABS: { id: RightTab; label: () => string; content: () => ReactNode }[] = [
   { id: 'properties', label: () => t('panel.properties'), content: () => <PropertiesPanel /> },
   { id: 'layers', label: () => t('panel.layers'), content: () => <LayersPanel /> },
   { id: 'analysis', label: () => t('panel.analysis'), content: () => <AnalysisPanel /> },
+  { id: 'revisions', label: () => t('panel.revisions'), content: () => <RevisionsPanel /> },
   { id: 'background', label: () => t('panel.background'), content: () => <BackgroundPanel /> },
 ];
 
@@ -33,7 +35,7 @@ export function RightPanel() {
             aria-selected={tab.id === rightTab}
             aria-controls="right-panel-content"
             onClick={() => setRightTab(tab.id)}
-            className={`flex-1 px-2 py-2 text-sm font-medium ${
+            className={`min-w-0 flex-1 px-1 py-2 text-xs font-medium whitespace-nowrap ${
               tab.id === rightTab
                 ? 'border-b-2 border-accent text-accent'
                 : 'text-slate-600 hover:text-slate-900'

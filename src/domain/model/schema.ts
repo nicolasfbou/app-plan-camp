@@ -23,8 +23,10 @@ import { z } from 'zod';
  * - 5 : utilisation quotidienne (phase 6) : vues par public, style d'impression, niveau de détail,
  *   éléments exclus, suivi de lisibilité, étiquettes déplacées avec ligne de renvoi, variantes,
  *   styles d'entreprise, nouveaux types de plans.
+ * - 6 : révisions (phase 7) : `plan.draftBase`, révision figée dont le brouillon est issu. Les
+ *   révisions elles-mêmes sont des instantanés complets stockés à part (`domain/revisions`).
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export const idSchema = z.string().min(1);
 export const isoDateSchema = z.iso.datetime();
@@ -493,6 +495,13 @@ export const variantOfSchema = z.object({
   createdAt: isoDateSchema,
 });
 
+/** Révision figée dont le brouillon courant est issu (création de la révision ou restauration). */
+export const draftBaseSchema = z.object({
+  revisionId: idSchema,
+  label: z.string(),
+  at: isoDateSchema,
+});
+
 /** Décision de l'utilisateur sur un problème de lisibilité (clé stable du problème). */
 export const readabilityReviewSchema = z.object({
   key: z.string().min(1),
@@ -520,6 +529,8 @@ export const planSchema = z.object({
   views: z.array(planViewSchema),
   /** Plan créé comme variante d'un autre (copie indépendante ; trace de l'origine). */
   variantOf: variantOfSchema.nullable(),
+  /** Brouillon issu d'une révision figée (null : aucune révision encore). */
+  draftBase: draftBaseSchema.nullable(),
   /** Styles d'entreprise par modèle (`presetId`) : appliqués aux nouveaux objets. */
   styleOverrides: z.record(z.string(), styleSchema),
   metadata: metadataSchema,
