@@ -150,7 +150,7 @@ export function PageSettings({
               viewId,
               'Qualité JPEG',
               (p) => void (p.jpegQuality = Number(e.target.value) / 100),
-              'print-quality',
+              `print-quality-${viewId ?? 'base'}`,
             )
           }
           className="w-full accent-accent"
@@ -264,7 +264,7 @@ export function LegendSettingsSection({ doc, viewId }: { doc: PlanDocument; view
               viewId,
               'Taille de la légende',
               (l) => void (l.sizeFactor = Number(e.target.value) / 100),
-              'legend-size',
+              `legend-size-${viewId ?? 'base'}`,
             )
           }
           className="w-full accent-accent"
@@ -275,7 +275,12 @@ export function LegendSettingsSection({ doc, viewId }: { doc: PlanDocument; view
         label={t('print.legend.heading')}
         value={legend.title}
         onChange={(title) =>
-          setLegend(viewId, 'Titre de la légende', (l) => void (l.title = title), 'legend-title')
+          setLegend(
+            viewId,
+            'Titre de la légende',
+            (l) => void (l.title = title),
+            `legend-title-${viewId ?? 'base'}`,
+          )
         }
       />
       <p className="text-xs font-medium text-slate-600">
@@ -311,7 +316,7 @@ export function LegendSettingsSection({ doc, viewId }: { doc: PlanDocument; view
                     if (e.target.value) l.labels[entry.key] = e.target.value;
                     else delete l.labels[entry.key];
                   },
-                  `legend-label-${entry.key}`,
+                  `legend-label-${viewId ?? 'base'}-${entry.key}`,
                 )
               }
             />

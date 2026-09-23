@@ -161,12 +161,18 @@ function leader(
   box: { cx: number; cy: number; w: number; h: number },
   to: Point,
   stopAt = 0,
+  rotation = 0,
 ) {
   const dx = to.x - box.cx;
   const dy = to.y - box.cy;
   const len = Math.hypot(dx, dy);
   if (len < 1e-6) return;
-  const t = Math.min(dx ? box.w / 2 / Math.abs(dx) : Infinity, dy ? box.h / 2 / Math.abs(dy) : Infinity);
+  // Bord de l'étiquette dans son propre repère (pivoté), comme dans l'éditeur.
+  const local = rotatePoint({ x: dx, y: dy }, { x: 0, y: 0 }, -rotation);
+  const t = Math.min(
+    local.x ? box.w / 2 / Math.abs(local.x) : Infinity,
+    local.y ? box.h / 2 / Math.abs(local.y) : Infinity,
+  );
   if (t >= 1) return; // l'ancre est sous l'étiquette
   const from = { x: box.cx + dx * t, y: box.cy + dy * t };
   const end = { x: to.x - (dx / len) * stopAt, y: to.y - (dy / len) * stopAt };
@@ -315,7 +321,7 @@ function drawText(ctx: SceneContext, o: Extract<PlanObject, { type: 'text' }>) {
   const pad = (o.label?.padding ?? 0) * m.k;
   const w = textW + 2 * pad;
   const h = textH + 2 * pad;
-  if (o.leaderTo) leader(ctx, { cx: center.x, cy: center.y, w, h }, toPage(ctx.m, o.leaderTo));
+  if (o.leaderTo) leader(ctx, { cx: center.x, cy: center.y, w, h }, toPage(ctx.m, o.leaderTo), 0, o.rotation);
   const rot = (q: Point) => (o.rotation ? rotatePoint(q, center, o.rotation) : q);
   if (o.label) {
     const rect = roundedRectPath(center.x - w / 2, center.y - h / 2, w, h, o.label.cornerRadius * m.k).map(

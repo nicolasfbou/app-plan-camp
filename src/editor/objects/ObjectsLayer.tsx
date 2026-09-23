@@ -4,6 +4,7 @@ import { expandGroups } from '@/domain/model/multi.ts';
 import { isEditable, objectsInRenderOrder } from '@/domain/model/operations.ts';
 import type { PlanObject } from '@/domain/model/types.ts';
 import { viewFilter } from '@/domain/print/views.ts';
+import { isShownInEditor } from '../viewVisibility.ts';
 import { useEditorStore } from '@/store/editorStore.ts';
 import { planStore, usePlanStore } from '@/store/planStore.ts';
 import { ObjectNode } from './ObjectNode.tsx';
@@ -18,7 +19,8 @@ const select = (id: string, additive: boolean) => {
   const doc = planStore.getState().doc;
   const editor = useEditorStore.getState();
   if (!doc) return;
-  const ids = expandGroups(doc, [id]);
+  // Membres d'un groupe masqués par la vue affichée : jamais sélectionnés (ni modifiés à l'aveugle).
+  const ids = expandGroups(doc, [id]).filter((x) => doc.objects[x] && isShownInEditor(doc, doc.objects[x]));
   if (additive) editor.toggleSelection(ids);
   else if (!editor.selectedIds.includes(id)) editor.select(ids);
 };

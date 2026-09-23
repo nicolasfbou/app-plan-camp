@@ -7,6 +7,7 @@
 import { z } from 'zod';
 import { createLayer, newId, nowIso } from '../model/factories.ts';
 import { withOverride } from '../model/objectFactory.ts';
+import { isEditable } from '../model/operations.ts';
 import {
   AUDIENCES,
   displaySettingsSchema,
@@ -173,12 +174,17 @@ export function applyTemplate(
 ): void {
   const now = options.now ?? nowIso();
   // Calques : réglages repris pour les calques de même catégorie et de même nom ; manquants ajoutés.
+  const matched = new Set<string>();
   for (const tl of template.layers) {
+    // Même catégorie et même nom ; sinon le seul calque encore libre de cette catégorie.
+    const free = doc.layers.filter((l) => l.tier === tl.tier && !matched.has(l.id));
     const existing =
-      doc.layers.find((l) => l.tier === tl.tier && l.name === tl.name) ??
-      (doc.layers.filter((l) => l.tier === tl.tier).length === 1
-        ? doc.layers.find((l) => l.tier === tl.tier)
+      free.find((l) => l.name === tl.name) ??
+      (free.length === 1 &&
+      !template.layers.some((o) => o !== tl && o.tier === tl.tier && o.name === free[0]!.name)
+        ? free[0]
         : undefined);
+    if (existing) matched.add(existing.id);
     if (existing) Object.assign(existing, { visible: tl.visible, locked: tl.locked, opacity: tl.opacity });
     else {
       const layer = createLayer(tl.tier, tl.name);
@@ -186,6 +192,7 @@ export function applyTemplate(
       // Inséré après le dernier calque de même catégorie (sinon en haut).
       const index = doc.layers.map((l) => l.tier).lastIndexOf(tl.tier);
       doc.layers.splice(index >= 0 ? index + 1 : doc.layers.length, 0, layer);
+      matched.add(layer.id);
     }
   }
   const b = doc.plan.titleBlock;
@@ -200,7 +207,11 @@ export function applyTemplate(
   doc.plan.styleOverrides = structuredClone(template.styleOverrides);
   doc.plan.display = { ...template.display };
   doc.plan.units = template.units;
-  doc.plan.print = printFromTemplate(doc, template.print);
+  // Les éléments exclus sont propres au plan (objets) : conservés.
+  doc.plan.print = {
+    ...printFromTemplate(doc, template.print),
+    excludedObjectIds: doc.plan.print.excludedObjectIds,
+  };
   for (const tv of template.views) {
     const view: PlanView = {
       id: newId(),
@@ -213,13 +224,16 @@ export function applyTemplate(
       print: printFromTemplate(doc, tv.print),
     };
     const i = doc.plan.views.findIndex((v) => v.name === tv.name);
-    if (i >= 0) doc.plan.views[i] = { ...view, id: doc.plan.views[i]!.id };
-    else doc.plan.views.push(view);
+    if (i >= 0) {
+      const old = doc.plan.views[i]!;
+      view.print.excludedObjectIds = old.print.excludedObjectIds;
+      doc.plan.views[i] = { ...view, id: old.id };
+    } else doc.plan.views.push(view);
   }
   if (options.restyleExisting)
     for (const o of Object.values(doc.objects)) {
       const style = o.presetId ? template.styleOverrides[o.presetId] : undefined;
-      if (style && !o.locked) {
+      if (style && isEditable(doc, o)) {
         o.style = withOverride(o.style, style);
         o.updatedAt = now;
       }

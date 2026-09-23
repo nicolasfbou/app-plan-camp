@@ -256,7 +256,7 @@ export function analyzeReadability(
       (w.code === 'cut-text' && w.message.startsWith('Titre'))
     )
       add({
-        key: `layout:${w.code}`,
+        key: `layout:${settings.viewId ?? 'base'}:${w.code}`,
         kind: 'layout',
         objectIds: [],
         message: w.message,

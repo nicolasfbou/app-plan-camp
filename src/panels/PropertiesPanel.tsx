@@ -11,6 +11,7 @@ import {
   Ungroup,
   EyeOff,
   Palette,
+  Undo2,
 } from 'lucide-react';
 import { isEditable, layerOf } from '@/domain/model/operations.ts';
 import { geometryBox, moveGeometryTo, resizeGeometry, normalizeAngle } from '@/domain/model/shapes.ts';
@@ -19,6 +20,7 @@ import { editActions } from '@/editor/editActions.ts';
 import { t } from '@/i18n/index.ts';
 import { useEditorStore } from '@/store/editorStore.ts';
 import { planStore, usePlanStore } from '@/store/planStore.ts';
+import { resetLabelPlacement } from '@/domain/print/readabilityReviews.ts';
 import { Button } from '@/ui/Button.tsx';
 import {
   ColorField,
@@ -58,9 +60,31 @@ export function PropertiesPanel() {
         <>
           <ObjectProperties key={objects[0]!.id} object={objects[0]!} doc={doc} />
           <CompanyStyle object={objects[0]!} />
+          <LabelReset object={objects[0]!} />
         </>
       )}
     </>
+  );
+}
+
+/** Étiquette écartée (proposition acceptée) : la remettre à sa place d'origine. */
+function LabelReset({ object }: { object: PlanObject }) {
+  const moved =
+    (object.type === 'text' && object.leaderTo !== null) ||
+    (object.type === 'zone' && object.nameOffset !== null);
+  if (!moved) return null;
+  return (
+    <Button
+      className="mt-3 w-full"
+      data-testid="label-reset"
+      onClick={() =>
+        planStore
+          .getState()
+          .update('Remettre l’étiquette en place', (d) => void resetLabelPlacement(d, object.id))
+      }
+    >
+      <Undo2 size={16} /> {t('labels.reset')}
+    </Button>
   );
 }
 

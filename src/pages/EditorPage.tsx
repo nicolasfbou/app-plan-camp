@@ -93,12 +93,17 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
   // Un objet disparu (annulation de sa création, suppression) ne reste ni sélectionné ni en édition.
   useEffect(
     () =>
-      planStore.subscribe((state) => {
+      planStore.subscribe((state, previous) => {
         const editor = useEditorStore.getState();
         const objects = state.doc?.objects ?? {};
         const remaining = editor.selectedIds.filter((id) => objects[id]);
         if (remaining.length !== editor.selectedIds.length) editor.select(remaining);
         if (editor.editingTextId && !objects[editor.editingTextId]) editor.setEditingText(null);
+        // Vue supprimée (ou annulée) : retour au plan de base, jamais un filtre fantôme.
+        if (editor.activeViewId && !state.doc?.plan.views.some((v) => v.id === editor.activeViewId))
+          editor.setActiveView(null);
+        // Toute modification du plan périme une proposition de placement d'étiquette.
+        if (editor.labelProposal && state.doc !== previous.doc) editor.setLabelProposal(null);
       }),
     [],
   );

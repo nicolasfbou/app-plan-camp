@@ -116,6 +116,11 @@ export function ReadabilityPanel() {
   };
   const accept = () => {
     if (!proposal) return;
+    if (!planStore.getState().doc?.objects[proposal.objectId]) {
+      useEditorStore.getState().setLabelProposal(null);
+      setNotice(t('readability.gone'));
+      return;
+    }
     let ok = false;
     planStore.getState().update('Déplacer l’étiquette (proposition acceptée)', (d) => {
       ok = applyLabelPlacement(d, proposal);

@@ -6,6 +6,7 @@ import {
   createFlowObject,
   createTextObject,
 } from '@/domain/model/objectFactory.ts';
+import { insertCopies, moveObjects } from '@/domain/model/multi.ts';
 import { addObject } from '@/domain/model/operations.ts';
 import { PRINT_STYLES } from '@/domain/model/planDefaults.ts';
 import type { PlanDocument, Point, TextObject } from '@/domain/model/types.ts';
@@ -323,6 +324,49 @@ describe('modèles réutilisables', () => {
     const corrupted = bytes.slice();
     corrupted[corrupted.length - 200] = corrupted[corrupted.length - 200]! ^ 0xff;
     await expect(readTemplateFile(corrupted)).rejects.toThrow();
+  });
+});
+
+describe('corrections de la revue', () => {
+  it('modèle réappliqué : éléments exclus du plan et des vues conservés ; calques appariés une seule fois', () => {
+    const { doc } = sampleDoc();
+    const view = createView(doc, 'employees');
+    doc.plan.views.push(view);
+    const someId = Object.keys(doc.objects)[0]!;
+    doc.plan.print.excludedObjectIds = [someId];
+    view.print.excludedObjectIds = [someId];
+    const layersBefore = doc.layers.length;
+    const template = templateFromPlan(doc, 'Modèle');
+    applyTemplate(doc, template, { restyleExisting: false, logoAssetId: null });
+    applyTemplate(doc, template, { restyleExisting: false, logoAssetId: null });
+    expect(doc.plan.print.excludedObjectIds).toEqual([someId]);
+    expect(doc.plan.views).toHaveLength(1);
+    expect(doc.plan.views[0]!.id).toBe(view.id);
+    expect(doc.plan.views[0]!.print.excludedObjectIds).toEqual([someId]);
+    expect(doc.layers).toHaveLength(layersBefore); // aucun calque dupliqué
+  });
+
+  it('étiquette avec renvoi : déplacée avec sa cible, le renvoi suit ; seule, il reste en place ; copie décalée', () => {
+    const doc = photoDoc();
+    const label = createTextObject(doc, P(100, 100), {
+      label: true,
+      text: 'Zone',
+      fontSize: 14,
+    }) as TextObject;
+    label.leaderTo = P(200, 200);
+    addObject(doc, label);
+    const zone = createAreaObject(
+      doc,
+      { kind: 'rect', x: 180, y: 180, width: 40, height: 40, cornerRadius: 0 },
+      'zone.delivery',
+    );
+    addObject(doc, zone);
+    moveObjects(doc, [label.id], 10, 0);
+    expect((doc.objects[label.id] as TextObject).leaderTo).toEqual(P(200, 200));
+    moveObjects(doc, [label.id, zone.id], 5, 5);
+    expect((doc.objects[label.id] as TextObject).leaderTo).toEqual(P(205, 205));
+    const [copyId] = insertCopies(doc, [doc.objects[label.id]!], 20, 20);
+    expect((doc.objects[copyId!] as TextObject).leaderTo).toEqual(P(225, 225));
   });
 });
 

@@ -41,8 +41,12 @@ export async function savePlanAsTemplate(
 /** Enregistre le logo du modèle dans le stockage et le déclare dans le plan. */
 async function storeLogo(
   entry: StoredTemplate,
+  target: PlanDocument,
 ): Promise<{ id: string; asset: PlanDocument['assets'][string] } | null> {
   if (!entry.template.logo || !entry.logo) return null;
+  // Logo déjà présent dans le plan (même empreinte) : réutilisé, jamais dupliqué.
+  const existing = Object.values(target.assets).find((a) => a.sha256 === entry.template.logo!.sha256);
+  if (existing) return { id: existing.id, asset: existing };
   const stored = await repository.putBlob(entry.logo.slice().buffer, entry.template.logo.mimeType);
   const id = newId();
   return {
@@ -65,8 +69,9 @@ export async function applyTemplateToOpenPlan(
   restyleExisting: boolean,
 ): Promise<boolean> {
   const entry = await repository.getTemplate(templateId);
-  if (!entry || !planStore.getState().doc) return false;
-  const logo = await storeLogo(entry);
+  const open = planStore.getState().doc;
+  if (!entry || !open) return false;
+  const logo = await storeLogo(entry, open);
   planStore.getState().update(`Appliquer le modèle ${entry.template.name}`, (d) => {
     if (logo) d.assets[logo.id] = logo.asset;
     applyTemplate(d, entry.template, { restyleExisting, logoAssetId: logo?.id ?? null });
@@ -84,7 +89,7 @@ export async function createPlanFromTemplate(params: {
   const doc = createPlanDocument({ siteId: params.siteId, name: params.name, kind: params.kind });
   const entry = await repository.getTemplate(params.templateId);
   if (entry) {
-    const logo = await storeLogo(entry);
+    const logo = await storeLogo(entry, doc);
     if (logo) doc.assets[logo.id] = logo.asset;
     applyTemplate(doc, entry.template, { restyleExisting: false, logoAssetId: logo?.id ?? null });
   }

@@ -39,6 +39,9 @@ export function moveObjects(
   const objects = editableObjects(doc, ids);
   for (const object of objects) {
     object.geometry = translateGeometry(object.geometry, dx, dy) as typeof object.geometry;
+    // Plusieurs objets déplacés ensemble (étiquette et ce qu'elle désigne) : le renvoi suit.
+    if (object.type === 'text' && object.leaderTo && objects.length > 1)
+      object.leaderTo = { x: object.leaderTo.x + dx, y: object.leaderTo.y + dy };
     object.updatedAt = now;
   }
   if (objects.length) doc.plan.updatedAt = now;
@@ -92,6 +95,10 @@ export function insertCopies(
       visible: true,
       zIndex: topZIndex(doc, layer.id),
       geometry: translateGeometry(source.geometry, dx, dy),
+      // Une copie d'étiquette garde son renvoi décalé comme elle (pas vers l'original).
+      ...(source.type === 'text' && source.leaderTo
+        ? { leaderTo: { x: source.leaderTo.x + dx, y: source.leaderTo.y + dy } }
+        : {}),
       createdAt: now,
       updatedAt: now,
     } as PlanObject;

@@ -614,6 +614,9 @@ export const fr = {
   'print.illustrative': 'Les réglages sont enregistrés dans le plan (et dans le fichier .campplan).',
 
   'views.topbar': 'Vue',
+  'notice.hiddenByView':
+    'Objet créé sur le calque « {layer} », masqué dans la vue « {view} ». Revenez au plan de base pour le voir.',
+  'readability.gone': 'Cette étiquette n’existe plus : proposition abandonnée.',
   'views.title': 'Vue par public',
   'views.current': 'Vue affichée et exportée',
   'views.base': 'Plan de base (tout)',
@@ -734,6 +737,7 @@ export const fr = {
   'templates.companyStyle': 'Utiliser ce style pour les nouveaux « {name} » (style d’entreprise)',
   'templates.companyStyleSet': 'Style d’entreprise enregistré pour « {name} ».',
   'variant.create': 'Créer une variante',
+  'variant.defaultName': '{name} — variante',
   'variant.topbar': 'Variante de ce plan (été / hiver…)',
   'variant.rowLabel': 'Variante de {name} (été / hiver…)',
   'variant.title': 'Créer une variante de « {name} »',

@@ -97,6 +97,12 @@ export const editActions = {
       draft.plan.updatedAt = placed.updatedAt;
     });
     editor.setTool('select');
+    const view = editor.activeViewId ? d.plan.views.find((v) => v.id === editor.activeViewId) : undefined;
+    if (view?.print.excludedLayerIds.includes(layer.id)) {
+      // Créé sur un calque que la vue affichée masque : l'utilisateur est prévenu (jamais d'objet « perdu »).
+      notify('notice.hiddenByView', { layer: layer.name, view: view.name });
+      return true;
+    }
     editor.select(placed.id);
     return true;
   },

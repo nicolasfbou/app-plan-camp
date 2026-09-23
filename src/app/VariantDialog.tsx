@@ -29,7 +29,7 @@ export function VariantDialog({
   onClose(): void;
   onCreated(id: string): void;
 }) {
-  const [name, setName] = useState(`${planName} — ${t('variant.create').toLowerCase()}`);
+  const [name, setName] = useState(t('variant.defaultName', { name: planName }));
   const [kind, setKind] = useState<PlanKind | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
