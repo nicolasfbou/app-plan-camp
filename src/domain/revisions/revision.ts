@@ -53,7 +53,22 @@ export const approvalSchema = z.object({
    * DÉCLARÉ, jamais attribué à un faux utilisateur global.
    */
   approverUserId: z.string().min(1).optional(),
+  /**
+   * Nature de l'approbation (scellée avec elle) :
+   * - `local_unverified` : approbation locale DÉCLARÉE (nom saisi), identité non vérifiée ;
+   * - `authenticated_server` : approbation faite par un compte authentifié, datée et scellée par
+   *   le serveur.
+   * Absent sur les approbations locales antérieures à la phase 9 : elles sont `local_unverified`
+   * (voir `approvalVerification`) et ne sont JAMAIS réécrites ni converties.
+   */
+  verificationType: z.enum(['local_unverified', 'authenticated_server']).optional(),
 });
+
+export type ApprovalVerification = 'local_unverified' | 'authenticated_server';
+
+/** Type de vérification d'une approbation (une approbation ancienne sans type est locale). */
+export const approvalVerification = (approval: { verificationType?: ApprovalVerification } | null) =>
+  approval ? (approval.verificationType ?? 'local_unverified') : null;
 
 export const statusLogEntrySchema = z.object({
   from: z.enum(REVISION_STATUSES).nullable(),
@@ -275,6 +290,8 @@ export interface StatusChange {
   confirmed?: boolean;
   /** Date d'approbation (AAAA-MM-JJ). */
   approvalDate?: string;
+  /** Réservé au serveur : approbation par un compte authentifié. Localement : déclarée. */
+  verificationType?: ApprovalVerification;
 }
 
 /** Statuts accessibles depuis une révision (l'approbation fige tout, sauf l'archivage). */
@@ -314,6 +331,7 @@ export async function changeRevisionStatus(
       recordedAt: now,
       revisionAuthor: meta.author,
       ...(change.userId ? { approverUserId: change.userId } : {}),
+      verificationType: change.verificationType ?? 'local_unverified',
     });
   }
   const next: Omit<RevisionMeta, 'seal'> = {
