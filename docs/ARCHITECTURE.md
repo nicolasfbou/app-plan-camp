@@ -1033,3 +1033,32 @@ exports PDF, import / suppression, tas JS après ramasse-miettes forcé.
 `docs/SERVER-BOUNDARIES.md` : User, Organization, Project, Revision, Approval, AuditEvent,
 Permission, stockage de fichiers, synchronisation. Rien n'est construit ; aucun utilisateur
 fictif ; les fonctions d'approbation acceptent déjà un `userId` vérifié (absent en local).
+
+## 20. Serveur, comptes et synchronisation (phase 9)
+
+Référence complète : [PHASE9-SERVER.md](PHASE9-SERVER.md) (schéma, API, synchronisation,
+sécurité, configuration, limites). Décisions : [PHASE9-ARCHITECTURE.md](PHASE9-ARCHITECTURE.md).
+
+### 20.1 Espaces (`app/profile.ts`)
+
+- « Local (sans compte) » : base `campplanner`, comportement des phases 1 à 8 inchangé.
+- Espace d'organisation : base `campplanner-<org>-<utilisateur>`, clés du journal de
+  récupération, verrous d'édition et planificateur de sauvegardes préfixés par l'espace
+  (`namespace()`), dépôt `SyncingRepository`.
+- Poste partagé : l'espace n'est ouvert que si l'onglet a été déverrouillé par une connexion
+  (`sessionStorage`) ; sinon `LockedScreen` (aucune base ouverte).
+
+### 20.2 Chaîne d'écriture
+
+`SyncingRepository` hérite d'`IndexedDbRepository` : chaque écriture locale réussie (plan,
+suppression, révision, fichier, camp, modèle) ajoute une opération à la table `outbox` (Dexie
+v7 : `outbox`, `syncLinks`, `conflicts`, `syncState`, `conflictArchive`). L'édition, le journal
+de récupération, les verrous et les sauvegardes externes ne changent pas.
+
+### 20.3 Moteur (`sync/engine.ts`, `sync/runtime.ts`)
+
+Un onglet par espace (Web Lock) : envoi (fichiers, puis plans avec `If-Match` et
+`Idempotency-Key`), réception par curseur, conflits enregistrés localement et résolus
+explicitement (`keepServer`, `keepMine`, `keepBothAsCopy`, plus tard). État publié par
+BroadcastChannel vers `useSyncStore` (indicateur : synchronisé, hors ligne, synchronisation,
+changements locaux, conflit, erreur, reconnexion).

@@ -124,10 +124,28 @@ Règle : le parcours complet doit être fiable avant toute fonction avancée.
 - Tests de plantage réel (processus tué), multi-onglets, portabilité, performances 50 MP
 - Frontières d'un futur serveur documentées (`docs/SERVER-BOUNDARIES.md`)
 
-## Phase 9 — À définir
+## Phase 9 — Serveur, comptes et synchronisation ✅
 
-Collaboration, serveur, comptes et permissions, synchronisation, commentaires partagés : non
-développés (demande explicite), à planifier.
+- Serveur Node.js + TypeScript (Fastify), PostgreSQL (migrations SQL, RLS forcée par
+  organisation, historique / instantanés / audit en ajout seul, révisions approuvées immuables en
+  base), stockage de fichiers abstrait (disque, S3 ; Azure Blob prévu), configuration par
+  variables d'environnement
+- Comptes : courriel + mot de passe (argon2id), invitation par un administrateur, rôles
+  (lecteur, éditeur, gestionnaire, admin), modèle d'identité prêt pour Microsoft Entra ID
+- Type d'appareil demandé à chaque connexion : poste de confiance (hors ligne complet) ou
+  partagé (verrouillé sans session, données détruites à la déconnexion)
+- Synchronisation local-first : file d'opérations idempotentes, versions serveur (`If-Match`),
+  conflits sans fusion ni écrasement (garder le serveur, garder la mienne en brouillon, copie,
+  plus tard), indicateur d'état et panneau de synchronisation
+- Approbations serveur authentifiées (compte, date serveur, audit dans la même transaction) ;
+  anciennes approbations locales conservées « déclarées — identité non vérifiée »
+- Publication d'un projet local dans l'organisation avec récapitulatif ; `.campplan` inchangé
+- Détails : `docs/PHASE9-SERVER.md` ; démonstration Camp 105 (`bench/camp105-phase9.mjs`)
+
+## Phase 10 — À définir
+
+Microsoft Entra ID, pilote Azure Blob, déploiement Azure : à planifier. Collaboration en temps
+réel, commentaires en direct, notifications, application mobile : non prévus.
 
 ## V2
 

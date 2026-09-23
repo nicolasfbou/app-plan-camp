@@ -1,0 +1,392 @@
+# Phase 9 — Serveur, comptes et synchronisation
+
+Référence technique de la phase 9 : serveur, schéma PostgreSQL, API, synchronisation et sécurité.
+Le document de décision est [PHASE9-ARCHITECTURE.md](PHASE9-ARCHITECTURE.md), approuvé avant
+l'implémentation.
+
+**Principe.** L'application reste _local-first_ :
+
+```
+geste terminé → enregistrement local → journal de récupération → IndexedDB
+              → file de synchronisation → serveur
+```
+
+Le serveur est la référence partagée de l'organisation. Il ne remplace ni IndexedDB, ni le
+journal de récupération, ni `.campplan`, ni les sauvegardes externes, ni la copie de secours, ni
+la santé du projet. Aucun de ces mécanismes n'a été retiré.
+
+Hors périmètre, volontairement :
+
+- collaboration en temps réel, curseurs partagés, WebSockets d'édition ;
+- commentaires en direct, notifications push, application mobile native ;
+- fusion automatique.
+
+---
+
+## 1. Vue d'ensemble
+
+| Élément       | Choix                                                                                                   |
+| ------------- | ------------------------------------------------------------------------------------------------------- |
+| Serveur       | Node.js + TypeScript (Fastify 5), lancé par `tsx` (`npm run server`)                                    |
+| Base          | PostgreSQL 16, SQL explicite (`pg`), migrations SQL versionnées (`server/migrations`)                   |
+| Fichiers      | Interface `ObjectStorage` : disque local (`fs`) ou compatible S3 (`s3`) ; Azure Blob prévu              |
+| Mots de passe | argon2id (`@node-rs/argon2`, m = 19 456 Kio, t = 2, p = 1), jamais stockés en clair                     |
+| Sessions      | Jeton opaque aléatoire (256 bits) ; seul son SHA-256 est en base ; cookie `HttpOnly`, `SameSite=Strict` |
+| Code métier   | Le serveur réutilise `src/domain` (schéma des plans, sceaux des révisions) : une seule vérité           |
+| Configuration | Variables d'environnement uniquement (§ 6)                                                              |
+
+Arborescence :
+
+```
+server/
+  migrations/001_init.sql   schéma, déclencheurs, RLS, droits du rôle applicatif
+  src/
+    app.ts                  construction de l'application (auth, CSRF, erreurs)
+    config.ts               variables d'environnement
+    db.ts                   pool + tx(orgId, userId) : fixe app.org_id pour la RLS
+    permissions.ts          rôles → actions (une seule matrice)
+    auth/                   mots de passe (argon2id), sessions, limitation des tentatives
+    routes/                 auth, members (+ invitations, audit), camps, plans, revisions,
+                            files, templates, sync
+    storage/                ObjectStorage : fsStorage, s3Storage
+    files/validate.ts       type réel (octets magiques), SVG dangereux
+    documents.ts            validation d'un document de plan (schéma client), SHA référencés
+  scripts/bootstrap.ts      première organisation + premier administrateur
+  scripts/e2e-server.ts     serveur jetable (PostgreSQL temporaire) pour e2e et démonstration
+  test/                     tests serveur (PostgreSQL réel temporaire)
+src/sync/                   client : file, moteur, dépôt synchronisé, publication, interface
+src/account/                client : connexion, invitation, espace, organisation, verrouillage
+```
+
+## 2. Schéma PostgreSQL
+
+Le fichier complet est `server/migrations/001_init.sql`.
+
+### Identité (hors RLS, toujours filtrée par la session)
+
+| Table             | Rôle                                                                                                                        |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `organizations`   | organisation (nom, identifiant court)                                                                                       |
+| `users`           | personne : courriel unique, nom affiché, statut `active` ou `disabled`                                                      |
+| `user_identities` | moyens de connexion du **même** compte : `password` (argon2id) aujourd'hui, `oidc` (Entra ID : `issuer\|subject`) plus tard |
+| `memberships`     | appartenance (organisation, utilisateur, rôle, statut)                                                                      |
+| `invitations`     | invitation par un administrateur ; seul le SHA-256 du jeton est stocké ; expiration ; usage unique                          |
+| `sessions`        | SHA-256 du jeton, organisation, `device_mode` (`trusted` ou `shared`), expiration, révocation                               |
+
+`user_identities` prépare Microsoft Entra ID. Une identité externe sera **rattachée** à un
+utilisateur existant, sans créer un second compte. L'index unique `(provider, subject)`
+l'empêche d'appartenir à deux comptes.
+
+### Données métier (RLS forcée, clés composites `(organization_id, id)`)
+
+| Table                | Rôle                                                                                                                                                                                    |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `camps`              | camps ; suppression logique ; `server_version`                                                                                                                                          |
+| `plans`              | en-tête du plan (nom, type, statut, camp) ; `server_version` ; suppression logique                                                                                                      |
+| `plan_versions`      | **historique complet** des documents (ajout seul) : chaque version reçue, auteur, SHA                                                                                                   |
+| `revisions`          | métadonnées (`meta json`, texte conservé à l'identique pour le sceau), statut, `verification_type`, `approved_at` (date serveur), `approved_by`, chaînage (`parent_seal`, `chain_hash`) |
+| `revision_snapshots` | instantané figé de la révision (ajout seul)                                                                                                                                             |
+| `files`              | fichiers de l'organisation identifiés par SHA-256 (taille, type réel, clé de stockage)                                                                                                  |
+| `file_refs`          | qui référence quel fichier (plan, révision, modèle)                                                                                                                                     |
+| `templates`          | modèles de l'organisation                                                                                                                                                               |
+| `camp_access`        | restriction facultative d'un camp à certains utilisateurs                                                                                                                               |
+| `change_log`         | curseur de synchronisation (ajout seul)                                                                                                                                                 |
+| `idempotency_keys`   | réponses mémorisées des opérations rejouées                                                                                                                                             |
+| `audit_events`       | journal d'audit (ajout seul)                                                                                                                                                            |
+
+### Garde-fous en base (valables même si l'API avait un défaut)
+
+- **Isolation (RLS).**
+  - `ENABLE` + `FORCE ROW LEVEL SECURITY` sur les 12 tables métier.
+  - Politique `organization_id = current_org()`.
+  - `current_org()` lit `app.org_id`, que `tx()` fixe au début de chaque transaction **depuis la
+    session**. Sans ce réglage, aucune ligne n'est visible.
+- **Rôle applicatif `campplanner_app`.**
+  - Il n'est pas propriétaire du schéma, donc la RLS s'applique à lui.
+  - Aucun `UPDATE` sur `audit_events`, `plan_versions`, `revision_snapshots` ou `change_log`.
+  - `DELETE` seulement sur `sessions`, `idempotency_keys`, `file_refs` et `camp_access`.
+- **Ajout seul.** Un déclencheur refuse `UPDATE` et `DELETE` sur l'audit, l'historique des
+  plans, les instantanés et le journal des changements, **même pour le propriétaire**.
+- **Révisions (`guard_revision`).**
+  - Instantané, SHA, libellé, auteur, date et chaînage sont figés.
+  - Une révision approuvée ne change plus, sauf « approuvée → archivée », qui conserve
+    l'approbation.
+  - Elle n'est jamais supprimée, ni physiquement ni logiquement.
+
+## 3. Comptes, rôles, appareils
+
+### Connexion
+
+- Courriel, mot de passe et **type d'appareil obligatoire**. Aucune valeur n'est présélectionnée.
+- Pas d'inscription libre : l'accès passe par une invitation d'un administrateur.
+- Un échec donne la même réponse pour un compte inconnu et pour un mauvais mot de passe. Un
+  calcul argon2 factice égalise le temps de réponse.
+- Limitation des tentatives : 8 échecs par compte et 50 par adresse IP, sur 15 minutes.
+- Mot de passe : 12 caractères minimum.
+- Plusieurs organisations : la réponse `409 choose-organization` propose la liste, puis
+  l'utilisateur choisit.
+
+### Protection des requêtes
+
+- Cookie `cp_session` : `HttpOnly`, `SameSite=Strict`, `Path=/api`, `Secure` en production.
+- Toute requête qui modifie exige l'en-tête `X-CampPlanner: 1`. Un formulaire tiers ne peut pas
+  l'ajouter : c'est la protection anti-CSRF.
+
+### Rôles (`server/src/permissions.ts`)
+
+| Action                                                                 | Lecteur | Éditeur | Gestionnaire | Admin |
+| ---------------------------------------------------------------------- | :-----: | :-----: | :----------: | :---: |
+| Consulter                                                              |    ✓    |    ✓    |      ✓       |   ✓   |
+| Modifier un plan existant, créer une révision                          |         |    ✓    |      ✓       |   ✓   |
+| Créer ou supprimer camps et plans, modèles, publier                    |         |         |      ✓       |   ✓   |
+| Changer un statut, **approuver**, supprimer une révision non approuvée |         |         |      ✓       |   ✓   |
+| Journal d'audit                                                        |         |         |      ✓       |   ✓   |
+| Membres, invitations, rôles                                            |         |         |   lecture    |   ✓   |
+
+L'interface masque ce qui est interdit, mais **le serveur revérifie tout**. Suspendre un membre
+révoque ses sessions. Le dernier administrateur est protégé.
+
+### Type d'appareil
+
+La question est posée à chaque connexion. Le poste n'est jamais supposé personnel.
+
+- **Poste de confiance.**
+  - Base IndexedDB propre au profil (`campplanner-<org>-<user>`), travail hors ligne complet.
+  - La file de synchronisation est conservée.
+  - Avertissement explicite : des données de l'organisation restent sur l'appareil.
+  - Session de 30 jours.
+- **Poste partagé.**
+  - Cookie de session non persistant, durée de 12 heures.
+  - Déverrouillage limité à l'onglet (`sessionStorage`). Un nouvel onglet ou un redémarrage
+    affiche l'écran verrouillé, sans aucun projet visible, jusqu'à une nouvelle connexion.
+  - À la déconnexion :
+    - la session est révoquée sur le serveur et le cookie supprimé ;
+    - la base du profil est **détruite** ;
+    - les journaux de récupération de l'espace sont effacés ;
+    - le profil est retiré.
+  - Les changements non envoyés sont signalés **avant** : l'utilisateur décide de les envoyer,
+    de les exporter (`.campplan`) ou de les abandonner explicitement.
+  - Navigateur fermé sans déconnexion : écran verrouillé ; le bouton « Effacer les données de
+    cet espace sur ce poste » fonctionne sans session.
+
+L'espace **« Local (sans compte) »** des phases 1 à 8 reste intact : base `campplanner`, sans
+serveur.
+
+## 4. API
+
+Toutes les réponses sont en JSON. Les erreurs ont la forme `{ error, message, …détails }`.
+Codes : 401 sans session, 403 rôle insuffisant ou CSRF, 404 introuvable **ou autre
+organisation** (même réponse), 409 conflit de version, 413 trop gros, 422 donnée incohérente,
+428 `If-Match` manquant.
+
+### Authentification et organisation
+
+| Méthode et route                      | Rôle                                                                                                              |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `POST /api/auth/login`                | `{ email, password, deviceMode, organization? }` → cookie + `{ user, organization, role, deviceMode, expiresAt }` |
+| `GET /api/auth/me`                    | session courante                                                                                                  |
+| `POST /api/auth/logout`               | révoque la session                                                                                                |
+| `GET /api/members`                    | membres (`members.read`)                                                                                          |
+| `POST /api/invitations`               | `{ email, role }` → lien à usage unique (`members.manage`)                                                        |
+| `GET /api/invitations/:token`         | aperçu de l'invitation (organisation, courriel, rôle)                                                             |
+| `POST /api/invitations/:token/accept` | crée le compte, ou rattache un compte existant après vérification de son mot de passe                             |
+| `PATCH /api/members/:userId`          | rôle, suspension (`members.manage`)                                                                               |
+| `GET /api/audit?before=&limit=`       | journal d'audit (`audit.read`)                                                                                    |
+
+### Données
+
+Toute écriture accepte `Idempotency-Key: <operationId>`.
+
+| Méthode et route                                         | Rôle                                                                                                                                                                                                        |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/camps`, `PUT/DELETE /api/camps/:id`            | camps (création, renommage, suppression logique)                                                                                                                                                            |
+| `GET /api/plans?campId=`                                 | en-têtes des plans                                                                                                                                                                                          |
+| `GET /api/plans/:id`                                     | dernier document, `serverVersion`, auteur et date de la dernière modification                                                                                                                               |
+| `PUT /api/plans/:id`                                     | enregistre un document. `If-Match: <version>` est obligatoire (`0` pour une création). Réponse 409 `version` ou `deleted` avec la version serveur, son auteur et sa date                                    |
+| `DELETE /api/plans/:id` · `POST …/restore`               | suppression logique · restauration                                                                                                                                                                          |
+| `GET /api/plans/:id/versions[/:version]`                 | historique complet des versions                                                                                                                                                                             |
+| `GET /api/plans/:id/revisions`, `GET /api/revisions/:id` | révisions (avec l'instantané)                                                                                                                                                                               |
+| `PUT /api/revisions/:id`                                 | dépôt d'une révision. Le serveur vérifie le SHA de l'instantané, le sceau, les identités (422 `forged-identity`) et refuse une approbation « authentifiée » fabriquée par le client (422 `forged-approval`) |
+| `POST /api/revisions/:id/status`                         | changement de statut ou **approbation** : compte connecté, date serveur, audit dans la même transaction                                                                                                     |
+| `DELETE /api/revisions/:id`                              | suppression logique d'une révision **non approuvée**                                                                                                                                                        |
+| `POST /api/files/check`                                  | quels SHA-256 sont déjà présents                                                                                                                                                                            |
+| `PUT /api/files/:sha256`                                 | envoi en flux. Le serveur vérifie la taille, le SHA recalculé, le type réel (octets magiques, `X-File-Type`) et refuse un SVG dangereux. Idempotent                                                         |
+| `GET /api/files/:sha256`                                 | lecture, limitée à l'organisation de la session                                                                                                                                                             |
+| `GET/PUT/DELETE /api/templates[/:id]`                    | modèles de l'organisation                                                                                                                                                                                   |
+| `GET /api/sync/changes?since=&limit=`                    | changements depuis le curseur : `{ changes, cursor, more }`                                                                                                                                                 |
+| `POST /api/publish/check`                                | avant publication : identifiants et fichiers déjà présents sur le serveur                                                                                                                                   |
+| `GET /api/health`                                        | état du service                                                                                                                                                                                             |
+
+L'organisation vient **toujours** de la session. Un `organizationId` ou un `userId` fourni par
+le client est ignoré ou refusé. Les tests `security.test.ts` le vérifient.
+
+## 5. Synchronisation
+
+### Unité et opérations
+
+L'unité synchronisée est le **document de plan complet**. Les révisions, fichiers, camps et
+modèles ont chacun leurs opérations. Chaque opération de la file (`outbox` dans IndexedDB)
+porte :
+
+`operationId`, `entityType`, `entityId`, `organizationId`, `baseServerVersion`, `createdAt`,
+`retryCount`, `status` (`pending` ou `failed`), `lastError`, `nextAttemptAt`.
+
+- **Idempotence.**
+  - `operationId` est envoyé comme `Idempotency-Key`. Une requête rejouée renvoie la réponse
+    mémorisée sans rien refaire : une réponse perdue puis renvoyée ne crée ni deuxième version,
+    ni deuxième révision, ni deuxième fichier.
+  - Une clé réutilisée pour une autre route ou par un autre utilisateur est refusée (422).
+- **Regroupement.**
+  - Plusieurs enregistrements hors ligne du même plan deviennent **une** opération, qui envoie le
+    dernier état.
+  - Une suppression annule les envois en attente du même plan.
+  - Les mouvements de souris ne sont jamais envoyés, seulement les gestes terminés.
+- **Ordre.** Les fichiers partent avant le plan qui les référence. Le serveur refuse un plan qui
+  référence un fichier absent.
+- **Moteur (`SyncEngine`).**
+  - Un seul onglet par espace exécute le moteur (Web Lock `campplanner-sync-<espace>`).
+  - Cycles : au démarrage, toutes les 20 s, au retour du réseau, peu après chaque écriture
+    locale, au retour sur l'onglet.
+  - Délai croissant en cas d'échec. Une erreur définitive (403, 422…) est affichée ; seule
+    l'utilisatrice ou l'utilisateur décide de réessayer ou d'abandonner. Les opérations
+    indépendantes continuent.
+- **Réception (`pull`).**
+  - Suit `change_log` depuis le curseur.
+  - Un plan ouvert dans un onglet n'est pas remplacé sous les yeux de la personne : la mise à
+    jour est différée et proposée par un bandeau.
+  - Un plan avec des changements locaux non envoyés n'est **jamais** écrasé : c'est un conflit.
+  - Les références de fichiers (`blobId`) sont rattachées aux fichiers locaux par SHA-256.
+
+### Conflits (aucune fusion automatique, aucun écrasement)
+
+Un envoi avec une `baseServerVersion` périmée reçoit un 409, qui déclenche un conflit enregistré
+localement. La fenêtre de conflit montre :
+
+- **Ma version** : date et changements, calculés avec le moteur de comparaison de la phase 7.
+- **Version serveur** : numéro, auteur, date et changements.
+
+Choix proposés :
+
+| Choix                                  | Effet                                                                                                    |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Garder la version serveur              | ma version est **mise de côté** sur l'appareil (récupérable), puis remplacée                             |
+| Enregistrer ma version comme brouillon | ma version est envoyée **par-dessus**, mais la version serveur reste dans l'historique (`plan_versions`) |
+| Créer une copie                        | ma version devient un nouveau plan ; ce plan prend la version serveur ; **les deux restent**             |
+| Décider plus tard                      | rien ne change ; l'envoi de ce plan reste suspendu                                                       |
+
+Le cas « supprimé sur le serveur pendant que je modifiais » est traité de la même façon
+(`reason: deleted`).
+
+### Révisions et approbations
+
+- Une révision créée hors ligne est envoyée au retour, avec son instantané, son sceau et son
+  chaînage vérifiés par le serveur.
+- **Approbation.**
+  - Seulement en ligne, par un rôle autorisé.
+  - Le serveur l'enregistre avec le compte connecté (nom figé), `verificationType:
+"authenticated_server"` et la date serveur, dans la même transaction que l'audit.
+  - L'interface n'offre ni champ de nom ni champ de date : l'identité est celle du compte.
+- **Anciennes approbations locales** (phases 7 et 8).
+  - Publiées **telles quelles** : nom déclaré, date historique, commentaire, révision, sceau.
+  - Affichées « Approbation locale déclarée — identité non vérifiée »
+    (`verificationType: "local_unverified"`, déduit quand le champ est absent).
+  - Jamais réécrites ni converties. Elles ne comptent jamais comme une approbation officielle.
+
+### Publication d'un projet local
+
+« Projet local → Publier dans PAMM » :
+
+1. Vérification, puis récapitulatif : camp, plans, révisions, fichiers (nombre, taille, déjà
+   présents), SHA-256, approbations locales non vérifiées, conflits d'identifiants possibles,
+   problèmes de santé.
+2. Confirmation explicite.
+3. Le projet est copié dans l'espace de l'organisation via le format `.campplan`, en conservant
+   les identifiants. Il est ensuite envoyé par la file ordinaire, donc idempotente et
+   reprenable.
+4. Le projet local reste intact et marqué « Publié dans PAMM le … ».
+
+`.campplan` reste entièrement indépendant du serveur : export, import et sauvegardes externes
+fonctionnent dans tous les espaces.
+
+## 6. Configuration et hébergement
+
+Le serveur se configure uniquement par variables d'environnement. Aucun secret n'a de valeur
+par défaut.
+
+| Variable                                                                    | Défaut                   | Rôle                                                                                   |
+| --------------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                                                              | —                        | connexion du rôle applicatif `campplanner_app`                                         |
+| `MIGRATION_DATABASE_URL`                                                    | `DATABASE_URL`           | connexion du propriétaire du schéma (migrations)                                       |
+| `HOST`, `PORT`                                                              | `0.0.0.0`, `8787`        | écoute                                                                                 |
+| `PUBLIC_ORIGIN`                                                             | `http://localhost:$PORT` | liens d'invitation                                                                     |
+| `COOKIE_SECURE`                                                             | `true` en production     | cookie `Secure`                                                                        |
+| `TRUST_PROXY`                                                               | `false`                  | derrière un proxy (Azure App Service, passerelle)                                      |
+| `SESSION_TTL_DAYS`                                                          | `30`                     | poste de confiance                                                                     |
+| `SHARED_SESSION_TTL_HOURS`                                                  | `12`                     | poste partagé                                                                          |
+| `MAX_UPLOAD_BYTES`                                                          | 200 Mio                  | taille maximale d'un fichier                                                           |
+| `MAX_SVG_BYTES`                                                             | 2 Mio                    | taille maximale d'un SVG                                                               |
+| `MAX_PLAN_BYTES`                                                            | 25 Mio                   | taille maximale d'un document de plan                                                  |
+| `STATIC_DIR`                                                                | —                        | sert l'application construite (`dist/`) sur la même origine                            |
+| `STORAGE_DRIVER`                                                            | `fs`                     | `fs` ou `s3`                                                                           |
+| `STORAGE_FS_ROOT`                                                           | `./server-data/files`    | racine du stockage disque                                                              |
+| `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT`, `S3_FORCE_PATH_STYLE`, `S3_PREFIX` | —                        | stockage compatible S3 (AWS, MinIO, Ceph…). Identifiants par la chaîne standard du SDK |
+
+Mise en service :
+
+```sh
+# 1. Base : créer la base, le propriétaire et le rôle applicatif (sans droits de propriétaire)
+psql -c "CREATE ROLE campplanner_app LOGIN PASSWORD '…'"
+# 2. Migrations + première organisation + premier administrateur
+MIGRATION_DATABASE_URL=postgres://owner@…/campplanner npm run server:bootstrap -- \
+  --org "PAMM" --slug pamm --email admin@… --name "Administrateur"
+# 3. Serveur (application servie sur la même origine)
+npm run build
+DATABASE_URL=postgres://campplanner_app@…/campplanner STATIC_DIR=dist npm run server
+```
+
+**Azure** (préféré, non déployé dans cette phase) :
+
+- Azure Database for PostgreSQL (serveur flexible) ;
+- App Service ou Container Apps (Node 22) avec `TRUST_PROXY=true` et `COOKIE_SECURE=true` ;
+- fichiers : Azure Blob par un pilote `azureBlob` à écrire derrière l'interface `ObjectStorage`
+  (4 méthodes : `put`, `get`, `head`, `delete`). Le code métier ne dépend ni d'AWS ni d'Azure.
+
+Le stockage S3 fonctionne aussi avec MinIO sur un serveur PAMM.
+
+## 7. Tests
+
+| Suite                          | Contenu                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `server/test/migrate.test.ts`  | migrations rejouables, schéma                                                                                                                                                                                                                                                                                                  |
+| `server/test/auth.test.ts`     | cookie, poste partagé, échecs indiscernables, CSRF, révocation, limitation, invitations, compte existant, suspension                                                                                                                                                                                                           |
+| `server/test/plans.test.ts`    | version périmée (409), requête rejouée, création concurrente, suppression logique, `If-Match`                                                                                                                                                                                                                                  |
+| `server/test/security.test.ts` | organisation A contre B (lecture, écriture, historique, révisions, fichiers, audit), faux `organizationId`, RLS SQL brute, lecteur, éditeur, faux `userId`, fausse approbation, sceau altéré, approbation immuable, approbation locale publiée, SVG dangereux, envoi surdimensionné, SHA menteur, type déguisé, fichier absent |
+| `server/test/sync.test.ts`     | deux postes simulés (vrai moteur client, fausse IndexedDB, vrai serveur et vraie base) : publication et SHA, hors ligne, conflit (garder la mienne, garder le serveur, copie), serveur indisponible, envoi de photo interrompu, réponse perdue, suppression hors ligne, révision hors ligne, refus serveur                     |
+| `e2e/phase9.spec.ts`           | navigateur réel : type d'appareil obligatoire, hors ligne → en ligne, conflit entre deux ordinateurs, poste partagé (verrouillage, purge), approbation et audit, publication d'un projet local, refus serveur visible                                                                                                          |
+
+Lancement : `npm run test:server`, qui démarre un PostgreSQL temporaire (binaires
+`/usr/lib/postgresql/16/bin` ou `PG_BIN`), puis `npx playwright test --project serveur`.
+
+## 8. Limites connues
+
+- **Microsoft Entra ID** : le modèle d'identité est prêt (`user_identities`), le flux OIDC n'est
+  pas écrit.
+- **Azure Blob** : l'interface est prête, le pilote n'est pas écrit. Le pilote S3 est couvert par
+  la même interface, mais **n'a pas été testé contre un vrai service** dans cet environnement.
+- **Docker** n'est pas disponible dans l'environnement de développement : aucune image ni
+  `docker-compose` n'est livré ou testé. Le déploiement décrit au § 6 s'appuie sur Node et
+  PostgreSQL directement.
+- **Chiffrement** : les données d'un poste de confiance sont stockées en clair dans IndexedDB,
+  comme en phase 8. Le poste partagé les détruit à la déconnexion.
+- **Session** : une seule session serveur active par navigateur (un seul cookie). Passer d'une
+  organisation à l'autre demande une reconnexion ; l'espace local reste accessible hors
+  session.
+- **Pas de fusion automatique** : un conflit demande toujours une décision humaine.
+- **Pas de temps réel** : les changements des autres arrivent au prochain cycle (au plus 20 s,
+  ou immédiatement au retour sur l'onglet).
+- **Poste partagé fermé sans déconnexion** (navigateur fermé de force) : les données restent dans
+  IndexedDB, mais **inaccessibles** depuis l'application. L'écran est verrouillé et une nouvelle
+  connexion est obligatoire. Sur cet écran, n'importe qui peut choisir « Effacer les données de
+  cet espace sur ce poste », sans session. Les changements jamais envoyés sont signalés avant
+  l'effacement. Elles ne sont pas chiffrées : un accès direct aux outils du navigateur les
+  montrerait jusqu'à l'effacement.

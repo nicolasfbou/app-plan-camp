@@ -173,6 +173,27 @@ test.describe('Phase 9 — comptes, organisation, synchronisation', () => {
     expect(dbs.some((n) => n?.startsWith('campplanner-') && n !== 'campplanner')).toBe(false);
   });
 
+  test('appareil partagé fermé sans déconnexion : écran verrouillé, effacement possible sans session', async ({
+    page,
+    context,
+  }) => {
+    await login(page, 'gestion@pamm.test', 'shared');
+    const camp = unique('Camp oublié');
+    await createCamp(page, camp);
+    await page.goto('/#/');
+    await expectSynced(page);
+    await page.close(); // navigateur fermé de force : aucune déconnexion
+    const next = await context.newPage();
+    await next.goto('/#/');
+    await expect(next.getByTestId('locked-screen')).toBeVisible();
+    await expect(next.getByText(camp)).toHaveCount(0);
+    next.on('dialog', (d) => void d.accept());
+    await next.getByTestId('erase-device').click();
+    await expect(next.getByTestId('workspace-select')).toHaveValue('local');
+    const dbs = await next.evaluate(async () => (await indexedDB.databases()).map((d) => d.name));
+    expect(dbs.some((n) => n?.startsWith('campplanner-') && n !== 'campplanner')).toBe(false);
+  });
+
   test('approbation réelle : compte connecté, date serveur, badge vérifié, journal d’audit', async ({
     page,
   }) => {
