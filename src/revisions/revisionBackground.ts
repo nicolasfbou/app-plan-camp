@@ -25,41 +25,63 @@ export async function loadBackground(ref: BaseImageRef): Promise<LoadedBackgroun
   return buildDisplayPyramid(ref.blobId, bitmap);
 }
 
+/**
+ * Photos décodées pour les révisions, partagées par fichier et comptées : deux vues de la même
+ * photo (ex. avant / après d'une comparaison) ne la décodent qu'une fois ; libérée au dernier usage.
+ */
+const shared = new Map<string, { promise: Promise<LoadedBackground>; users: number }>();
+
+function acquire(ref: BaseImageRef): Promise<LoadedBackground> {
+  const entry = shared.get(ref.blobId);
+  if (entry) {
+    entry.users++;
+    return entry.promise;
+  }
+  const promise = loadBackground(ref);
+  shared.set(ref.blobId, { promise, users: 1 });
+  promise.catch(() => shared.delete(ref.blobId));
+  return promise;
+}
+
+function release(blobId: string) {
+  const entry = shared.get(blobId);
+  if (!entry || --entry.users > 0) return;
+  shared.delete(blobId);
+  entry.promise.then(releaseBackground, () => undefined);
+}
+
 export function useRevisionPhoto(ref: BaseImageRef | null | undefined): PhotoState {
   const editor = useEditorStore((s) => s.background);
-  const shared =
+  const fromEditor =
     ref && editor.kind === 'ready' && editor.background.blobId === ref.blobId ? editor.background : null;
   const [own, setOwn] = useState<{ blobId: string | null; state: PhotoState }>({
     blobId: null,
     state: { kind: 'none' },
   });
   const blobId = ref?.blobId ?? null;
-  const needsOwn = Boolean(ref) && !shared;
+  const needsOwn = Boolean(ref) && !fromEditor;
 
   useEffect(() => {
     if (!ref || !needsOwn) return;
     let cancelled = false;
-    let loaded: LoadedBackground | null = null;
     const id = ref.blobId;
-    loadBackground(ref).then(
-      (bg) => {
-        loaded = bg;
-        if (cancelled) releaseBackground(bg);
-        else setOwn({ blobId: id, state: { kind: 'ready', background: bg } });
-      },
+    acquire(ref).then(
+      (bg) => !cancelled && setOwn({ blobId: id, state: { kind: 'ready', background: bg } }),
       (e: unknown) =>
         !cancelled &&
         setOwn({ blobId: id, state: { kind: 'error', message: e instanceof Error ? e.message : String(e) } }),
     );
     return () => {
       cancelled = true;
-      releaseBackground(loaded);
+      release(id);
+      // L'état ne garde jamais une photo libérée.
+      setOwn({ blobId: null, state: { kind: 'none' } });
     };
     // Ne dépend que du fichier référencé.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blobId, needsOwn]);
 
   if (!ref) return { kind: 'none' };
-  if (shared) return { kind: 'ready', background: shared };
+  if (fromEditor) return { kind: 'ready', background: fromEditor };
   return own.blobId === blobId ? own.state : { kind: 'loading' };
 }

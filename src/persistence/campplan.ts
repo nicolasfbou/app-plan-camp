@@ -46,6 +46,14 @@ export class CampplanError extends Error {
   override name = 'CampplanError';
 }
 
+/** Révisions illisibles ou altérées : l'export peut être refait sans elles (jamais en silence). */
+export class DamagedRevisionsError extends CampplanError {
+  override name = 'DamagedRevisionsError';
+  constructor(readonly labels: string[]) {
+    super(`Révision(s) illisible(s) ou altérée(s) : ${labels.join(', ')}.`);
+  }
+}
+
 const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
 
 const fileEntrySchema = z.object({
@@ -171,7 +179,8 @@ export function campplanFileName(siteName: string, planName: string): string {
 export async function exportCampplan(
   repo: ProjectRepository,
   planId: string,
-): Promise<{ bytes: Uint8Array; fileName: string }> {
+  options: { skipDamagedRevisions?: boolean } = {},
+): Promise<{ bytes: Uint8Array; fileName: string; skippedRevisions: string[] }> {
   const doc = await repo.loadPlan(planId);
   if (!doc) throw new CampplanError('Plan introuvable.');
   const site: Site | undefined = await repo.getSite(doc.plan.siteId);
@@ -182,9 +191,16 @@ export async function exportCampplan(
   // Révisions : instantanés exacts ; leurs fichiers (souvent la même photo) ne sont écrits qu'une fois.
   const revisionEntries: CampplanManifest['revisions'] = [];
   const revisionRefs: FileRef[] = [];
+  const damaged: string[] = [];
   for (const entry of await repo.listRevisions(planId)) {
-    if (!entry.meta) throw new CampplanError('Une révision du plan est illisible : export annulé.');
-    const loaded = await repo.loadRevision(entry.id); // vérifie sceau et empreinte
+    let loaded;
+    try {
+      if (!entry.meta) throw new CampplanError('illisible');
+      loaded = await repo.loadRevision(entry.id); // vérifie sceau et empreinte
+    } catch {
+      damaged.push(entry.meta?.label ?? `(${entry.id.slice(0, 8)})`);
+      continue;
+    }
     const { json, blobMap } = await repo.readRevisionSnapshot(entry.id);
     const path = `revisions/${entry.id.replace(/[^\w.-]/g, '_')}.json`;
     const bytes = strToU8(json);
@@ -199,6 +215,8 @@ export async function exportCampplan(
     });
     revisionRefs.push(...referencedFiles(loaded.doc));
   }
+  // Jamais une sauvegarde incomplète sans le dire : l'appelant doit accepter explicitement.
+  if (damaged.length && !options.skipDamagedRevisions) throw new DamagedRevisionsError(damaged);
   for (const { blobId, role, sha256, label } of [...referencedFiles(doc), ...revisionRefs]) {
     if (seen.has(blobId)) continue;
     seen.add(blobId);
@@ -236,6 +254,7 @@ export async function exportCampplan(
   return {
     bytes: zipSync(entries, { level: 6 }),
     fileName: campplanFileName(site?.name ?? '', doc.plan.name),
+    skippedRevisions: damaged,
   };
 }
 
@@ -454,6 +473,12 @@ export async function importCampplan(
     const already = written.get(blobId);
     if (already) return already;
     const file = content.files.get(blobId)!;
+    // Même contenu déjà stocké (même SHA-256) : réutilisé, jamais une deuxième copie de la photo.
+    const same = await repo.findBlobBySha256(file.sha256);
+    if (same) {
+      written.set(blobId, same);
+      return same;
+    }
     const stored = await repo.putBlob(file.bytes.slice().buffer, file.mimeType);
     if (stored.sha256 !== file.sha256)
       throw new CampplanError('Écriture du fichier incorrecte (empreinte différente).');
@@ -473,8 +498,24 @@ export async function importCampplan(
   // correspondance. Une copie reçoit de nouveaux identifiants de révision (jamais de collision).
   const renewIds = doc.plan.id !== content.doc.plan.id;
   const idMap = new Map(content.revisions.map((r) => [r.meta.id, renewIds ? newId() : r.meta.id]));
+  // Remplacement : les révisions locales restent (jamais remplacées). Une révision du fichier déjà
+  // présente est ignorée ; une révision DIFFÉRENTE portant le même numéro est refusée (deux
+  // historiques divergents ne sont jamais fusionnés en silence).
+  const local = existing && options.mode === 'replace' ? await repo.listRevisions(doc.plan.id) : [];
+  const localIds = new Set(local.map((e) => e.id));
+  const localLabels = new Map(
+    local.flatMap((e) => (e.meta ? [[e.meta.label.toUpperCase(), e.id] as const] : [])),
+  );
+  for (const r of content.revisions) {
+    const clash = localLabels.get(r.meta.label.toUpperCase());
+    if (!localIds.has(r.meta.id) && clash && clash !== r.meta.id)
+      throw new CampplanError(
+        `Le fichier contient une révision ${r.meta.label} différente de la révision ${r.meta.label} de ce plan (historiques divergents). Importez-le comme copie.`,
+      );
+  }
   const revisions: ImportedRevision[] = [];
   for (const r of content.revisions) {
+    if (localIds.has(r.meta.id)) continue; // déjà présente : la version locale fait foi
     const blobMap: Record<string, string> = {};
     for (const [inSnapshot, inArchive] of Object.entries(r.blobMap))
       blobMap[inSnapshot] = await store(inArchive);

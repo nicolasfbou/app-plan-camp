@@ -158,6 +158,15 @@ function printedStatus(input: ComposeInput): { approved: boolean; stale: boolean
       badge: `RÉVISION ${r.label.toUpperCase()} — ${r.statusLabel.toUpperCase()}${r.approved ? '' : ' — NON APPROUVÉ'}`,
     };
   const block = input.doc.plan.titleBlock;
+  // Brouillon d'un plan sous révisions : jamais imprimé « Approuvé » (l'approbation porte sur les
+  // révisions figées).
+  const base = input.doc.plan.draftBase;
+  if (base && block.status === 'approved')
+    return {
+      approved: false,
+      stale: false,
+      badge: `BROUILLON (APRÈS RÉV. ${base.label.toUpperCase()}) — NON APPROUVÉ`,
+    };
   const approved = block.status === 'approved';
   const stale = approved && !!block.approvedAt && input.doc.plan.updatedAt > block.approvedAt;
   return {

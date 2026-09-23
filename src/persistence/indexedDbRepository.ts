@@ -102,6 +102,8 @@ class CampPlannerDatabase extends Dexie {
     this.version(2).stores({ viewPrefs: 'planId' });
     this.version(3).stores({ templates: 'id, name, updatedAt' });
     this.version(4).stores({ revisions: 'id, planId, *blobIds', revisionSnapshots: 'id' });
+    // Index des empreintes : un fichier déjà stocké (même SHA-256) est réutilisé, jamais dupliqué.
+    this.version(5).stores({ blobs: 'id, sha256' });
   }
 }
 
@@ -280,7 +282,8 @@ export class IndexedDbRepository implements ProjectRepository {
     const { json, ...meta } = record;
     const label = (meta.meta as RevisionMeta).label;
     for (const blobId of meta.blobIds)
-      if (!(await this.db.blobs.get(blobId)))
+      // Existence seulement (sans lire les octets de la photo).
+      if (!(await this.db.blobs.where('id').equals(blobId).count()))
         throw new RevisionError(`Révision ${label} : fichier d’origine introuvable (${blobId}).`);
     await this.db.revisions.put(meta);
     await this.db.revisionSnapshots.put({ id: meta.id, json });
@@ -351,9 +354,16 @@ export class IndexedDbRepository implements ProjectRepository {
     now = new Date().toISOString(),
   ): Promise<RevisionMeta> {
     const record = await this.db.revisions.get(id);
-    if (!record) throw new RevisionError('Révision introuvable.');
+    const snapshot = await this.db.revisionSnapshots.get(id);
+    if (!record || !snapshot) throw new RevisionError('Révision introuvable.');
+    const current = revisionMetaSchema.parse(record.meta);
+    // Jamais d'approbation (ni d'autre statut) sur un instantané altéré.
+    if ((await sha256OfText(snapshot.json)) !== current.snapshot.sha256)
+      throw new RevisionIntegrityError(
+        `Révision ${current.label} altérée : l’empreinte SHA-256 de l’instantané ne correspond plus.`,
+      );
     // Calcul (asynchrone) hors transaction, puis écriture seulement si rien n'a changé entre-temps.
-    const next = await changeRevisionStatus(revisionMetaSchema.parse(record.meta), change, now);
+    const next = await changeRevisionStatus(current, change, now);
     await this.db.transaction('rw', this.db.revisions, async () => {
       const current = await this.db.revisions.get(id);
       if (!current || JSON.stringify(current.meta) !== JSON.stringify(record.meta))
@@ -394,6 +404,10 @@ export class IndexedDbRepository implements ProjectRepository {
     };
     await this.db.blobs.put({ ...meta, bytes });
     return meta;
+  }
+
+  async findBlobBySha256(sha256: string): Promise<string | undefined> {
+    return (await this.db.blobs.where('sha256').equals(sha256).primaryKeys())[0] as string | undefined;
   }
 
   async getBlob(id: string): Promise<StoredBlob | undefined> {

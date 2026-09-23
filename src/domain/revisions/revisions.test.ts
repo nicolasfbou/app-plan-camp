@@ -11,7 +11,12 @@ import type { PlanDocument, Point, TextObject } from '@/domain/model/types.ts';
 import { createView } from '@/domain/print/views.ts';
 import { MIGRATIONS } from '@/domain/schema/migrations.ts';
 import { parsePlanDocument } from '@/domain/schema/serialization.ts';
-import { exportCampplan, importCampplan, readCampplan } from '@/persistence/campplan.ts';
+import {
+  DamagedRevisionsError,
+  exportCampplan,
+  importCampplan,
+  readCampplan,
+} from '@/persistence/campplan.ts';
 import { IndexedDbRepository } from '@/persistence/indexedDbRepository.ts';
 import { createRevisionFromDraft, revisionMetas } from '@/persistence/revisions.ts';
 import { makeLargeDocument } from '@/test/fixtures.ts';
@@ -24,6 +29,8 @@ import {
   freezeRevision,
   isSealIntact,
   nextRevisionLabel,
+  revisionMetaSchema,
+  revisionStamp,
   type NewRevisionInput,
   RevisionError,
   RevisionIntegrityError,
@@ -350,4 +357,140 @@ describe('dépôt et fichier .campplan', () => {
     );
     expect(listed).toBeLessThan(2000);
   }, 60_000);
+});
+
+describe('corrections de la revue (phase 7)', () => {
+  let repo: IndexedDbRepository;
+  beforeEach(() => {
+    repo = new IndexedDbRepository(`rev-${crypto.randomUUID()}`);
+  });
+  afterEach(() => repo.close());
+  type Tables = {
+    db: { revisionSnapshots: { put(r: unknown): Promise<unknown> }; blobs: { count(): Promise<number> } };
+  };
+  const tables = (r: IndexedDbRepository) => (r as unknown as Tables).db;
+
+  async function setup() {
+    const site = createSite('Camp 105');
+    await repo.saveSite(site);
+    const doc = sampleDoc();
+    doc.plan.siteId = site.id;
+    const bytes = new Uint8Array(2048).map((_, i) => (i * 7) % 251);
+    const blob = await repo.putBlob(bytes.buffer, 'image/jpeg');
+    doc.plan.baseImage = {
+      blobId: blob.id,
+      fileName: 'camp-105.jpg',
+      mimeType: 'image/jpeg',
+      byteLength: blob.byteLength,
+      sha256: blob.sha256,
+      width: 2000,
+      height: 1500,
+      exifOrientation: 1,
+      importedAt: nowIso(),
+      source: { kind: 'image' },
+    };
+    await repo.savePlan(doc);
+    return { doc, site };
+  }
+
+  it('statut « Approuvé » sans approbation : refusé ; statut modifié : sceau non conforme', async () => {
+    const { meta } = await freezeRevision(sampleDoc(), INPUT, {
+      id: 'r1',
+      existingLabels: [],
+      parentId: null,
+      changes: null,
+      now: nowIso(),
+    });
+    expect(revisionMetaSchema.safeParse({ ...meta, status: 'approved' }).success).toBe(false);
+    expect(await isSealIntact({ ...meta, status: 'draft' })).toBe(false);
+    const approved = await changeRevisionStatus(
+      meta,
+      { to: 'approved', by: 'M. Gagnon', comment: '', confirmed: true },
+      nowIso(),
+    );
+    const archived = await changeRevisionStatus(
+      approved,
+      { to: 'archived', by: 'M. Gagnon', comment: '' },
+      nowIso(),
+    );
+    // Archivée après approbation : toujours imprimée comme approuvée.
+    expect(revisionStamp(archived)).toMatchObject({ approved: true, statusLabel: 'Archivé (approuvé)' });
+  });
+
+  it('approbation refusée si l’instantané est altéré ; export : révision altérée signalée, export sans elle sur demande', async () => {
+    const { doc } = await setup();
+    const a = await createRevisionFromDraft(repo, doc, INPUT);
+    await tables(repo).revisionSnapshots.put({ id: a.id, json: '{"altéré":true}' });
+    await expect(
+      repo.setRevisionStatus(a.id, { to: 'approved', by: 'X', comment: '', confirmed: true }),
+    ).rejects.toThrow(RevisionIntegrityError);
+    await expect(exportCampplan(repo, doc.plan.id)).rejects.toThrow(DamagedRevisionsError);
+    const partial = await exportCampplan(repo, doc.plan.id, { skipDamagedRevisions: true });
+    expect(partial.skippedRevisions).toEqual(['A']);
+    expect((await readCampplan(partial.bytes)).revisions).toEqual([]);
+  });
+
+  it('remplacement : photo jamais dupliquée ; historiques divergents refusés', async () => {
+    const { doc } = await setup();
+    await createRevisionFromDraft(repo, doc, INPUT);
+    const exported = await exportCampplan(repo, doc.plan.id);
+    // Même historique : import en remplacement → aucune nouvelle copie de la photo.
+    const content = await readCampplan(exported.bytes);
+    await importCampplan(repo, content, {
+      target: { kind: 'new-site', name: 'x' },
+      mode: 'replace',
+      planName: doc.plan.name,
+    });
+    expect(await tables(repo).blobs.count()).toBe(1);
+    expect(await revisionMetas(repo, doc.plan.id)).toHaveLength(1);
+    // Ailleurs, une autre révision « B » a été créée : fichier refusé en remplacement.
+    const other = new IndexedDbRepository(`rev-${crypto.randomUUID()}`);
+    try {
+      await importCampplan(other, content, {
+        target: { kind: 'new-site', name: 'x' },
+        mode: 'copy',
+        planName: 'P',
+      });
+      const [plan] = await other.listPlans((await other.listSites())[0]!.id);
+      const otherDoc = (await other.loadPlan(plan!.id))!;
+      otherDoc.objects = {};
+      await other.savePlan(otherDoc);
+      await createRevisionFromDraft(other, otherDoc, { ...INPUT, label: 'B', description: 'ailleurs' });
+      doc.plan.titleBlock.notes = 'ici';
+      await repo.savePlan(doc);
+      await createRevisionFromDraft(repo, doc, { ...INPUT, label: 'B', description: 'ici' });
+      const divergent = await readCampplan((await exportCampplan(other, otherDoc.plan.id)).bytes);
+      // Même identifiant de plan que dans `repo` pour tester le remplacement.
+      divergent.doc.plan.id = doc.plan.id;
+      await expect(
+        importCampplan(repo, divergent, {
+          target: { kind: 'new-site', name: 'x' },
+          mode: 'replace',
+          planName: 'P',
+        }),
+      ).rejects.toThrow(/historiques divergents/);
+    } finally {
+      other.close();
+    }
+  });
+
+  it('brouillon repris d’une révision approuvée : 0 changement de l’utilisateur ; déplacé ET agrandi signalés', () => {
+    const snapshot = sampleDoc();
+    snapshot.plan.titleBlock.status = 'approved';
+    snapshot.plan.titleBlock.approvedAt = nowIso();
+    const draft = draftFromRevision(snapshot, snapshot, { id: 'rA', label: 'A' }, nowIso());
+    const diff = diffPlans(snapshot, draft, { beforeRevisionId: 'rA' });
+    expect(diff.counts.user).toBe(0);
+    expect(diff.auto.map((x) => x.label)).toContain('Statut du brouillon remis à « Brouillon »');
+
+    const moved = structuredClone(snapshot);
+    const icon = byName(moved, 'Arrêt');
+    if (icon.type === 'icon' && icon.geometry.kind === 'point') {
+      icon.geometry.x += 450;
+      icon.size *= 2;
+    }
+    const change = diffPlans(snapshot, moved).objects.find((o) => o.id === icon.id)!;
+    expect(change.kinds).toEqual(['resized', 'moved']);
+    expect(change.shift?.x).toBeCloseTo(450);
+  });
 });

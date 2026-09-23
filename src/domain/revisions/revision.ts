@@ -66,41 +66,53 @@ export const changeSummarySchema = z.object({
   lines: z.array(z.string()),
 });
 
-export const revisionMetaSchema = z.object({
-  format: z.literal('campplan-revision'),
-  formatVersion: z.number().int().positive(),
-  id: idSchema,
-  planId: idSchema,
-  label: z.string().trim().min(1).max(20),
-  description: z.string(),
-  author: z.string().trim().min(1),
-  /** Date de la révision (AAAA-MM-JJ), imprimée au cartouche. */
-  date: dateSchema,
-  reason: z.string(),
-  comments: z.string(),
-  status: z.enum(REVISION_STATUSES),
-  approval: approvalSchema.nullable(),
-  statusLog: z.array(statusLogEntrySchema),
-  createdAt: isoDateSchema,
-  /** Révision précédente au moment de la création (null pour la première). */
-  parentId: idSchema.nullable(),
-  snapshot: z.object({
-    sha256: sha256Schema,
-    byteLength: z.number().int().positive(),
-    schemaVersion: z.number().int().positive(),
-    objectCount: z.number().int().nonnegative(),
-    layerCount: z.number().int().positive(),
-    viewCount: z.number().int().nonnegative(),
-    /** Photo référencée (jamais copiée) : nom et empreinte. */
-    photo: z.object({ fileName: z.string(), sha256: sha256Schema }).nullable(),
-  }),
-  /** Changements depuis la révision précédente (calculés une fois, à la création). */
-  changes: changeSummarySchema.nullable(),
-  /** Empreinte des champs figés et de l'approbation (détection d'altération). */
-  seal: sha256Schema,
-});
+export const revisionMetaSchema = z
+  .object({
+    format: z.literal('campplan-revision'),
+    formatVersion: z.number().int().positive(),
+    id: idSchema,
+    planId: idSchema,
+    label: z.string().trim().min(1).max(20),
+    description: z.string(),
+    author: z.string().trim().min(1),
+    /** Date de la révision (AAAA-MM-JJ), imprimée au cartouche. */
+    date: dateSchema,
+    reason: z.string(),
+    comments: z.string(),
+    status: z.enum(REVISION_STATUSES),
+    approval: approvalSchema.nullable(),
+    statusLog: z.array(statusLogEntrySchema),
+    createdAt: isoDateSchema,
+    /** Révision précédente au moment de la création (null pour la première). */
+    parentId: idSchema.nullable(),
+    snapshot: z.object({
+      sha256: sha256Schema,
+      byteLength: z.number().int().positive(),
+      schemaVersion: z.number().int().positive(),
+      objectCount: z.number().int().nonnegative(),
+      layerCount: z.number().int().positive(),
+      viewCount: z.number().int().nonnegative(),
+      /** Photo référencée (jamais copiée) : nom et empreinte. */
+      photo: z.object({ fileName: z.string(), sha256: sha256Schema }).nullable(),
+    }),
+    /** Changements depuis la révision précédente (calculés une fois, à la création). */
+    changes: changeSummarySchema.nullable(),
+    /** Empreinte des champs figés, du statut et de l'approbation (détection d'altération). */
+    seal: sha256Schema,
+  })
+  // « Approuvé » exige une approbation ; une approbation n'existe qu'approuvée ou archivée.
+  .refine((m) => m.status !== 'approved' || m.approval !== null, {
+    message: 'Révision « Approuvé » sans approbation enregistrée.',
+  })
+  .refine((m) => m.approval === null || m.status === 'approved' || m.status === 'archived', {
+    message: 'Approbation incohérente avec le statut de la révision.',
+  });
 
 export type RevisionMeta = z.infer<typeof revisionMetaSchema>;
+
+/** Une révision est approuvée si elle porte une approbation (même archivée ensuite). */
+export const isApproved = (meta: Pick<RevisionMeta, 'status' | 'approval'>) =>
+  meta.approval !== null || meta.status === 'approved';
 export type RevisionApproval = z.infer<typeof approvalSchema>;
 export type ChangeSummary = z.infer<typeof changeSummarySchema>;
 
@@ -116,7 +128,12 @@ export class RevisionIntegrityError extends RevisionError {
 const encoder = new TextEncoder();
 export const sha256OfText = (text: string) => sha256Hex(encoder.encode(text).slice().buffer);
 
-/** Champs couverts par le sceau (l'identifiant local et le statut courant n'en font pas partie). */
+/**
+ * Champs couverts par le sceau : tout sauf l'identifiant local, le plan local et la révision
+ * précédente (renouvelés par un import en copie). Le sceau est un CONTRÔLE D'INTÉGRITÉ (erreur,
+ * fichier endommagé, modification maladroite) : ce n'est pas une signature — sans serveur ni comptes,
+ * une personne déterminée pourrait le recalculer.
+ */
 function sealPayload(meta: Omit<RevisionMeta, 'seal'>): string {
   return JSON.stringify([
     meta.label,
@@ -126,7 +143,10 @@ function sealPayload(meta: Omit<RevisionMeta, 'seal'>): string {
     meta.reason,
     meta.comments,
     meta.createdAt,
-    meta.snapshot.sha256,
+    meta.snapshot,
+    meta.changes,
+    meta.status,
+    meta.statusLog,
     meta.approval,
   ]);
 }
@@ -242,7 +262,7 @@ export interface StatusChange {
 
 /** Statuts accessibles depuis une révision (l'approbation fige tout, sauf l'archivage). */
 export function allowedStatuses(meta: RevisionMeta): RevisionStatus[] {
-  if (meta.approval) return meta.status === 'approved' ? ['archived'] : [];
+  if (isApproved(meta)) return meta.status === 'approved' ? ['archived'] : [];
   return REVISION_STATUSES.filter((s) => s !== meta.status);
 }
 
@@ -292,7 +312,7 @@ export async function changeRevisionStatus(
 }
 
 /** Une révision approuvée (même archivée ensuite) ne peut jamais être supprimée. */
-export const isDeletable = (meta: RevisionMeta) => meta.approval === null && meta.status !== 'approved';
+export const isDeletable = (meta: RevisionMeta) => !isApproved(meta);
 
 /** Figé récursivement : toute tentative de modification d'une révision chargée échoue. */
 export function deepFreeze<T>(value: T): T {
@@ -365,7 +385,8 @@ export function draftFromRevision(
     draftBase: { revisionId: meta.id, label: meta.label, at: now },
   };
   // Un brouillon n'hérite jamais d'une approbation : elle appartient à la révision figée.
-  copy.plan.titleBlock = { ...copy.plan.titleBlock, status: 'draft', approvedAt: null };
+  if (copy.plan.titleBlock.status === 'approved')
+    copy.plan.titleBlock = { ...copy.plan.titleBlock, status: 'draft', approvedAt: null };
   return copy;
 }
 
@@ -375,8 +396,11 @@ export function revisionStamp(meta: RevisionMeta): RevisionStamp {
     label: meta.label,
     date: meta.date,
     author: meta.author,
-    statusLabel: REVISION_STATUS_LABELS[meta.status],
-    approved: meta.status === 'approved',
+    statusLabel:
+      meta.status === 'archived' && meta.approval
+        ? 'Archivé (approuvé)'
+        : REVISION_STATUS_LABELS[meta.status],
+    approved: isApproved(meta),
     approvedBy: meta.approval ? `${meta.approval.by} — ${meta.approval.date}` : '',
   };
 }

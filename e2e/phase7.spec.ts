@@ -112,6 +112,17 @@ test.describe('Phase 7 — révisions', () => {
     await expect(compare.getByTestId('compare-summary')).toContainText('déplacée');
     await expect(compare.getByTestId('compare-count')).toContainText('Révision A → Brouillon actuel : 2');
     await expect(compare.getByText('Rendu en cours…')).toBeHidden({ timeout: 20_000 });
+    // Superposition : repères dessinés (vert « ajouté » autour de la nouvelle étiquette).
+    const markerPixels = await compare
+      .getByTestId('compare-overlay')
+      .evaluate((canvas: HTMLCanvasElement) => {
+        const data = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;
+        let n = 0;
+        for (let i = 0; i < data.length; i += 4)
+          if (Math.hypot(data[i]! - 22, data[i + 1]! - 163, data[i + 2]! - 74) < 40) n++;
+        return n;
+      });
+    expect(markerPixels).toBeGreaterThan(30);
     await compare.getByRole('radio', { name: 'Avant / Après' }).click();
     await compare.getByTestId('show-before').click();
     await expect(compare.getByTestId('compare-slider')).toHaveValue('100');

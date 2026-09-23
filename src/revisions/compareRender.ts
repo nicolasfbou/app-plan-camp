@@ -142,6 +142,9 @@ export async function renderComparison(input: ComparisonInput): Promise<Comparis
     }),
   );
   drawPlanObjects(painter, after, m, frame, symbolsAfter, []);
+  // Repères en pixels du canevas (la surface d'export a pu laisser son échelle mm → px).
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.globalAlpha = 1;
   drawMarkers(c, diff, extent, scale);
   return { before: beforeCanvas, after: afterCanvas, overlay, extent, scale };
 }

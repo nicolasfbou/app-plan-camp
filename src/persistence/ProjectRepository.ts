@@ -101,6 +101,8 @@ export interface ProjectRepository {
   /** Stocke des octets tels quels et retourne leur empreinte. */
   putBlob(bytes: ArrayBuffer, mimeType: string): Promise<Omit<StoredBlob, 'bytes'>>;
   getBlob(id: string): Promise<StoredBlob | undefined>;
+  /** Identifiant d'un fichier déjà stocké avec cette empreinte (réutilisé plutôt que dupliqué). */
+  findBlobBySha256(sha256: string): Promise<string | undefined>;
   /**
    * Supprime les fichiers qui ne sont référencés par aucun plan (ex. import annulé) et qui ont
    * plus de `minAgeMs` : un fichier tout juste importé dans un autre onglet, pas encore

@@ -22,7 +22,8 @@ import { t } from '@/i18n/index.ts';
 import { useEditorStore } from '@/store/editorStore.ts';
 import { planStore, usePlanStore } from '@/store/planStore.ts';
 import { downloadBytes } from '@/app/download.ts';
-import { exportCampplan } from '@/persistence/campplan.ts';
+import { DamagedRevisionsError, exportCampplan } from '@/persistence/campplan.ts';
+import { ConfirmDialog } from '@/ui/ConfirmDialog.tsx';
 import { Button } from '@/ui/Button.tsx';
 import { TextPromptDialog } from '@/ui/TextPromptDialog.tsx';
 import { TemplatesDialog } from '@/app/TemplatesDialog.tsx';
@@ -73,6 +74,7 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
   const [printing, setPrinting] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [variantOpen, setVariantOpen] = useState(false);
+  const [damagedExport, setDamagedExport] = useState<string[] | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const background = useEditorStore((s) => s.background);
   const pendingCalibration = useEditorStore((s) => s.pendingCalibration);
@@ -135,17 +137,29 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
   const openFilePicker = useCallback(() => fileInput.current?.click(), []);
 
   /** Export .campplan : les modifications en attente sont d'abord écrites, pour un fichier à jour. */
-  const exportPlan = useCallback(async () => {
-    try {
-      await saveNow();
-      const { bytes, fileName } = await exportCampplan(repository, planId);
-      downloadBytes(bytes, fileName, 'application/octet-stream');
-    } catch (e) {
-      useEditorStore
-        .getState()
-        .notify(t('campplan.exportError', { message: e instanceof Error ? e.message : String(e) }));
-    }
-  }, [planId]);
+  const exportPlan = useCallback(
+    async (skipDamagedRevisions = false) => {
+      try {
+        await saveNow();
+        const { bytes, fileName, skippedRevisions } = await exportCampplan(repository, planId, {
+          skipDamagedRevisions,
+        });
+        downloadBytes(bytes, fileName, 'application/octet-stream');
+        if (skippedRevisions.length)
+          useEditorStore.getState().notify(t('rev.exportedWithout', { labels: skippedRevisions.join(', ') }));
+      } catch (e) {
+        // Révisions altérées : l'utilisateur décide d'exporter sans elles (jamais en silence).
+        if (e instanceof DamagedRevisionsError) {
+          setDamagedExport(e.labels);
+          return;
+        }
+        useEditorStore
+          .getState()
+          .notify(t('campplan.exportError', { message: e instanceof Error ? e.message : String(e) }));
+      }
+    },
+    [planId],
+  );
   const closeImport = useCallback(() => setImportFile(null), []);
 
   if (state.status === 'error') {
@@ -164,7 +178,7 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
         saveError={saveError}
         onRename={() => setRenaming(true)}
         onImport={openFilePicker}
-        onExport={() => void exportPlan()}
+        onExport={() => void exportPlan(false)}
         onPrint={() => setPrinting(true)}
         onTemplates={() => setTemplatesOpen(true)}
         onVariant={() => void saveNow().then(() => setVariantOpen(true))}
@@ -237,6 +251,19 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
         </Suspense>
       )}
       {templatesOpen && <TemplatesDialog onClose={() => setTemplatesOpen(false)} />}
+      {damagedExport && (
+        <ConfirmDialog
+          title={t('rev.damagedExportTitle')}
+          confirmLabel={t('rev.damagedExportConfirm')}
+          onCancel={() => setDamagedExport(null)}
+          onConfirm={async () => {
+            setDamagedExport(null);
+            await exportPlan(true);
+          }}
+        >
+          {t('rev.damagedExportBody', { labels: damagedExport.join(', ') })}
+        </ConfirmDialog>
+      )}
       {state.status === 'ready' && (
         <RevisionDialogsHost siteName={site.status === 'ready' ? (site.value?.name ?? '') : ''} />
       )}

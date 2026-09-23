@@ -94,9 +94,27 @@ Règle : le parcours complet doit être fiable avant toute fonction avancée.
 - Export groupé (PDF par public, .zip ou PDF multi-pages) ; variantes été / hiver ; schéma v5
 - Démonstration sur la photo réelle du Camp 105 (`bench/camp105-phase6.mjs`)
 
-## Phase 7 — Révisions (prévue)
+## Phase 7 — Révisions, historique et comparaison ✅
 
-Versions figées A / B / C, comparaison, restauration, approbation et traçabilité.
+- Révisions figées A, B, C… : instantané complet et structuré (objets, calques, vues, impression,
+  légende, cartouche), photo référencée par son SHA-256 (jamais dupliquée), empreinte vérifiée à
+  chaque lecture, sceau des champs figés et de l'approbation
+- Statuts Brouillon, En révision, À valider sur le terrain, Approuvé, Archivé ; approbation
+  explicite (approbateur, date, commentaire, auteur de la révision) ; révision approuvée non
+  modifiable (archivage seulement) et non supprimable ; journal des statuts
+- Historique des révisions, consultation en lecture seule (vues telles qu'au moment de la révision),
+  PDF de révision (cartouche : révision, date, auteur, statut, approuvé par ; tableau des révisions)
+- Comparaison révision ↔ révision ou ↔ brouillon : superposition et avant / après ; rapport de
+  changements (PDF, Markdown) distinguant changements de l'utilisateur et automatiques
+- Nouveau brouillon à partir d'une révision (remplacement annulable ou plan séparé) ; suppressions
+  protégées ; schéma v6 ; `.campplan` format 3 avec révisions
+- Démonstration sur la photo réelle du Camp 105 (`bench/camp105-phase7.mjs`) ; mesures de
+  performance (`revisions.perf.test.ts`, `bench/revisions-browser-perf.mjs`)
+
+## Phase 8 — À définir
+
+Collaboration, serveur, comptes et permissions, synchronisation, commentaires : non développés
+(demande explicite), à planifier.
 
 ## V2
 

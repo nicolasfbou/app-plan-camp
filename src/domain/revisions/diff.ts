@@ -98,6 +98,8 @@ export interface PlanDiff {
 export interface DiffOptions {
   /** Versions du format de données des deux états avant conversion (instantanés anciens). */
   schemaVersions?: { before: number; after: number };
+  /** Identifiant de la révision « avant » (pour reconnaître un brouillon qui en est issu). */
+  beforeRevisionId?: string;
 }
 
 // --- Noms ---------------------------------------------------------------------------------------
@@ -120,7 +122,10 @@ const nounOf = (o: PlanObject): NounKey => (o.type === 'text' && o.label ? 'labe
 
 /** Nom affiché : le texte d'un texte ou d'une étiquette (leur nom est générique), sinon le nom. */
 function displayName(o: PlanObject): string {
-  if (o.type === 'text' && o.text.trim()) return o.text.split('\n')[0]!.trim().slice(0, 40);
+  if (o.type === 'text' && o.text.trim()) {
+    const line = o.text.split('\n')[0]!.trim();
+    return line.length > 60 ? `${line.slice(0, 59).trimEnd()}…` : line;
+  }
   return o.name.trim();
 }
 
@@ -434,6 +439,21 @@ function distanceText(shift: Point, before: PlanDocument, after: PlanDocument): 
   return mpp ? `environ ${Math.round(px * mpp * 10) / 10} m` : `${Math.round(px)} px (image)`;
 }
 
+/**
+ * Déplacement du centre qui ne s'explique pas par un simple redimensionnement (poignée tirée d'un
+ * côté : le centre bouge au plus de la moitié du changement de taille).
+ */
+function extraShift(a: PlanObject, b: PlanObject): Point | null {
+  const ba = approxBounds(a);
+  const bb = approxBounds(b);
+  const dx = bb.x + bb.width / 2 - (ba.x + ba.width / 2);
+  const dy = bb.y + bb.height / 2 - (ba.y + ba.height / 2);
+  const centered = a.type === 'icon' || a.type === 'corridor';
+  const allowX = centered ? 0.5 : Math.abs(bb.width - ba.width) / 2 + 0.5;
+  const allowY = centered ? 0.5 : Math.abs(bb.height - ba.height) / 2 + 0.5;
+  return Math.abs(dx) > allowX || Math.abs(dy) > allowY ? { x: dx, y: dy } : null;
+}
+
 function compareObject(
   a: PlanObject,
   b: PlanObject,
@@ -447,6 +467,8 @@ function compareObject(
   let sizeRatio: number | null = null;
   let shift: Point | null = null;
   const geo = geometryChange(a, b);
+  // Redimensionné ET déplacé : les deux sont signalés (flèche de déplacement comprise).
+  const moveToo = geo && geo.kind !== 'moved' ? extraShift(a, b) : null;
   if (geo?.kind === 'moved') {
     kinds.push('moved');
     shift = { x: geo.dx, y: geo.dy };
@@ -465,6 +487,11 @@ function compareObject(
         ? ` (${a.geometry.points.length} → ${g.points.length} points, longueur ${pct(polylineLength(g.points) / Math.max(1e-9, polylineLength(a.geometry.points)))})`
         : '';
     details.push(what + len);
+  }
+  if (moveToo) {
+    kinds.push('moved');
+    shift = moveToo;
+    details.push(`déplacé de ${distanceText(moveToo, before, after)}`);
   }
   if (!near(a.rotation, b.rotation)) {
     kinds.push('rotated');
@@ -576,6 +603,8 @@ function compareLayers(a: Layer[], b: Layer[], out: SettingChange[]) {
         before: show(old.locked),
         after: show(l.locked),
       });
+    if (old.tier !== l.tier)
+      out.push({ area: 'layers', subject, label: 'catégorie du calque', before: old.tier, after: l.tier });
     if (!near(old.opacity, l.opacity))
       out.push({
         area: 'layers',
@@ -664,6 +693,16 @@ function compareViews(before: PlanDocument, after: PlanDocument, out: SettingCha
     comparePrint(subject, old.print, v.print, before, after, printChanges);
     out.push(...printChanges.map((c) => ({ ...c, area: 'views' as const })));
   }
+  const orderA = a.filter((v) => b.some((x) => x.id === v.id)).map((v) => v.id);
+  const orderB = b.filter((v) => a.some((x) => x.id === v.id)).map((v) => v.id);
+  if (orderA.join() !== orderB.join())
+    out.push({
+      area: 'views',
+      subject: 'vues',
+      label: 'ordre des vues',
+      before: 'précédent',
+      after: 'modifié',
+    });
   for (const v of a)
     if (!b.some((x: PlanView) => x.id === v.id))
       out.push({
@@ -751,7 +790,7 @@ function comparePlan(before: PlanDocument, after: PlanDocument, out: SettingChan
   if (JSON.stringify(a.draftBase) !== JSON.stringify(b.draftBase))
     auto.push({
       label: 'Lien avec la révision de base',
-      detail: `${a.draftBase?.label ?? '—'} → ${b.draftBase?.label ?? '—'}`,
+      detail: `${a.draftBase ? `révision ${a.draftBase.label}` : 'aucune révision'} → ${b.draftBase ? `révision ${b.draftBase.label}` : 'aucune révision'} (enregistré à la création d’une révision)`,
     });
 }
 
@@ -892,6 +931,26 @@ export function diffPlans(before: PlanDocument, after: PlanDocument, options: Di
   );
 
   compareTitleBlock(before, after, settings);
+  // Brouillon issu de la révision « avant » : l'approbation n'est jamais héritée (statut remis à
+  // « Brouillon » automatiquement) — ce n'est pas un changement de l'utilisateur.
+  if (
+    options.beforeRevisionId &&
+    after.plan.draftBase?.revisionId === options.beforeRevisionId &&
+    before.plan.titleBlock.status === 'approved' &&
+    after.plan.titleBlock.status === 'draft'
+  ) {
+    for (let i = settings.length - 1; i >= 0; i--)
+      if (
+        settings[i]!.area === 'titleBlock' &&
+        (settings[i]!.label === TITLE_BLOCK_LABELS.status ||
+          settings[i]!.label === TITLE_BLOCK_LABELS.approvedAt)
+      )
+        settings.splice(i, 1);
+    auto.push({
+      label: 'Statut du brouillon remis à « Brouillon »',
+      detail: 'Un brouillon issu d’une révision n’hérite jamais de son approbation.',
+    });
+  }
   compareLayers(before.layers, after.layers, settings);
   compareViews(before, after, settings);
   comparePlan(before, after, settings, auto);
@@ -984,7 +1043,11 @@ export function summarizeDiff(diff: PlanDiff): string[] {
       );
       continue;
     }
-    const verb = participle(first.primary, noun.feminine, list.length > 1, grow);
+    // Le texte d'un texte ou d'une étiquette change : « modifié (texte) », pas « renommé ».
+    const textual = first.primary === 'text' && (first.noun === 'text' || first.noun === 'label');
+    const verb = textual
+      ? `${participle('style', noun.feminine, list.length > 1, grow).replace(' (style)', '')} (texte)`
+      : participle(first.primary, noun.feminine, list.length > 1, grow);
     const extra =
       first.primary === 'resized' && list.length === 1 && first.sizeRatio ? ` (${pct(first.sizeRatio)})` : '';
     if (list.length === 1 && first.name)

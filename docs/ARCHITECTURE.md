@@ -845,3 +845,101 @@ s'affiche en vert et n'est appliquée qu'après « Accepter » (une action annul
 - **Variantes** : copie complète (objets, calques, vues, réglages), puis plans indépendants ; photo
   partagée ; la variante repart en brouillon et garde la trace de son origine. Pas encore d'objets
   partagés entre plans.
+
+## 18. Révisions, historique et comparaison (phase 7)
+
+### 18.1 Modèle
+
+- **Brouillon** = le plan ouvert dans l'éditeur (modifiable, historique annuler / rétablir).
+  `plan.draftBase` (schéma v6) indique la révision figée dont il est issu.
+- **Révision** (`domain/revisions/revision.ts`) = métadonnées validées par zod (numéro, description,
+  auteur, date, raison, commentaires, statut, approbation, journal des statuts, révision
+  précédente, résumé des changements, empreintes) + **instantané** : le texte JSON EXACT du document
+  au moment du gel. Son SHA-256 est dans les métadonnées ; il est vérifié à chaque lecture, à
+  l'export et à l'import. Le **sceau** (SHA-256 des champs figés et de l'approbation) révèle une
+  altération des métadonnées. Aucune fonction ne modifie un instantané ; seul le statut change,
+  selon des règles strictes (`allowedStatuses`, `changeRevisionStatus`).
+- **Photo** : jamais copiée. L'instantané référence le fichier (identifiant + SHA-256) ; le dépôt
+  indexe les fichiers référencés par chaque révision (`revisions.blobIds`), qui ne sont donc jamais
+  supprimés tant qu'une révision existe. Après un import, `blobMap` fait correspondre les
+  identifiants de l'instantané (inchangé) aux identifiants locaux.
+- **Approbation** : explicite (approbateur nommé + case de confirmation), jamais automatique ; une
+  révision approuvée ne peut plus changer (seul « Archivé » reste possible, l'approbation étant
+  conservée) et ne peut pas être supprimée. Supprimer un plan ou un camp contenant une révision
+  approuvée exige une deuxième confirmation (saisie du nom).
+
+### 18.2 Stockage (IndexedDB, version 4)
+
+- `revisions` (métadonnées + `planId`, `blobIds`, `blobMap`) et `revisionSnapshots` (texte JSON) :
+  l'historique se liste SANS lire les instantanés. Un instantané n'est chargé qu'à la demande
+  (consultation, comparaison), figé en mémoire (`deepFreeze`) et gardé dans un petit cache (4).
+- Les calculs d'empreinte (asynchrones) sont faits AVANT les transactions IndexedDB ; le changement
+  de statut est écrit seulement si les métadonnées n'ont pas changé entre-temps.
+- Import `.campplan` : une révision déjà présente n'est jamais remplacée ; une copie reçoit de
+  nouveaux identifiants de révision (révision précédente et `draftBase` suivis).
+
+### 18.3 Comparaison (`domain/revisions/diff.ts`)
+
+Fonction pure, sur deux documents (révision ↔ révision ou révision ↔ copie figée du brouillon).
+Objets appariés par identifiant : ajout, suppression, déplacement (translation exacte), agrandi /
+réduit (surface, longueur, taille de pictogramme, largeur de corridor), tracé ou forme modifiés,
+rotation, texte, style, calque, étiquette déplacée, ordre, propriétés. Réglages : cartouche,
+calques, vues (chaque réglage de chaque vue), impression, légende, plan, photo (SHA-256),
+pictogrammes importés, suivi. **Changements automatiques** (non comptés) : horodatages seuls,
+renumérotation de l'ordre sans changement réel, références de fichiers renouvelées (même SHA-256),
+conversion du format de données, lien du brouillon avec sa révision. Les distances physiques ne
+sont données que si les deux états ont la même calibration (sinon en pixels image).
+
+### 18.4 Affichage et rapports
+
+- Superposition (`revisions/compareRender.ts`) : même moteur de dessin que les exports ; photo
+  atténuée, ancienne version des objets changés en gris, nouvelle en couleur, repères numérotés
+  (vert ajouté, rouge pointillé supprimé, orange déplacé avec flèche, bleu modifié). Avant / après :
+  curseur ou bascule.
+- Rapport (`domain/revisions/report.ts`) en Markdown ou en PDF (Lettre paysage, image de
+  superposition, détail numéroté, changements automatiques à part).
+- PDF d'une révision : le cartouche imprime la révision, sa date, son auteur, son statut et son
+  approbation ; tableau compact des révisions (six au plus, la plus récente en premier). Un PDF du
+  brouillon imprime aussi le tableau des révisions déjà figées.
+
+### 18.5 Mesures (`revisions.perf.test.ts`, fake-indexeddb, Node)
+
+| Objets | Révisions | Création (moy.) | Liste | Chargement | Comparaison | Export .campplan | Import |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 300 | 5 | 35 ms | 0,9 ms | 6 ms | 4,5 ms | 131 ms | 140 ms |
+| 300 | 20 | 18 ms | 1,6 ms | 3,5 ms | 3,1 ms | 226 ms | 211 ms |
+| 600 | 10 | 29 ms | 1,0 ms | 6,8 ms | 6,2 ms | 217 ms | 199 ms |
+| 600 | 20 | 32 ms | 2,3 ms | 6,5 ms | 8,1 ms | 400 ms | 376 ms |
+
+Navigateur (Chromium, 20 révisions × 600 objets) : historique affiché en 72 ms, comparaison
+première ↔ dernière rendue en 0,5 s, mémoire JS ≈ 28 Mo (les instantanés ne sont pas chargés pour
+lister).
+
+### 18.6 Revue indépendante : corrections
+
+- Le sceau couvre aussi le statut, le journal des statuts, l'instantané et le résumé ; « Approuvé »
+  sans approbation (ou l'inverse) est refusé par le schéma. Le sceau est un contrôle d'intégrité,
+  pas une signature (aucun serveur ni compte).
+- Changement de statut (dont l'approbation) refusé si l'empreinte de l'instantané ne correspond
+  plus.
+- Import en remplacement : historiques divergents (même numéro, révision différente) refusés ;
+  fichiers réutilisés par leur SHA-256 (index `blobs.sha256`) : la photo n'est jamais dupliquée.
+- Brouillon repris d'une révision : statut conservé sauf « Approuvé » (remis à Brouillon, classé
+  changement automatique) ; un plan sous révisions n'imprime jamais son brouillon « Approuvé » et
+  n'offre plus l'approbation dans le cartouche.
+- Objet déplacé ET redimensionné : les deux sont signalés ; catégorie de calque et ordre des vues
+  comparés.
+- Révision approuvée puis archivée : toujours imprimée comme approuvée ; suppression d'un plan avec
+  une révision illisible : deuxième confirmation ; export possible sans les révisions altérées
+  (sur confirmation explicite).
+- Superposition : les repères numérotés sont dessinés en pixels du canevas (vérifié en e2e) ; une
+  même photo n'est décodée qu'une fois (cache partagé, libéré au dernier usage).
+
+### 18.7 Limites
+
+- Pas de signature cryptographique ni de comptes : l'« utilisateur autorisé » est déclaré (nom +
+  confirmation), et un fichier fabriqué avec soin peut recalculer un sceau.
+- Comparaison par identifiant d'objet : un objet supprimé puis redessiné apparaît comme supprimé +
+  ajouté.
+- Tableau des révisions au cartouche limité aux six plus récentes (mention des antérieures).
+- Pas d'objets liés entre plans, ni de fusion d'historiques divergents (refusée à l'import).

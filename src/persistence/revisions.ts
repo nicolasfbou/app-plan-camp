@@ -38,6 +38,7 @@ export async function createRevisionFromDraft(
       const previous = await repo.loadRevision(parent.id);
       changes = changeSummary(
         diffPlans(previous.doc, doc, {
+          beforeRevisionId: parent.id,
           schemaVersions: { before: parent.snapshot.schemaVersion, after: doc.schemaVersion },
         }),
         parent.label,

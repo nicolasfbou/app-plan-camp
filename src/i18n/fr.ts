@@ -752,6 +752,14 @@ export const fr = {
 
   'panel.revisions': 'Révisions',
   'rev.create': 'Créer une révision',
+  'rev.unreadableShort': 'révision illisible',
+  'rev.draftApprovalNote':
+    'Plan sous révisions (brouillon issu de la révision {label}) : l’approbation se fait sur une révision figée, dans l’onglet Révisions.',
+  'rev.exportedWithout': 'Projet exporté SANS les révisions altérées : {labels}.',
+  'rev.damagedExportTitle': 'Révisions altérées',
+  'rev.damagedExportBody':
+    'Ces révisions sont illisibles ou altérées (empreinte ou sceau non conforme) : {labels}. Elles ne peuvent pas être sauvegardées telles quelles. Exporter le projet sans elles ? Elles restent dans ce navigateur.',
+  'rev.damagedExportConfirm': 'Exporter sans elles',
   'rev.createTitle': 'Créer une révision figée',
   'rev.freeze': 'Figer la révision {label}',
   'rev.created': 'Révision {label} figée. Le brouillon reste modifiable.',

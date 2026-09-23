@@ -145,7 +145,7 @@ function CreateRevisionDialog({ onClose }: { onClose(): void }) {
     if (!latest || !doc) return;
     let cancelled = false;
     loadRevisionCached(latest.id).then(
-      (r) => !cancelled && setChanges(summarizeDiff(diffPlans(r.doc, doc))),
+      (r) => !cancelled && setChanges(summarizeDiff(diffPlans(r.doc, doc, { beforeRevisionId: r.meta.id }))),
       () => !cancelled && setChanges(null),
     );
     return () => {
@@ -548,8 +548,8 @@ function RestoreDialog({ meta, onClose }: { meta: RevisionMeta; onClose(): void 
 
   // Changements du brouillon courant qui seraient remplacés.
   const lost = useMemo(
-    () => (snapshot && doc ? diffPlans(snapshot, doc).counts.user : null),
-    [snapshot, doc],
+    () => (snapshot && doc ? diffPlans(snapshot, doc, { beforeRevisionId: meta.id }).counts.user : null),
+    [snapshot, doc, meta.id],
   );
 
   if (!doc) return null;

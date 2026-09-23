@@ -5,7 +5,7 @@
  */
 import { type ReactNode, useEffect, useState } from 'react';
 import { repository } from '@/app/repository.ts';
-import { REVISION_STATUS_LABELS } from '@/domain/revisions/revision.ts';
+import { isApproved, REVISION_STATUS_LABELS } from '@/domain/revisions/revision.ts';
 import { t } from '@/i18n/index.ts';
 import { Button } from '@/ui/Button.tsx';
 import { Modal } from '@/ui/Modal.tsx';
@@ -47,7 +47,12 @@ export function ProtectedDeleteDialog({
         setCounts({
           total: entries.length,
           approved: entries.flatMap((e) =>
-            e.meta?.approval ? [`${e.meta.label} (${REVISION_STATUS_LABELS[e.meta.status]})`] : [],
+            // Révision approuvée (même archivée) ou illisible : deuxième confirmation exigée.
+            !e.meta
+              ? [t('rev.unreadableShort')]
+              : isApproved(e.meta)
+                ? [`${e.meta.label} (${REVISION_STATUS_LABELS[e.meta.status]})`]
+                : [],
           ),
         });
       })

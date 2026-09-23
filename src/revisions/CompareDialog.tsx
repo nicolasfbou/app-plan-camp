@@ -145,6 +145,7 @@ export function CompareDialog({
     () =>
       a.loaded && b.loaded
         ? diffPlans(a.loaded.doc, b.loaded.doc, {
+            beforeRevisionId: a.loaded.meta?.id,
             schemaVersions: {
               before: a.loaded.meta?.snapshot.schemaVersion ?? a.loaded.doc.schemaVersion,
               after: b.loaded.meta?.snapshot.schemaVersion ?? b.loaded.doc.schemaVersion,

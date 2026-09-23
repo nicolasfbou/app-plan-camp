@@ -99,6 +99,8 @@ export function titleBlockRows(
 ): TitleBlockRow[] {
   const b = doc.plan.titleBlock;
   const r = context.revision;
+  // Brouillon d'un plan sous révisions : l'approbation porte sur les révisions figées seulement.
+  const planApproved = b.status === 'approved' && !doc.plan.draftBase;
   const rows: [string, string][] = [
     ['Camp', b.campName || context.siteName],
     ['Titre', context.title || b.title || doc.plan.name],
@@ -108,7 +110,7 @@ export function titleBlockRows(
     ['Préparé par', b.preparedBy],
     ['Auteur', r ? r.author : ''],
     ['Vérifié par', b.checkedBy],
-    ['Approuvé par', r ? r.approvedBy : b.status === 'approved' ? b.approvedBy : ''],
+    ['Approuvé par', r ? r.approvedBy : planApproved ? b.approvedBy : ''],
     ['Date', context.include.date ? displayDate(r ? r.date : b.date, context.now) : ''],
     ['N° de plan', b.planNumber],
     [
@@ -123,7 +125,14 @@ export function titleBlockRows(
     ],
     ['Échelle', context.scaleText],
     ['Nord', context.northText],
-    ['Statut', r ? r.statusLabel : STATUS_LABELS[b.status]],
+    [
+      'Statut',
+      r
+        ? r.statusLabel
+        : b.status === 'approved' && !planApproved
+          ? `${STATUS_LABELS.draft} (non approuvé)`
+          : STATUS_LABELS[b.status],
+    ],
     ['Notes', context.include.notes ? b.notes : ''],
   ];
   const result: TitleBlockRow[] = rows

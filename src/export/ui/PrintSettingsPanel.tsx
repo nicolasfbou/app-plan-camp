@@ -408,12 +408,17 @@ export function TitleBlockSection({ doc, viewId }: { doc: PlanDocument; viewId: 
       <SelectField
         label={t('print.tb.status')}
         value={block.status}
-        options={(Object.keys(STATUS_LABELS) as PlanStatus[]).map((value) => ({
-          value,
-          label: STATUS_LABELS[value],
-        }))}
+        options={(Object.keys(STATUS_LABELS) as PlanStatus[])
+          // Plan sous révisions : l'approbation se fait sur une révision figée, jamais sur le brouillon.
+          .filter((value) => value !== 'approved' || !doc.plan.draftBase || block.status === 'approved')
+          .map((value) => ({ value, label: STATUS_LABELS[value] }))}
         onChange={chooseStatus}
       />
+      {doc.plan.draftBase && (
+        <p className="text-xs text-slate-600" data-testid="draft-approval-note">
+          {t('rev.draftApprovalNote', { label: doc.plan.draftBase.label })}
+        </p>
+      )}
       {block.status === 'approved' && block.approvedAt && (
         <p className="text-xs text-emerald-800" data-testid="approval-info">
           {t('print.tb.approvedBy', { name: block.approvedBy, date: formatDateTime(block.approvedAt) })}

@@ -46,7 +46,12 @@ function useDraftChanges(latest: RevisionMeta | undefined): { count: number | nu
     let cancelled = false;
     const timer = setTimeout(() => {
       loadRevisionCached(latest.id).then(
-        (r) => !cancelled && setState({ count: diffPlans(r.doc, doc).counts.user, error: false }),
+        (r) =>
+          !cancelled &&
+          setState({
+            count: diffPlans(r.doc, doc, { beforeRevisionId: r.meta.id }).counts.user,
+            error: false,
+          }),
         () => !cancelled && setState({ count: null, error: true }),
       );
     }, 400);
