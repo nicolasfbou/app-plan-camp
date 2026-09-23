@@ -189,7 +189,11 @@ export function applyTemplate(
     }
   }
   const b = doc.plan.titleBlock;
-  Object.assign(b, { ...template.titleBlock });
+  // Champs d'entreprise : un champ vide du modèle ne remplace jamais celui du plan (ex. notes).
+  const { placement, ...fields } = template.titleBlock;
+  for (const [key, value] of Object.entries(fields) as [keyof typeof fields, string][])
+    if (value.trim()) b[key] = value;
+  b.placement = placement;
   // Logo du modèle s'il en a un ; sinon le logo du plan est conservé.
   if (template.logo) b.logoAssetId = options.logoAssetId;
   doc.plan.legend = structuredClone(template.legend);

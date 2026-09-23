@@ -83,7 +83,22 @@ Règle : le parcours complet doit être fiable avant toute fonction avancée.
   simplifié, sans fond), PNG / JPG, aperçu fidèle avec avertissements ; schéma v4
 - Démonstration sur la photo réelle du Camp 105 (`bench/camp105-phase5.mjs`)
 
+## Phase 6 — Utilisation quotidienne et lisibilité ✅
+
+- Vues par public (Employés, Fournisseurs, Direction, Sécurité / urgence, personnalisée) : filtre et
+  réglages d'impression propres, sans jamais modifier le plan ; éléments exclus par vue
+- Styles d'impression : Terrain, Présentation client, Fournisseur, Employés, Noir et blanc
+- Lisibilité dans l'éditeur (même moteur que le PDF) ; placement proposé des étiquettes, accepté ou
+  refusé, avec ligne de renvoi
+- Modèles d'entreprise `.campmodele` ; plan créé depuis un modèle ; styles d'entreprise
+- Export groupé (PDF par public, .zip ou PDF multi-pages) ; variantes été / hiver ; schéma v5
+- Démonstration sur la photo réelle du Camp 105 (`bench/camp105-phase6.mjs`)
+
+## Phase 7 — Révisions (prévue)
+
+Versions figées A / B / C, comparaison, restauration, approbation et traçabilité.
+
 ## V2
 
-Modèles réutilisables, mode hiver, rendu par tuiles des très grandes images (au-delà des limites du
-navigateur), polices italiques dans le PDF, plusieurs pages.
+Objets partagés entre plans (été / hiver), rendu par tuiles des très grandes images (au-delà des limites du
+navigateur), polices italiques dans le PDF, collaboration et serveur.

@@ -296,10 +296,12 @@ describe('modèles réutilisables', () => {
 
     const target = photoDoc();
     target.plan.titleBlock.status = 'review';
+    target.plan.titleBlock.notes = 'Notes propres au plan';
     const objectsBefore = JSON.stringify(target.objects);
     applyTemplate(target, template, { restyleExisting: false, logoAssetId: null });
     expect(target.plan.titleBlock.company).toBe('PAMM');
     expect(target.plan.titleBlock.status).toBe('review'); // jamais modifié par un modèle
+    expect(target.plan.titleBlock.notes).toBe('Notes propres au plan'); // champ vide du modèle : conservé
     expect(target.plan.print.paper).toBe('a3');
     expect(target.plan.views).toHaveLength(1);
     expect(target.plan.views[0]!.print.excludedLayerIds).toEqual([

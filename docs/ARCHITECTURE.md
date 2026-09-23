@@ -787,3 +787,61 @@ de dessin, pas une conformité réglementaire.
 `setPlanStatus` refuse « Approuvé » sans nom d'approbateur ET confirmation explicite d'autorisation
 (boîte dédiée) ; la date est enregistrée ; tout autre statut retire l'approbation ; une copie de plan
 redevient « Brouillon ». Aucun code ne l'attribue automatiquement.
+
+## 17. Utilisation quotidienne et lisibilité (phase 6)
+
+### 17.1 Modèle (schéma v5)
+
+| Ajout                              | Contenu                                                                                                                                             |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `plan.views[]`                     | vue par public : nom, public, titre imprimé, mention du public, position du cartouche, légende, réglages d'impression complets                      |
+| `print.style`                      | préréglage + atténuation / contraste de la photo, noir et blanc, épaisseur des traits, taille minimale des textes, pictogrammes, légende simplifiée |
+| `print.detail`                     | complet ; standard (sans cotes ni noms de zones) ; simplifié (en plus, sans textes libres ni pictogrammes de corridor)                              |
+| `print.excludedObjectIds`          | éléments exclus d'une vue                                                                                                                           |
+| `plan.styleOverrides`              | styles d'entreprise par modèle d'objet (couleurs, opacités, pointillés, hachures — jamais l'épaisseur)                                              |
+| `plan.variantOf`                   | origine d'une variante (plan, nom, type, date)                                                                                                      |
+| `readabilityReviews[]`             | problèmes de lisibilité vérifiés ou ignorés (clé stable : type + objets)                                                                            |
+| `text.leaderTo`, `zone.nameOffset` | étiquette écartée de ce qu'elle désigne, reliée par une ligne de renvoi                                                                             |
+| types de plans                     | + Fournisseurs, Employés, Direction (Été / Hiver / Déneigement existaient)                                                                          |
+
+Migration 4 → 5 : aucune vue, style « standard » (rendu strictement inchangé), détail complet, rien
+d'exclu, étiquettes à leur place.
+
+### 17.2 Vues par public
+
+Une vue est un FILTRE (calques exclus, éléments exclus, niveau de détail) et un jeu de réglages
+d'impression ; elle ne copie jamais les objets. La vue affichée est un état de l'éditeur
+(`activeViewId`), pas du document : changer de vue ne modifie jamais le plan (testé). Dans
+l'éditeur, les objets masqués par la vue ne sont ni dessinés, ni sélectionnables, ni accrochés ;
+les modifications s'appliquent toujours au plan de base (bandeau de rappel). Chaque export
+utilise les réglages EFFECTIFS de sa vue (`effectiveSettings`).
+
+### 17.3 Style d'impression (rendu seulement)
+
+Voile blanc vectoriel sur la photo ; contraste et gris calculés sur une COPIE des pixels (jamais
+l'original, qui n'est alors plus intégré tel quel) ; noir et blanc : surface qui convertit toutes les
+couleurs en luminance, pictogrammes rastérisés en gris ; traits × facteur ; textes agrandis jusqu'à
+la taille minimale ; pictogrammes et flèches × facteur ; légende compacte. « Standard » est neutre.
+
+### 17.4 Lisibilité
+
+`analyzeReadability` exécute la MÊME mise en page que le PDF sur une surface qui ne dessine rien
+et relève la boîte de chaque texte et de chaque pictogramme, rattachée à son objet (`owner`). On
+en déduit les chevauchements texte / texte, texte / pictogramme, pictogramme / pictogramme, les
+textes coupés ou trop petits, et les débordements (légende, cartouche, titre). Dans la démo Camp 105,
+les résultats de l'éditeur et ceux du contrôle indépendant des PDF coïncident exactement.
+`proposeLabelPlacement` cherche autour de ce que l'étiquette désigne un emplacement qui évite les
+textes, les pictogrammes et les bâtiments (ligne de renvoi si elle s'éloigne) ; la proposition
+s'affiche en vert et n'est appliquée qu'après « Accepter » (une action annulable).
+
+### 17.5 Modèles, export groupé, variantes
+
+- **Modèles** (`.campmodele`, ZIP vérifié par SHA-256) : cartouche (champs d'entreprise ; un champ
+  vide du modèle ne remplace jamais celui du plan ; jamais de statut ni d'approbation), logo
+  (vérifié), calques (désignés par catégorie), légende, styles, vues, impression. Aucun objet ni
+  photo. Stockés dans IndexedDB (`templates`) ; plan créé depuis un modèle.
+- **Export groupé** : un PDF par vue dans une archive .zip, ou un PDF multi-pages (une page par vue,
+  chacune à son format ; police et images communes intégrées une fois, clés d'images uniques).
+- **Variantes** : copie complète (objets, calques, vues, réglages), puis plans indépendants ; photo
+  partagée ; la variante repart en brouillon et garde la trace de son origine. Pas encore d'objets
+  partagés entre plans.
