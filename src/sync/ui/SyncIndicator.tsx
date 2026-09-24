@@ -50,6 +50,11 @@ export function SyncIndicator({ compact = false }: { compact?: boolean }) {
         type="button"
         data-testid="sync-indicator"
         data-state={state}
+        // Points de synchronisation observables (tests, diagnostic) : cycle en cours, opérations en
+        // file, fin du dernier cycle réussi.
+        data-syncing={store.engine?.syncing ? 'true' : 'false'}
+        data-pending={store.operations.length}
+        data-last-sync={store.engine?.lastSyncAt ?? ''}
         title={label}
         onClick={() => setOpen(true)}
         className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${STYLE[state]}`}

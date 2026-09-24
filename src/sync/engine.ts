@@ -66,6 +66,10 @@ export class SyncEngine {
     lastError: null,
   };
   private running: Promise<void> | null = null;
+  /** Cycle demandé pendant un cycle en cours. */
+  private rerun = false;
+  /** Incrémenté à chaque remise à zéro des délais (retour du réseau, « Synchroniser maintenant »). */
+  private backoffEpoch = 0;
 
   constructor(private readonly deps: EngineDeps) {
     this.outbox = new Outbox(deps.raw.sync, deps.orgId);
@@ -85,25 +89,43 @@ export class SyncEngine {
     this.post({ type: 'status', status: this.status });
   }
 
-  /** Un cycle complet (envoi puis réception). Jamais deux cycles en même temps. */
+  /**
+   * Un cycle complet (envoi puis réception). Jamais deux cycles en même temps ; une demande qui
+   * arrive PENDANT un cycle n'est jamais perdue : un nouveau cycle suit immédiatement (la
+   * promesse rendue ne se résout qu'après lui).
+   */
   runOnce(): Promise<void> {
-    this.running ??= (async () => {
-      this.setStatus({ syncing: true });
+    if (this.running) {
+      this.rerun = true;
+      return this.running;
+    }
+    this.running = (async () => {
       try {
-        await this.push();
-        if (this.status.reachable && !this.status.authRequired) {
-          await this.pull();
-          await this.applyDeferredPulls();
-          this.setStatus({ lastSyncAt: new Date(this.now()).toISOString(), lastError: null });
-        }
-      } catch (error) {
-        this.handleTransport(error);
+        do {
+          this.rerun = false;
+          await this.cycle();
+        } while (this.rerun);
       } finally {
-        this.setStatus({ syncing: false });
         this.running = null;
       }
     })();
     return this.running;
+  }
+
+  private async cycle(): Promise<void> {
+    this.setStatus({ syncing: true });
+    try {
+      await this.push();
+      if (this.status.reachable && !this.status.authRequired) {
+        await this.pull();
+        await this.applyDeferredPulls();
+        this.setStatus({ lastSyncAt: new Date(this.now()).toISOString(), lastError: null });
+      }
+    } catch (error) {
+      this.handleTransport(error);
+    } finally {
+      this.setStatus({ syncing: false });
+    }
   }
 
   private handleTransport(error: unknown) {
@@ -129,6 +151,7 @@ export class SyncEngine {
         waiting.add(own);
         continue;
       }
+      const epoch = this.backoffEpoch;
       try {
         if (!op.attempted) await this.outbox.update(op.seq!, { attempted: true });
         const outcome = await this.execute(op);
@@ -140,7 +163,9 @@ export class SyncEngine {
         if (error instanceof ApiError && error.network) {
           await this.outbox.update(op.seq!, {
             retryCount: op.retryCount + 1,
-            nextAttemptAt: this.now() + backoff(op.retryCount),
+            // Réseau revenu PENDANT cet essai (délais remis à zéro entre-temps) : l'échec concerne
+            // l'ancien état du réseau ; aucun délai n'est imposé au prochain essai.
+            nextAttemptAt: epoch === this.backoffEpoch ? this.now() + backoff(op.retryCount) : 0,
             lastError: 'Serveur injoignable : nouvel essai automatique.',
           });
           this.setStatus({ reachable: false, lastError: error.message });
@@ -854,6 +879,7 @@ export class SyncEngine {
 
   /** Réseau revenu ou demande explicite : les opérations en attente de nouvel essai repartent tout de suite. */
   async resetBackoff() {
+    this.backoffEpoch++;
     for (const op of await this.outbox.list())
       if (op.status === 'pending' && op.nextAttemptAt > 0)
         await this.outbox.update(op.seq!, { nextAttemptAt: 0 });

@@ -36,6 +36,9 @@ export function registerStatic(app: FastifyInstance, dir: string) {
     let file = resolve(join(root, path === '/' ? 'index.html' : path));
     if (!file.startsWith(root + sep) && file !== root) return reply.status(404).send();
     let info = await stat(file).catch(() => null);
+    // Fichier absent (ex. morceau JavaScript d'une ancienne construction) : 404, jamais la page
+    // d'accueil à la place (un script recevant du HTML échouerait de façon trompeuse).
+    if (!info?.isFile() && extname(path) !== '') return reply.status(404).send();
     if (!info?.isFile()) {
       file = join(root, 'index.html');
       info = await stat(file).catch(() => null);

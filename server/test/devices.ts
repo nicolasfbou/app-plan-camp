@@ -18,6 +18,12 @@ export interface NetworkControl {
   failNext?: (method: string, url: string) => boolean;
   /** La requête arrive et s'exécute, mais la réponse est perdue (double envoi au retour). */
   loseNextResponse?: (method: string, url: string) => boolean;
+  /**
+   * Point de synchronisation déterministe : attendu AVANT l'envoi de la requête (requête « en
+   * vol » tant que la promesse n'est pas résolue ; si elle est rejetée, la requête échoue comme
+   * une coupure réseau).
+   */
+  beforeRequest?: (method: string, url: string) => Promise<void> | undefined;
   requests: string[];
 }
 
@@ -26,6 +32,8 @@ export function injectFetch(app: FastifyInstance, getCookie: () => string, net: 
     const url = String(input);
     const method = (init.method ?? 'GET').toUpperCase();
     net.requests.push(`${method} ${url}`);
+    const gate = net.beforeRequest?.(method, url);
+    if (gate) await gate.catch(() => Promise.reject(new TypeError('network interrupted')));
     if (!net.online) throw new TypeError('Failed to fetch');
     if (net.failNext?.(method, url)) {
       net.failNext = undefined;

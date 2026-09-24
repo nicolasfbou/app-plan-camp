@@ -36,14 +36,17 @@ export default defineConfig({
     {
       command: 'npm run build && npm run preview -- --port 4173 --strictPort',
       url: 'http://localhost:4173',
-      reuseExistingServer: !process.env.CI,
+      // Jamais un serveur déjà lancé : il pourrait servir une ancienne construction (cause
+      // d'échecs trompeurs juste après une reconstruction). Port occupé = erreur explicite.
+      reuseExistingServer: false,
       timeout: 180_000,
     },
     {
       // Sert `dist/` (construit par la commande précédente, prête avant le début des tests).
       command: 'PORT=8787 npx tsx --tsconfig server/tsconfig.json server/scripts/e2e-server.ts',
       url: 'http://localhost:8787/api/health',
-      reuseExistingServer: !process.env.CI,
+      // Serveur et base neufs à chaque exécution, démarrés APRÈS la construction (tâches en série).
+      reuseExistingServer: false,
       timeout: 180_000,
     },
   ],

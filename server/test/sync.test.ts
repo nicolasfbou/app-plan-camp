@@ -381,3 +381,37 @@ describe('revue indépendante : aucune perte silencieuse', () => {
     b.close();
   });
 });
+
+describe('stabilité : relance pendant un cycle en cours', () => {
+  it('retour du réseau PENDANT un envoi en échec : la relance n’est pas perdue, l’envoi repart aussitôt', async () => {
+    const a = await device(h, 'gestion@pamm.test', h.orgA.id);
+    const { doc } = await newLocalPlan(a);
+    await a.sync();
+    // Long hors ligne : plusieurs échecs, délai d'attente devenu long (32 s).
+    a.net.online = false;
+    await edit(a, doc.plan.id, 'hors ligne longtemps');
+    const [op] = await a.engine.outbox.list();
+    await a.engine.outbox.update(op!.seq!, { retryCount: 4, nextAttemptAt: 0 });
+    // Un cycle démarre encore hors ligne : sa requête est « en vol » quand le réseau revient.
+    let release!: (ok: boolean) => void;
+    const inFlight = new Promise<void>((resolve, reject) => (release = (ok) => (ok ? resolve() : reject())));
+    inFlight.catch(() => undefined);
+    a.net.beforeRequest = (m, u) => (m === 'PUT' && u.startsWith('/api/plans/') ? inFlight : undefined);
+    const puts = () => a.net.requests.filter((r) => r.startsWith('PUT /api/plans/')).length;
+    const before = puts();
+    const first = a.engine.runOnce();
+    await expect.poll(puts).toBe(before + 1);
+    // Retour du réseau (évènement « online ») : délais remis à zéro, cycle demandé.
+    a.net.online = true;
+    await a.engine.resetBackoff();
+    const second = a.engine.runOnce();
+    // La requête partie hors ligne échoue APRÈS la remise à zéro.
+    a.net.beforeRequest = undefined;
+    release(false);
+    await Promise.all([first, second]);
+    // Attendu : le cycle demandé au retour du réseau a bien eu lieu → modification envoyée.
+    expect(await a.engine.outbox.list()).toHaveLength(0);
+    expect(await serverVersions(doc.plan.id)).toEqual([1, 2]);
+    a.close();
+  });
+});

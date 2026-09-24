@@ -45,9 +45,15 @@ async function label(page: Page, at: [number, number], text: string) {
 }
 
 const indicator = (page: Page) => page.getByTestId('sync-indicator').first();
-const expectSynced = (page: Page, timeout = 30_000) =>
-  expect(indicator(page)).toHaveAttribute('data-state', 'synced', { timeout });
-
+/**
+ * Point de synchronisation déterministe : état « synchronisé », AUCUN cycle en cours (aucune
+ * requête en vol) et file vide. Jamais une simple attente de durée.
+ */
+async function expectSynced(page: Page, timeout = 30_000) {
+  await expect(indicator(page)).toHaveAttribute('data-state', 'synced', { timeout });
+  await expect(indicator(page)).toHaveAttribute('data-syncing', 'false', { timeout });
+  await expect(indicator(page)).toHaveAttribute('data-pending', '0', { timeout });
+}
 async function campWithPhoto(page: Page, camp: string) {
   await createCamp(page, camp);
   await createPlan(page, 'Circulation');
@@ -112,27 +118,34 @@ test.describe('Phase 9 — comptes, organisation, synchronisation', () => {
     await expectSynced(pa);
     // Second ordinateur : ouvre le même plan (reçu du serveur).
     await login(pb, 'edition@pamm.test');
-    await expect(pb.getByRole('link', { name: new RegExp(camp) })).toBeVisible({ timeout: 30_000 });
+    // Point de synchronisation : premier cycle COMPLET de B terminé → plan reçu à sa dernière
+    // version (jamais de navigation vers un plan pas encore arrivé).
+    await expectSynced(pb);
+    await expect(pb.getByRole('link', { name: new RegExp(camp) })).toBeVisible();
     await pb.goto(url.replace('http://localhost:8787', ''));
     await waitForBackground(pb);
+    const baseVersion = (await (await pb.request.get(`/api/plans/${planIdOf(url)}`)).json()).serverVersion;
+    // A : aucune requête en vol au moment de la coupure.
+    await expectSynced(pa);
     // A hors ligne modifie ; B modifie en ligne.
     await a.setOffline(true);
     await label(pa, [300, 300], 'VERSION-A');
     await waitSaved(pa);
     await label(pb, [600, 300], 'VERSION-B');
     await waitSaved(pb);
-    // La version de B est sur le serveur AVANT que A revienne en ligne.
+    // Point de synchronisation : la version de B est sur le serveur (B entièrement synchronisé,
+    // version serveur avancée d'exactement un envoi, contenu vérifié) AVANT le retour de A.
+    // (Condition interrogée, pas une durée : l'indicateur de B peut ne pas encore refléter l'envoi.)
+    const serverPlan = async () =>
+      (await (await pb.request.get(`/api/plans/${planIdOf(url)}`)).json()) as {
+        serverVersion: number;
+        document: { objects: Record<string, { text?: string }> };
+      };
     await expect
-      .poll(
-        async () => {
-          const json = (await (await pb.request.get(`/api/plans/${planIdOf(url)}`)).json()) as {
-            document: { objects: Record<string, { text?: string }> };
-          };
-          return Object.values(json.document.objects).some((o) => o.text === 'VERSION-B');
-        },
-        { timeout: 30_000 },
-      )
-      .toBe(true);
+      .poll(async () => (await serverPlan()).serverVersion, { timeout: 30_000 })
+      .toBe(baseVersion + 1);
+    const server = await serverPlan();
+    expect(Object.values(server.document.objects).some((o) => o.text === 'VERSION-B')).toBe(true);
     await a.setOffline(false);
     await expect(indicator(pa)).toHaveAttribute('data-state', 'conflict', { timeout: 30_000 });
     await pa.getByTestId('open-sync-conflict').click();
