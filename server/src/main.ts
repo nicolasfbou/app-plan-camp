@@ -3,16 +3,14 @@
  * Applique les migrations (rôle propriétaire), puis sert l'API (rôle applicatif) et l'application.
  */
 import { buildApp } from './app.ts';
-import { loadConfig, resolveFileSecrets } from './config.ts';
+import { applyFileSecretsToEnv, loadConfig } from './config.ts';
 import { assertRowSecurityApplies, createPool } from './db.ts';
 import { migrate } from './migrate.ts';
 import { createStorage } from './storage/storage.ts';
 
 // Secrets montés en fichiers (`*_FILE`) : les identifiants S3 sont lus par le SDK dans
 // l'environnement du processus.
-const env = resolveFileSecrets(process.env);
-for (const name of ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'] as const)
-  if (env[name] && !process.env[name]) process.env[name] = env[name];
+applyFileSecretsToEnv();
 const config = loadConfig();
 if (!config.databaseUrl) {
   console.error('DATABASE_URL manquant.');

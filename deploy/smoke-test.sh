@@ -47,7 +47,9 @@ echo "après redémarrage : $AGAIN"; [ "$SHA" = "$AGAIN" ]
 
 say "5. Sauvegarde complète (base + fichiers) puis vérification"
 STAMP="essai-$(date +%Y%m%d-%H%M%S)"
-mkdir -p backups && chmod 777 backups
+# Dossier des sauvegardes : réservé au compte du conteneur (uid 1000), jamais lisible par tous.
+mkdir -p backups && chmod 700 backups
+$DC --profile ops run --rm --no-deps --user 0 --entrypoint chown ops 1000:1000 /backups
 $DC --profile ops run --rm ops server/scripts/backup.ts backup --out "/backups/$STAMP" | tail -4
 $DC --profile ops run --rm ops server/scripts/backup.ts verify --from "/backups/$STAMP"
 

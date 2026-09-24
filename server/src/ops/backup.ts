@@ -14,7 +14,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import pg from 'pg';
@@ -53,6 +53,17 @@ const DIGESTS: Record<string, string> = {
   audit_events:
     "SELECT coalesce(string_agg(id || ':' || action || ':' || target_id || ':' || extract(epoch FROM at)::text, ',' ORDER BY id), '') FROM audit_events",
   users: "SELECT coalesce(string_agg(email || ':' || status, ',' ORDER BY email), '') FROM users",
+  // Contenu intégral (et pas seulement l'empreinte annoncée) : réduit à un MD5 par table.
+  plan_documents:
+    "SELECT md5(coalesce(string_agg(plan_id || ':' || version || ':' || md5(document::text), ',' ORDER BY plan_id, version), '')) FROM plan_versions",
+  revision_snapshots:
+    "SELECT md5(coalesce(string_agg(revision_id || ':' || md5(json), ',' ORDER BY organization_id, revision_id), '')) FROM revision_snapshots",
+  templates:
+    "SELECT md5(coalesce(string_agg(id || ':' || server_version || ':' || md5(body::text) || ':' || coalesce(logo_sha256, ''), ',' ORDER BY organization_id, id), '')) FROM templates",
+  memberships:
+    "SELECT md5(coalesce(string_agg(organization_id || ':' || user_id || ':' || role || ':' || status || ':' || access_epoch, ',' ORDER BY organization_id, user_id), '')) FROM memberships",
+  user_identities:
+    "SELECT md5(coalesce(string_agg(user_id || ':' || provider || ':' || subject || ':' || md5(coalesce(secret_hash, '')), ',' ORDER BY user_id, provider, subject), '')) FROM user_identities",
 };
 
 export interface BackupFile {
@@ -81,6 +92,22 @@ const sha256File = async (path: string) => {
   await pipeline(createReadStream(path), hash);
   return hash.digest('hex');
 };
+
+/**
+ * Adresse de connexion pour pg_dump/pg_restore SANS mot de passe (visible dans la liste des
+ * processus sinon) : le mot de passe passe par la variable PGPASSWORD du seul processus enfant.
+ */
+function pgTarget(databaseUrl: string): { dbname: string; env: NodeJS.ProcessEnv } {
+  try {
+    const url = new URL(databaseUrl);
+    if (!url.password) return { dbname: databaseUrl, env: {} };
+    const password = decodeURIComponent(url.password);
+    url.password = '';
+    return { dbname: url.toString(), env: { PGPASSWORD: password } };
+  } catch {
+    return { dbname: databaseUrl, env: {} };
+  }
+}
 
 function run(cmd: string, args: string[], env: NodeJS.ProcessEnv = {}): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -114,7 +141,11 @@ export async function backup(options: {
 }): Promise<BackupManifest> {
   const pgBin = options.pgBin ?? process.env.PG_BIN ?? '';
   const bin = (name: string) => (pgBin ? join(pgBin, name) : name);
-  await mkdir(join(options.outDir, 'files'), { recursive: true });
+  // Sauvegarde = données de TOUTES les organisations et empreintes de mots de passe : lisible
+  // par le seul compte qui l'a produite.
+  await mkdir(options.outDir, { recursive: true, mode: 0o700 });
+  await chmod(options.outDir, 0o700);
+  await mkdir(join(options.outDir, 'files'), { recursive: true, mode: 0o700 });
   const client = new pg.Client({ connectionString: options.databaseUrl });
   await client.connect();
   try {
@@ -123,13 +154,19 @@ export async function backup(options: {
     await client.query('SET LOCAL row_security = off');
     const snapshot = (await client.query<{ s: string }>('SELECT pg_export_snapshot() AS s')).rows[0]!.s;
     const dumpPath = join(options.outDir, 'database.dump');
-    await run(bin('pg_dump'), [
-      '--format=custom',
-      '--no-password',
-      `--snapshot=${snapshot}`,
-      `--file=${dumpPath}`,
-      `--dbname=${options.databaseUrl}`,
-    ]);
+    const conn = pgTarget(options.databaseUrl);
+    await run(
+      bin('pg_dump'),
+      [
+        '--format=custom',
+        '--no-password',
+        `--snapshot=${snapshot}`,
+        `--file=${dumpPath}`,
+        `--dbname=${conn.dbname}`,
+      ],
+      conn.env,
+    );
+    await chmod(dumpPath, 0o600);
     const migrations = (
       await client.query<{ name: string }>('SELECT name FROM schema_migrations ORDER BY name')
     ).rows.map((r) => r.name);
@@ -150,13 +187,13 @@ export async function backup(options: {
     for (const row of rows) {
       const rel = join('files', row.organization_id, row.sha256);
       const target = join(options.outDir, rel);
-      await mkdir(join(options.outDir, 'files', row.organization_id), { recursive: true });
+      await mkdir(join(options.outDir, 'files', row.organization_id), { recursive: true, mode: 0o700 });
       const stream = await options.storage.get(row.storage_key);
       if (!stream)
         throw new Error(`Fichier absent du stockage : ${row.storage_key} (sauvegarde incomplète refusée).`);
       const hash = createHash('sha256');
       stream.on('data', (chunk: Buffer) => hash.update(chunk));
-      await pipeline(stream, createWriteStream(target));
+      await pipeline(stream, createWriteStream(target, { mode: 0o600 }));
       const digest = hash.digest('hex');
       const size = (await stat(target)).size;
       if (digest !== row.sha256 || size !== Number(row.byte_length))
@@ -186,7 +223,9 @@ export async function backup(options: {
       },
       files,
     };
-    await writeFile(join(options.outDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+    await writeFile(join(options.outDir, 'manifest.json'), JSON.stringify(manifest, null, 2), {
+      mode: 0o600,
+    });
     return manifest;
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
@@ -242,13 +281,18 @@ export async function restore(options: {
   } finally {
     await client.end();
   }
-  await run(bin('pg_restore'), [
-    '--exit-on-error',
-    '--no-owner',
-    '--no-password',
-    `--dbname=${options.databaseUrl}`,
-    join(options.fromDir, manifest.database.path),
-  ]);
+  const conn = pgTarget(options.databaseUrl);
+  await run(
+    bin('pg_restore'),
+    [
+      '--exit-on-error',
+      '--no-owner',
+      '--no-password',
+      `--dbname=${conn.dbname}`,
+      join(options.fromDir, manifest.database.path),
+    ],
+    conn.env,
+  );
   // Nouvelle génération : les appareils sauront que l'historique du serveur a été remplacé.
   const gen = new pg.Client({ connectionString: options.databaseUrl });
   await gen.connect();
@@ -260,6 +304,12 @@ export async function restore(options: {
         `INSERT INTO server_meta (key, value) VALUES ('generation', gen_random_uuid()::text)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
       );
+    // Sessions de la sauvegarde fermées : un accès retiré APRÈS la sauvegarde ne doit pas
+    // redevenir utilisable avec un ancien témoin. Chacun se reconnecte (avec ses droits restaurés).
+    await gen.query('BEGIN');
+    await gen.query('SET LOCAL row_security = off');
+    await gen.query('UPDATE sessions SET revoked_at = now() WHERE revoked_at IS NULL');
+    await gen.query('COMMIT');
   } finally {
     await gen.end();
   }

@@ -16,8 +16,10 @@ import { type Deps, requireAuth } from '../app.ts';
 import { audit } from '../audit.ts';
 import { tx } from '../db.ts';
 import { HttpError, notFound } from '../errors.ts';
+import { lockFile } from '../files/purge.ts';
+import { reachableShas } from '../files/reachable.ts';
 import { ALLOWED_TYPES, sniffType, unsafeSvg } from '../files/validate.ts';
-import { allowedCampIds, requirePermission } from '../permissions.ts';
+import { requirePermission } from '../permissions.ts';
 import { fileKey } from '../storage/storage.ts';
 
 const SHA = /^[0-9a-f]{64}$/;
@@ -83,13 +85,11 @@ export function registerFileRoutes(app: FastifyInstance, deps: Deps) {
   app.post('/api/files/check', async (request) => {
     const auth = requireAuth(request);
     const body = z.object({ sha256: z.array(z.string().regex(SHA)).max(1000) }).parse(request.body);
+    // Hors de portée (autre camp) = absent : la personne l'envoie, ce qui prouve qu'elle le possède.
     const present = await tx(deps.pool, { orgId: auth.orgId, userId: auth.userId }, (c) =>
-      c.query<{ sha256: string }>(
-        'SELECT sha256 FROM files WHERE organization_id = $2 AND sha256 = ANY($1)',
-        [body.sha256, auth.orgId],
-      ),
+      reachableShas(c, auth, body.sha256),
     );
-    return { present: present.rows.map((r) => r.sha256) };
+    return { present: body.sha256.filter((s) => present.has(s)) };
   });
 
   app.put<{ Params: { sha256: string } }>(
@@ -129,11 +129,27 @@ export function registerFileRoutes(app: FastifyInstance, deps: Deps) {
         }
         const key = fileKey(auth.orgId, expected);
         const created = await tx(deps.pool, { orgId: auth.orgId, userId: auth.userId }, async (c) => {
+          // Même verrou que le nettoyage (files/purge.ts) : un envoi et une suppression du même
+          // fichier ne se croisent jamais (sinon l'objet réécrit pourrait être effacé ensuite).
+          await lockFile(c, auth.orgId, expected);
           const exists = await c.query('SELECT 1 FROM files WHERE organization_id = $2 AND sha256 = $1', [
             expected,
             auth.orgId,
           ]);
-          if (exists.rowCount) return false;
+          if (exists.rowCount) {
+            // Envoi identique dédoublonné : tracé, il rend le fichier accessible à cette personne
+            // (elle en possède les octets, vérifiés ci-dessus).
+            await audit(c, {
+              orgId: auth.orgId,
+              userId: auth.userId,
+              action: 'file.upload',
+              targetKind: 'file',
+              targetId: expected,
+              requestId: request.id,
+              context: { bytes: received.size, type: actual, deduplicated: true },
+            });
+            return false;
+          }
           // Objet écrit AVANT la ligne (si l'écriture échoue, rien n'est référencé).
           await deps.storage.putFile(key, received.path, { contentType: actual, byteLength: received.size });
           await c.query(
@@ -169,21 +185,10 @@ export function registerFileRoutes(app: FastifyInstance, deps: Deps) {
           [request.params.sha256, auth.orgId],
         )
       ).rows[0];
-      const allowed = await allowedCampIds(c, auth);
-      if (!file || !allowed) return file;
-      // Accès restreint à certains camps : seulement les fichiers d'un plan ou d'une révision de
-      // ces camps, ou d'un modèle de l'organisation.
-      const reachable = await c.query(
-        `SELECT 1 FROM file_refs f
-           LEFT JOIN plans p ON f.owner_kind = 'plan' AND p.organization_id = f.organization_id AND p.id = f.owner_id
-           LEFT JOIN revisions r ON f.owner_kind = 'revision' AND r.organization_id = f.organization_id AND r.id = f.owner_id
-           LEFT JOIN plans rp ON rp.organization_id = r.organization_id AND rp.id = r.plan_id
-          WHERE f.organization_id = $3 AND f.sha256 = $1
-            AND (f.owner_kind = 'template' OR p.camp_id = ANY($2) OR rp.camp_id = ANY($2))
-          LIMIT 1`,
-        [request.params.sha256, [...allowed], auth.orgId],
-      );
-      return reachable.rowCount ? file : undefined;
+      if (!file) return undefined;
+      return (await reachableShas(c, auth, [request.params.sha256])).has(request.params.sha256)
+        ? file
+        : undefined;
     });
     // Fichier d'une autre organisation : même réponse qu'un fichier inexistant.
     if (!row) throw notFound('Fichier');

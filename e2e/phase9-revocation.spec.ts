@@ -68,10 +68,21 @@ test.describe('Phase 9.1 — déconnexion, révocation, données locales', () =>
     expect(await orgDatabases(p1)).toContain(dbName);
     await p2.evaluate(() => ((window as unknown as { __avant: number }).__avant = 1));
 
+    // Traces personnelles hors de la base (journal d'erreurs, nom d'auteur de révision).
+    await p1.evaluate(() => {
+      localStorage.setItem('campplanner.errorLog', '[{"message":"plan PAMM"}]');
+      localStorage.setItem('campplanner.revisionAuthor', 'Personne A');
+    });
     // Déconnexion dans l'onglet 1.
     await p1.getByTestId('logout').click();
     await p1.getByTestId('logout-confirm').click();
     await expect(p1.getByTestId('workspace-select')).toHaveValue('local');
+    expect(
+      await p1.evaluate(() => [
+        localStorage.getItem('campplanner.errorLog'),
+        localStorage.getItem('campplanner.revisionAuthor'),
+      ]),
+    ).toEqual([null, null]);
     // Onglet 2 : base fermée pour de bon, page rechargée (marqueur disparu) sur l'espace local.
     await expect
       .poll(() => p2.evaluate(() => (window as unknown as { __avant?: number }).__avant ?? 0), {

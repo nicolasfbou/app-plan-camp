@@ -9,9 +9,11 @@
  *   MIGRATION_DATABASE_URL=<base vide> STORAGE_DRIVER=… npm run server:backup -- restore --from /sauvegardes/2026-09-24
  */
 import { parseArgs } from 'node:util';
-import { loadConfig } from '../src/config.ts';
+import { applyFileSecretsToEnv, loadConfig } from '../src/config.ts';
 import { backup, restore, verifyBackup } from '../src/ops/backup.ts';
 import { createStorage } from '../src/storage/storage.ts';
+
+applyFileSecretsToEnv();
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,

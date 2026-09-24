@@ -284,7 +284,9 @@ const dc = (args, extra = '') =>
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-execSync('mkdir -p backups && chmod 777 backups', { cwd: DEPLOY });
+execSync('mkdir -p backups && chmod 700 backups', { cwd: DEPLOY });
+// Dossier des sauvegardes réservé au compte du conteneur (uid 1000), jamais lisible par tous.
+dc('--profile ops run --rm --no-deps --user 0 --entrypoint chown ops 1000:1000 /backups');
 const backupOut = dc(`--profile ops run --rm ops server/scripts/backup.ts backup --out /backups/${stamp}`);
 const R = '-p campplanner-restauration';
 dc('down -v', R);

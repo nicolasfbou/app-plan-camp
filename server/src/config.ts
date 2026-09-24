@@ -69,6 +69,16 @@ export function resolveFileSecrets(
   return out;
 }
 
+/**
+ * Pour les points d'entrée (serveur, sauvegarde, nettoyage) : les identifiants S3 montés en
+ * fichiers sont placés dans l'environnement du processus, où le SDK AWS les lit.
+ */
+export function applyFileSecretsToEnv(target: NodeJS.ProcessEnv = process.env): void {
+  const env = resolveFileSecrets(target);
+  for (const name of ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'] as const)
+    if (env[name] && !target[name]) target[name] = env[name];
+}
+
 export function loadConfig(rawEnv: Record<string, string | undefined> = process.env): ServerConfig {
   const env = resolveFileSecrets(rawEnv);
   // Outils d'exploitation (migrations, sauvegarde) : l'URL du propriétaire suffit. Le serveur, lui,

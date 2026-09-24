@@ -25,6 +25,7 @@ import { audit } from '../audit.ts';
 import { type Client, tx } from '../db.ts';
 import { referencedShas, sha256Text, validatePlanDocument } from '../documents.ts';
 import { HttpError, notFound } from '../errors.ts';
+import { reachableShas } from '../files/reachable.ts';
 import { type Auth, can, requireCampAccess, requirePermission } from '../permissions.ts';
 import { logChange } from '../sync.ts';
 import { ID } from './camps.ts';
@@ -214,6 +215,12 @@ export function registerRevisionRoutes(app: FastifyInstance, deps: Deps) {
         if (!plan.rows[0])
           throw new HttpError(409, 'plan-missing', 'Plan absent du serveur : envoyez-le d’abord.');
         await requireCampAccess(c, auth, plan.rows[0].camp_id);
+        if (plan.rows[0].deleted_at)
+          throw new HttpError(
+            409,
+            'plan-deleted',
+            'Ce plan a été supprimé sur le serveur : restaurez-le avant d’y ajouter une révision.',
+          );
         const labels = await c.query<{ label: string }>(
           'SELECT label FROM revisions WHERE organization_id = $2 AND plan_id = $1 AND deleted_at IS NULL',
           [body.planId, auth.orgId],
@@ -225,11 +232,9 @@ export function registerRevisionRoutes(app: FastifyInstance, deps: Deps) {
             `La révision ${meta.label} existe déjà sur le serveur pour ce plan.`,
           );
         const shas = referencedShas(doc);
-        const present = await c.query<{ sha256: string }>(
-          'SELECT sha256 FROM files WHERE organization_id = $2 AND sha256 = ANY($1)',
-          [shas, auth.orgId],
-        );
-        const missing = shas.filter((s) => !present.rows.some((r) => r.sha256 === s));
+        // Présents ET accessibles : un fichier d'un camp hors de portée n'est pas citable.
+        const present = await reachableShas(c, auth, shas);
+        const missing = shas.filter((s) => !present.has(s));
         if (missing.length)
           throw new HttpError(422, 'missing-files', 'Fichiers absents du serveur.', { missing });
         const parent = (

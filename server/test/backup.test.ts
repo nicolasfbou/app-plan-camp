@@ -45,16 +45,18 @@ const svg = Buffer.from(
   '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" fill="#c00"/></svg>',
 );
 const logo = png(4096);
-const expected: { photo: string; revisionApproved: string; planPdf: string } = {
+const expected: { photo: string; revisionApproved: string; planPdf: string; managerCookie: string } = {
   photo: '',
   revisionApproved: '',
   planPdf: '',
+  managerCookie: '',
 };
 
 beforeAll(async () => {
   h = await createHarness();
   dir = mkdtempSync(join(tmpdir(), 'campplanner-backup-'));
   const manager = await h.login('gestion@pamm.test');
+  expected.managerCookie = manager.cookie;
   const adminB = await h.login('admin@autre.test');
   // Plan avec photo, pictogramme SVG, révision APPROUVÉE (compte, date serveur).
   const plan = await seedPlan(manager);
@@ -143,6 +145,22 @@ describe('sauvegarde complète et restauration isolée', () => {
       expect.arrayContaining(['application/pdf', 'image/jpeg', 'image/png', 'image/svg+xml']),
     );
     expect((await verifyBackup(dir)).files.length).toBe(manifest.files.length);
+    // Données de toutes les organisations : dossier et fichiers réservés au compte qui sauvegarde.
+    const { stat } = await import('node:fs/promises');
+    expect((await stat(dir)).mode & 0o777).toBe(0o700);
+    expect((await stat(join(dir, 'database.dump'))).mode & 0o777).toBe(0o600);
+    expect((await stat(join(dir, 'manifest.json'))).mode & 0o777).toBe(0o600);
+    expect((await stat(join(dir, manifest.files[0]!.path))).mode & 0o777).toBe(0o600);
+    // Contenu intégral vérifié (documents, instantanés, modèles, adhésions, identités).
+    expect(Object.keys(manifest.digests)).toEqual(
+      expect.arrayContaining([
+        'plan_documents',
+        'revision_snapshots',
+        'templates',
+        'memberships',
+        'user_identities',
+      ]),
+    );
     // Un fichier altéré dans la sauvegarde est détecté avant toute restauration.
     const victim = join(dir, manifest.files[0]!.path);
     const original = await import('node:fs/promises').then((fs) => fs.readFile(victim));
@@ -186,6 +204,9 @@ describe('sauvegarde complète et restauration isolée', () => {
           payload: { email: 'gestion@pamm.test', password: PASSWORD, deviceMode: 'trusted' },
         });
         expect(login.statusCode).toBe(200); // comptes et mots de passe (hachés) restaurés
+        // Sessions de la sauvegarde fermées : un ancien témoin ne rouvre rien (un accès retiré
+        // après la sauvegarde ne redevient pas utilisable sans nouvelle connexion).
+        expect((await client(app, expected.managerCookie).req('GET', '/api/auth/me')).statusCode).toBe(401);
         const api = client(app, `cp_session=${login.cookies.find((c) => c.name === 'cp_session')!.value}`);
         const photo = await api.req('GET', `/api/files/${expected.photo}`);
         expect(sha256(photo.rawPayload)).toBe(expected.photo);

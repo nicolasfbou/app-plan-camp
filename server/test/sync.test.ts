@@ -459,6 +459,10 @@ describe('révocation d’accès (appareil de confiance)', () => {
       headers: { 'x-campplanner': '1', 'if-match': '1', 'x-operation-epoch': String(epochBefore) },
     });
     expect([401, 409]).toContain(forced.statusCode);
+    // « Garder ma version » ou « copie » ne contournent pas le blocage : refusés tant que les
+    // modifications de la période révoquée n'ont pas été mises de côté.
+    await expect(e.engine.keepMine(doc.plan.id)).rejects.toThrow(/révoqué/);
+    await expect(e.engine.keepBothAsCopy(doc.plan.id, 'Copie')).rejects.toThrow(/révoqué/);
     // « Mettre de côté » : version locale archivée, version serveur reprise, file vide.
     ops = await e.engine.outbox.list();
     for (const op of ops.filter((o) => o.revoked)) await e.engine.discardRevoked(op.seq!);
@@ -569,4 +573,74 @@ describe('serveur restauré depuis une sauvegarde (retour arrière)', () => {
       e.close();
     }
   }, 60_000);
+});
+
+describe('revue 9.1 : en-têtes, génération, relecture interrompue', () => {
+  it('toutes les écritures (camp, fichier, plan) portent la période d’accès et la génération du serveur', async () => {
+    const m = await device(h, 'gestion@pamm.test', h.orgA.id);
+    try {
+      await m.sync(); // première lecture : génération connue
+      m.net.sent = [];
+      await newLocalPlan(m, 'Plan en-têtes');
+      await m.sync();
+      const writes = m.net.sent.filter((r) => r.method !== 'GET');
+      expect(writes.map((r) => r.url.split('/')[2])).toEqual(
+        expect.arrayContaining(['camps', 'files', 'plans']),
+      );
+      for (const w of writes) {
+        expect(w.headers['X-Operation-Epoch'], w.url).toBe(String(m.epoch()));
+        expect(w.headers['X-Server-Generation'], w.url).toMatch(/.+/);
+      }
+    } finally {
+      m.close();
+    }
+  });
+
+  it('génération changée (serveur restauré) : l’envoi préparé avant est refusé, la différence devient un conflit ; relecture interrompue reprise au cycle suivant', async () => {
+    const m = await device(h, 'gestion@pamm.test', h.orgA.id);
+    try {
+      const stable = await newLocalPlan(m, 'Inchangé');
+      const changed = await newLocalPlan(m, 'Modifié hors ligne');
+      await m.sync();
+      // Plan « créé après la sauvegarde » : lié localement, inconnu du serveur restauré.
+      const ghost = await newLocalPlan(m, 'Inconnu du serveur restauré');
+      await m.raw.sync.outbox.clear();
+      await m.raw.sync.syncLinks.put({
+        key: `plan:${ghost.doc.plan.id}`,
+        entityType: 'plan',
+        entityId: ghost.doc.plan.id,
+        serverVersion: 1,
+        syncedAt: new Date().toISOString(),
+      });
+      await edit(m, changed.doc.plan.id, 'préparé avant la restauration');
+      await h.db.owner.query(
+        "UPDATE server_meta SET value = gen_random_uuid()::text WHERE key = 'generation'",
+      );
+      // Relecture interrompue : la lecture du plan modifié échoue (coupure) au premier cycle.
+      let cut = true;
+      m.net.beforeRequest = (method, url) =>
+        cut && method === 'GET' && url.startsWith(`/api/plans/${changed.doc.plan.id}`)
+          ? ((cut = false), Promise.reject(new Error('coupure')))
+          : undefined;
+      await m.sync();
+      expect(await serverVersions(changed.doc.plan.id)).toEqual([1]); // 409 generation : rien d'écrit
+      expect(cut).toBe(false); // la coupure a bien eu lieu pendant la relecture
+      expect((await m.raw.sync.syncState.get('restorePass'))?.value).toBe(true);
+      // Cycle suivant : la relecture reprend et se termine.
+      await m.engine.resetBackoff();
+      await m.sync();
+      expect((await m.raw.sync.syncState.get('restorePass'))?.value).toBe(false);
+      const conflicts = new Map((await m.raw.sync.conflicts.toArray()).map((c) => [c.planId, c.reason]));
+      expect(conflicts.get(changed.doc.plan.id)).toBe('version');
+      expect(conflicts.get(ghost.doc.plan.id)).toBe('deleted');
+      expect(conflicts.has(stable.doc.plan.id)).toBe(false);
+      expect((await m.raw.sync.syncLinks.toArray()).filter((l) => l.restored)).toEqual([]);
+      expect((await m.repo.openPlan(changed.doc.plan.id))!.doc.plan.titleBlock.notes).toBe(
+        'préparé avant la restauration',
+      );
+      expect(await serverVersions(changed.doc.plan.id)).toEqual([1]);
+    } finally {
+      m.close();
+    }
+  });
 });

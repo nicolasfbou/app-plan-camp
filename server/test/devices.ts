@@ -25,6 +25,8 @@ export interface NetworkControl {
    */
   beforeRequest?: (method: string, url: string) => Promise<void> | undefined;
   requests: string[];
+  /** Requêtes envoyées avec leurs en-têtes (vérification des en-têtes de période et de génération). */
+  sent?: { method: string; url: string; headers: Record<string, string> }[];
   /** Autre serveur (ex. serveur restauré depuis une sauvegarde) : remplace celui du départ. */
   app?: FastifyInstance;
 }
@@ -45,6 +47,7 @@ export function injectFetch(app: FastifyInstance, getCookie: () => string, net: 
     if (init.body !== undefined && init.body !== null)
       payload = Buffer.from(await new Response(init.body as BodyInit).arrayBuffer());
     const headers: Record<string, string> = { ...(init.headers as Record<string, string>) };
+    net.sent?.push({ method, url, headers: { ...headers } });
     const cookie = getCookie();
     if (cookie) headers.cookie = cookie;
     const r = await (net.app ?? app).inject({

@@ -89,6 +89,25 @@ export async function buildApp(
           'Modification faite pendant une période où votre accès a été révoqué : elle n’est pas acceptée automatiquement.',
         );
     }
+    // Serveur restauré depuis une sauvegarde : une écriture préparée contre l'ancienne génération
+    // attend que le client ait relu l'état restauré (jamais d'écrasement silencieux).
+    const clientGeneration = request.headers['x-server-generation'];
+    if (
+      request.auth &&
+      request.method !== 'GET' &&
+      typeof clientGeneration === 'string' &&
+      clientGeneration
+    ) {
+      const current = await full.pool.query<{ value: string }>(
+        "SELECT value FROM server_meta WHERE key = 'generation'",
+      );
+      if (current.rows[0] && current.rows[0].value !== clientGeneration)
+        throw new HttpError(
+          409,
+          'generation',
+          'Le serveur a été restauré depuis une sauvegarde : la synchronisation relit d’abord son état.',
+        );
+    }
   });
 
   app.setErrorHandler((error, request, reply) => {

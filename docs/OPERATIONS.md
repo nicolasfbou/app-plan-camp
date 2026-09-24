@@ -147,6 +147,18 @@ Contenu du dossier :
 La liste des fichiers est lue dans le **même instantané** que l'export : la base et les fichiers
 sauvegardés sont cohérents entre eux.
 
+Protection de la sauvegarde : elle contient les données de **toutes** les organisations et les
+empreintes des mots de passe.
+
+- Dossier créé en `0700`, fichiers en `0600` : lisibles par le seul compte qui sauvegarde (dans
+  Docker, `node`, uid 1000). Préparer le dossier de l'hôte ainsi, jamais en `777` :
+  `mkdir -p deploy/backups && chmod 700 deploy/backups`, puis
+  `docker compose … --profile ops run --rm --no-deps --user 0 --entrypoint chown ops 1000:1000 /backups`.
+- Mot de passe de la base transmis à `pg_dump` / `pg_restore` par la variable `PGPASSWORD` du seul
+  processus enfant, jamais dans ses arguments (visibles dans la liste des processus).
+- `deploy/backups`, `*.dump` et `.env*` sont exclus de Git et du contexte de construction Docker.
+- Copie hors de l'hôte : chiffrée (par exemple `age` ou le chiffrement du compartiment de destination).
+
 Recommandations :
 
 - une sauvegarde par jour, conservée hors de l'hôte (autre site ou autre compte cloud) ;
@@ -173,8 +185,19 @@ La restauration :
 - vérifie la sauvegarde avant de commencer ;
 - restaure la base (`pg_restore`), puis dépose les fichiers dans le stockage cible, qui peut être
   un autre pilote (disque vers S3 ou l'inverse) ;
-- **vérifie ensuite** : comptes par table, empreintes de contenu, et chaque fichier relu depuis le
-  stockage cible et comparé par SHA-256.
+- donne au serveur une **nouvelle génération** : chaque appareil sait que l'historique a été
+  remplacé ; ses envois préparés avant sont refusés (`409 generation`) tant qu'il n'a pas tout
+  relu, et chaque différence devient un conflit (jamais d'écrasement) ;
+- **ferme toutes les sessions** présentes dans la sauvegarde : chacun se reconnecte ;
+- **vérifie ensuite** : comptes par table, empreintes de contenu (y compris le texte intégral des
+  documents de plans, les instantanés de révisions, les modèles, les adhésions et les
+  identités), et chaque fichier relu depuis le stockage cible et comparé par SHA-256.
+
+**Accès modifiés APRÈS la sauvegarde** : la base restaurée revient à l'état des droits de la
+sauvegarde. Un compte suspendu, un rôle réduit ou une invitation révoquée depuis redevient tel
+qu'il était. Avant de rouvrir le service, l'administrateur doit **réappliquer** ces changements
+(liste : journal d'audit de l'ancien serveur, actions `member.disable`, `member.role`,
+`member.invite.revoke`).
 
 Tout écart est listé et le code de sortie est non nul.
 
@@ -239,7 +262,9 @@ Ne supprime **que** les fichiers qu'aucun plan, révision ni modèle n'a jamais 
 un envoi abandonné, et seulement après le délai de grâce. Les références s'accumulent sur tout
 l'historique : un fichier cité par une ancienne version ou par un plan supprimé (logiquement,
 donc restaurable) est protégé. Chaque suppression est inscrite au journal d'audit
-(`file.purge`). Ne pas lancer pendant une sauvegarde.
+(`file.purge`). Un verrou par fichier est partagé avec l'envoi : un envoi du même fichier pendant
+le nettoyage attend, puis le recrée ; si l'objet ne peut pas être supprimé du stockage, la ligne
+est conservée (jamais une référence vers un objet absent). Ne pas lancer pendant une sauvegarde.
 
 ## 10. Ce qui n'a PAS été fait
 

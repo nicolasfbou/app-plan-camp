@@ -82,12 +82,16 @@ export class SyncEngine {
   }
   /** Période d'accès de l'opération en cours d'envoi (en-tête vérifié par le serveur). */
   private opEpoch: number | undefined;
+  /** Génération du serveur connue de cet appareil (voir pull / markRestored). */
+  private generation: string | undefined;
   private request<T>(...args: Parameters<Api['request']>): Promise<T> {
     const [method, path, options = {}] = args;
-    const headers =
-      this.opEpoch === undefined
-        ? options.headers
-        : { ...options.headers, 'X-Operation-Epoch': String(this.opEpoch) };
+    const extra: Record<string, string> = {};
+    if (this.opEpoch !== undefined) extra['X-Operation-Epoch'] = String(this.opEpoch);
+    // Écritures : refusées par le serveur s'il a été restauré depuis (409 « generation ») —
+    // jamais un envoi fondé sur des versions d'avant la restauration.
+    if (method !== 'GET' && this.generation) extra['X-Server-Generation'] = this.generation;
+    const headers = Object.keys(extra).length ? { ...options.headers, ...extra } : options.headers;
     return this.deps.api.request<T>(method, path, { ...options, ...(headers ? { headers } : {}) });
   }
   private now() {
@@ -127,6 +131,7 @@ export class SyncEngine {
   private async cycle(): Promise<void> {
     this.setStatus({ syncing: true });
     try {
+      this.generation = (await this.t.syncState.get('generation'))?.value as string | undefined;
       await this.push();
       if (this.status.reachable && !this.status.authRequired) {
         await this.pull();
@@ -190,6 +195,12 @@ export class SyncEngine {
           this.setStatus({ reachable: false, lastError: error.message });
           return; // inutile d'essayer les suivantes maintenant
         }
+        if (error instanceof ApiError && error.code === 'generation') {
+          // Serveur restauré depuis la dernière lecture : on arrête d'envoyer ; la réception de
+          // ce cycle relit tout et transforme chaque différence en conflit.
+          await this.outbox.update(op.seq!, { lastError: 'Serveur restauré : vérification avant envoi.' });
+          return;
+        }
         if (error instanceof ApiError && error.code === 'access-revoked-operation') {
           await this.quarantine(op);
           continue;
@@ -222,7 +233,9 @@ export class SyncEngine {
 
   /** `done` : opération terminée (retirée) ; `wait` : bloquée (conflit) ou reportée. */
   private async execute(op: SyncOperationRecord): Promise<'done' | 'wait'> {
-    this.opEpoch = op.accessEpoch;
+    // Envoi imbriqué (fichiers d'un plan) : garde la période de l'opération englobante.
+    const outer = this.opEpoch;
+    this.opEpoch = op.accessEpoch ?? outer;
     try {
       return await this.executeOnce(op);
     } catch (error) {
@@ -244,7 +257,7 @@ export class SyncEngine {
       await this.outbox.update(op.seq!, { operationId });
       return this.executeOnce({ ...op, operationId });
     } finally {
-      this.opEpoch = undefined;
+      this.opEpoch = outer;
     }
   }
 
@@ -311,24 +324,24 @@ export class SyncEngine {
         const site = await this.deps.raw.getSite(op.entityId);
         if (!site) return 'done'; // supprimé depuis : la suppression suit
         const link = await this.link('camp', site.id);
-        const r = await this.deps.api
-          .request<{ serverVersion: number }>('PUT', `/api/camps/${enc(site.id)}`, {
-            body: { name: site.name, notes: site.notes },
-            headers: headers(link?.serverVersion ?? 0),
-          })
-          .catch((error: unknown) => {
-            if (error instanceof ApiError && error.status === 409 && error.code === 'version')
-              throw new Error(
-                'Camp modifié sur le serveur depuis votre dernière synchronisation : votre changement n’est PAS envoyé. « Réessayer » l’enverra quand même (il remplacera celui du serveur) ; « Abandonner » reprendra la version du serveur.',
-                { cause: error },
-              );
-            throw error;
-          });
+        if (link?.restored) return 'wait'; // serveur restauré : relecture d'abord
+        const r = await this.request<{ serverVersion: number }>('PUT', `/api/camps/${enc(site.id)}`, {
+          body: { name: site.name, notes: site.notes },
+          headers: headers(link?.serverVersion ?? 0),
+        }).catch((error: unknown) => {
+          if (error instanceof ApiError && error.status === 409 && error.code === 'version')
+            throw new Error(
+              'Camp modifié sur le serveur depuis votre dernière synchronisation : votre changement n’est PAS envoyé. « Réessayer » l’enverra quand même (il remplacera celui du serveur) ; « Abandonner » reprendra la version du serveur.',
+              { cause: error },
+            );
+          throw error;
+        });
         await this.setLink({ entityType: 'camp', entityId: site.id, serverVersion: r.serverVersion });
         return 'done';
       }
       case 'camp.delete': {
         const link = await this.link('camp', op.entityId);
+        if (link?.restored) return 'wait';
         if (!link) return 'done';
         try {
           await this.request('DELETE', `/api/camps/${enc(op.entityId)}`, {
@@ -361,6 +374,7 @@ export class SyncEngine {
           link = await this.link('plan', op.entityId);
         }
         if (!link) return 'done';
+        if (link.restored) return 'wait';
         try {
           const r = await this.request<{ serverVersion: number }>(
             'DELETE',
@@ -405,19 +419,18 @@ export class SyncEngine {
           });
         }
         const link = await this.link('template', op.entityId);
-        const r = await this.deps.api
-          .request<{ serverVersion: number }>('PUT', `/api/templates/${enc(op.entityId)}`, {
-            body: { template: entry.template },
-            headers: headers(link?.serverVersion ?? 0),
-          })
-          .catch((error: unknown) => {
-            if (error instanceof ApiError && error.status === 409 && error.code === 'version')
-              throw new Error(
-                'Modèle modifié sur le serveur : votre changement n’est PAS envoyé. « Réessayer » l’enverra quand même ; « Abandonner » reprendra la version du serveur.',
-                { cause: error },
-              );
-            throw error;
-          });
+        if (link?.restored) return 'wait';
+        const r = await this.request<{ serverVersion: number }>('PUT', `/api/templates/${enc(op.entityId)}`, {
+          body: { template: entry.template },
+          headers: headers(link?.serverVersion ?? 0),
+        }).catch((error: unknown) => {
+          if (error instanceof ApiError && error.status === 409 && error.code === 'version')
+            throw new Error(
+              'Modèle modifié sur le serveur : votre changement n’est PAS envoyé. « Réessayer » l’enverra quand même ; « Abandonner » reprendra la version du serveur.',
+              { cause: error },
+            );
+          throw error;
+        });
         await this.setLink({ entityType: 'template', entityId: op.entityId, serverVersion: r.serverVersion });
         return 'done';
       }
@@ -568,7 +581,9 @@ export class SyncEngine {
 
   async pull(): Promise<void> {
     let cursor = ((await this.t.syncState.get('cursor'))?.value as number | undefined) ?? 0;
-    let restoredPass = false;
+    // Relecture après restauration : persistée (reprise au cycle suivant si interrompue) et
+    // terminée seulement quand TOUT le journal a été relu (jamais sur une lecture partielle).
+    let restoredPass = Boolean((await this.t.syncState.get('restorePass'))?.value);
     for (let page = 0; page < 50; page++) {
       const r = await this.request<{ changes: Change[]; cursor: number; more: boolean; generation?: string }>(
         'GET',
@@ -582,10 +597,14 @@ export class SyncEngine {
           await this.markRestored(r.generation);
           cursor = 0;
           restoredPass = true;
+          await this.t.syncState.put({ key: 'restorePass', value: true });
           page = -1;
           continue;
         }
-        if (!known) await this.t.syncState.put({ key: 'generation', value: r.generation });
+        if (!known) {
+          await this.t.syncState.put({ key: 'generation', value: r.generation });
+          this.generation = r.generation;
+        }
       }
       // Dernier état par élément (plusieurs changements d'un même plan = une seule lecture).
       const latest = new Map<string, Change>();
@@ -608,14 +627,22 @@ export class SyncEngine {
         } else if (change.kind === 'plan') await this.pullPlan(change);
         else if (change.kind === 'revision') await this.pullRevision(change);
         else await this.pullTemplate(change);
+        // Élément connu du serveur restauré : relu, lien de nouveau fiable.
+        const seen = await this.link(change.kind, change.id);
+        if (seen?.restored) await this.setLink({ ...seen, restored: false });
       }
       cursor = r.cursor;
       await this.t.syncState.put({ key: 'cursor', value: cursor });
       // Listes à relire (camps, plans reçus) dans tous les onglets.
       if (ordered.length) this.post({ type: 'pull-applied' });
-      if (!r.more) break;
+      if (!r.more) {
+        if (restoredPass) {
+          await this.finishRestoredPass();
+          await this.t.syncState.put({ key: 'restorePass', value: false });
+        }
+        break;
+      }
     }
-    if (restoredPass) await this.finishRestoredPass();
   }
 
   /** Nouvelle génération du serveur : liens marqués « à revérifier », curseur remis à zéro. */
@@ -628,6 +655,7 @@ export class SyncEngine {
       });
     await this.t.syncState.put({ key: 'cursor', value: 0 });
     await this.t.syncState.put({ key: 'generation', value: generation });
+    this.generation = generation;
     this.setStatus({
       lastError: 'Le serveur a été restauré depuis une sauvegarde : vérification de chaque plan.',
     });
@@ -646,8 +674,42 @@ export class SyncEngine {
       if (local && !(await this.t.conflicts.get(link.entityId)))
         await this.saveConflict(link.entityId, local, 'deleted', null, link);
     }
-    for (const link of await this.t.syncLinks.toArray())
-      if (link.restored) await this.t.syncLinks.put({ ...link, restored: false });
+    // Éléments inconnus du serveur restauré (créés après la sauvegarde) : RENVOYÉS, jamais
+    // considérés comme synchronisés à tort. Fichiers : revérifiés au prochain envoi.
+    for (const link of await this.t.syncLinks.toArray()) {
+      if (!link.restored) continue;
+      await this.t.syncLinks.delete(link.key);
+      if (link.entityType === 'camp') {
+        const site = await this.deps.raw.getSite(link.entityId);
+        if (site)
+          await this.outbox.enqueue({
+            kind: 'camp.upsert',
+            entityType: 'camp',
+            entityId: site.id,
+            label: site.name,
+          });
+      } else if (link.entityType === 'template') {
+        const entry = await this.deps.raw.getTemplate(link.entityId);
+        if (entry)
+          await this.outbox.enqueue({
+            kind: 'template.upsert',
+            entityType: 'template',
+            entityId: link.entityId,
+            label: entry.template.name,
+          });
+      } else if (link.entityType === 'revision') {
+        const revision = await this.deps.raw.loadRevision(link.entityId).catch(() => null);
+        if (revision)
+          await this.outbox.enqueue({
+            kind: 'revision.create',
+            entityType: 'revision',
+            entityId: link.entityId,
+            label: `Révision ${revision.meta.label}`,
+            planId: revision.meta.planId,
+            dependsOn: [entityKey('plan', revision.meta.planId)],
+          });
+      }
+    }
   }
 
   private async pullCamp(
@@ -985,7 +1047,19 @@ export class SyncEngine {
   }
 
   /** Enregistrer ma version comme nouveau brouillon : envoyée PAR-DESSUS la version serveur (qui reste dans l'historique). */
+  /** Modifications d'une période d'accès révoquée en attente pour ce plan (jamais envoyées). */
+  private async assertNoRevoked(planId: string) {
+    const revoked = (await this.outbox.list()).some(
+      (o) => o.revoked && (o.planId === planId || o.entityId === planId),
+    );
+    if (revoked)
+      throw new Error(
+        'Ce plan contient des modifications faites pendant une période où votre accès a été révoqué : elles ne peuvent pas être envoyées. Mettez-les d’abord de côté (panneau de synchronisation), ou gardez la version du serveur.',
+      );
+  }
+
   async keepMine(planId: string): Promise<void> {
+    await this.assertNoRevoked(planId);
     const conflict = await this.conflictOf(planId);
     if (conflict.reason === 'deleted')
       throw new Error('Ce plan a été supprimé sur le serveur : enregistrez votre version dans une copie.');
@@ -1007,6 +1081,7 @@ export class SyncEngine {
 
   /** Créer une copie : ma version devient un nouveau plan ; l'original prend la version serveur. */
   async keepBothAsCopy(planId: string, copyName: string): Promise<string> {
+    await this.assertNoRevoked(planId);
     const local = await this.deps.raw.openPlan(planId);
     if (!local) throw new Error('Version locale introuvable.');
     const copy = duplicatePlanDocument(local.doc, copyName);

@@ -9,3 +9,6 @@ deploy/secrets
 deploy/campplanner.env
 .git
 *.log
+deploy/backups
+.env*
+*.dump

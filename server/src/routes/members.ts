@@ -285,6 +285,10 @@ export function registerMemberRoutes(app: FastifyInstance, deps: Deps) {
     const target = z.string().uuid().safeParse(request.params.userId);
     if (!target.success) throw notFound('Membre');
     await tx(deps.pool, { orgId: auth.orgId, userId: auth.userId }, async (c) => {
+      // Changements de membres d'une organisation sérialisés : deux administrateurs qui se
+      // retirent mutuellement leur rôle en même temps ne peuvent pas laisser l'organisation sans
+      // administrateur (chacun compterait encore l'autre).
+      await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`members:${auth.orgId}`]);
       const current = (
         await c.query<{ role: string; status: string }>(
           'SELECT role, status FROM memberships WHERE organization_id = $1 AND user_id = $2 FOR UPDATE',

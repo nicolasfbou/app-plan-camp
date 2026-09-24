@@ -196,7 +196,32 @@ export async function purgeProfile(profile: Profile): Promise<void> {
   const repo = new IndexedDbRepository(profile.dbName);
   await repo.destroy();
   clearNamespaceJournals(namespace(profile));
+  clearPersonalTraces();
   await sweepPurgedDatabases();
+}
+
+/**
+ * Traces personnelles hors de la base, communes à l'appareil : journal d'erreurs (noms de plans,
+ * messages), dernier nom d'auteur de révision, avertissements de santé ignorés (identifiants de
+ * plans). Effacées avec l'espace : la personne suivante n'en hérite pas.
+ */
+function clearPersonalTraces() {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (
+        k &&
+        (k === 'campplanner.errorLog' ||
+          k === 'campplanner.revisionAuthor' ||
+          k.startsWith('campplanner.health.ignored.'))
+      )
+        keys.push(k);
+    }
+    for (const k of keys) localStorage.removeItem(k);
+  } catch {
+    // ignoré
+  }
 }
 
 /**

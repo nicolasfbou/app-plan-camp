@@ -7,12 +7,18 @@
  *   JAMAIS supprimé, même si le plan est supprimé (suppression logique : restauration possible) ;
  * - délai de grâce (24 h par défaut) : un fichier envoyé juste avant le plan qui le cite n'est pas
  *   supprimé entre les deux envois ;
- * - la ligne est supprimée d'abord (transaction), l'objet ensuite : au pire un objet orphelin
- *   reste dans le stockage (sans effet), jamais une ligne qui pointe vers un objet absent.
+ * - verrou par fichier (organisation, empreinte), partagé avec l'envoi : la ligne puis l'objet
+ *   sont supprimés SOUS ce verrou, avant la validation. Un envoi simultané du même fichier attend,
+ *   puis recrée ligne et objet ; si l'objet ne peut être supprimé, la ligne est conservée.
  * S'exécute avec le rôle PROPRIÉTAIRE (toutes les organisations) : `MIGRATION_DATABASE_URL`.
  */
 import type pg from 'pg';
 import type { ObjectStorage } from '../storage/storage.ts';
+
+/** Verrou transactionnel d'un fichier : envoi et nettoyage du même fichier sont sérialisés. */
+export async function lockFile(c: pg.ClientBase, organizationId: string, sha256: string): Promise<void> {
+  await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`file:${organizationId}:${sha256}`]);
+}
 
 export interface PurgeResult {
   removed: { organizationId: string; sha256: string; bytes: number }[];
@@ -49,6 +55,7 @@ export async function purgeUnusedFiles(
     const client = await owner.connect();
     try {
       await client.query('BEGIN');
+      await lockFile(client, file.organization_id, file.sha256);
       // Revérifié sous verrou : une référence ajoutée entre-temps protège le fichier.
       const gone = await client.query(
         `DELETE FROM files f WHERE f.organization_id = $1 AND f.sha256 = $2
@@ -67,9 +74,10 @@ export async function purgeUnusedFiles(
           ],
         );
       }
+      // Objet supprimé AVANT la validation, verrou tenu : en cas d'échec, la ligne est rétablie.
+      if (gone.rowCount) await storage.delete(file.storage_key);
       await client.query('COMMIT');
       if (gone.rowCount) {
-        await storage.delete(file.storage_key);
         result.removed.push({
           organizationId: file.organization_id,
           sha256: file.sha256,

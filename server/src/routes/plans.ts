@@ -11,6 +11,7 @@ import { audit } from '../audit.ts';
 import { type Client, tx } from '../db.ts';
 import { referencedShas, validatePlanDocument } from '../documents.ts';
 import { HttpError, notFound } from '../errors.ts';
+import { reachableShas } from '../files/reachable.ts';
 import { type Auth, allowedCampIds, requireCampAccess, requirePermission } from '../permissions.ts';
 import { expectedVersion, idempotencyKey, logChange, remember, replayed } from '../sync.ts';
 import { ID } from './camps.ts';
@@ -142,8 +143,10 @@ export function registerPlanRoutes(app: FastifyInstance, deps: Deps) {
           throw new HttpError(409, 'deleted', 'Ce plan n’existe plus sur le serveur.', { deleted: true });
         requirePermission(auth, 'plan.create');
         // Référence vérifiée : le camp appartient à l'organisation de la session et existe encore.
+        // FOR SHARE : une suppression simultanée du camp (FOR UPDATE) attend la fin de cette
+        // création, puis voit le plan et refuse (jamais de plan dans un camp supprimé).
         const camp = await c.query(
-          'SELECT 1 FROM camps WHERE organization_id = $2 AND id = $1 AND deleted_at IS NULL',
+          'SELECT 1 FROM camps WHERE organization_id = $2 AND id = $1 AND deleted_at IS NULL FOR SHARE',
           [body.campId, auth.orgId],
         );
         if (!camp.rowCount) throw new HttpError(409, 'camp-missing', 'Camp absent du serveur.');
@@ -171,11 +174,9 @@ export function registerPlanRoutes(app: FastifyInstance, deps: Deps) {
       }
       // Fichiers référencés : tous doivent être présents dans l'organisation.
       const shas = referencedShas(doc);
-      const present = await c.query<{ sha256: string }>(
-        'SELECT sha256 FROM files WHERE organization_id = $2 AND sha256 = ANY($1)',
-        [shas, auth.orgId],
-      );
-      const missing = shas.filter((s) => !present.rows.some((r) => r.sha256 === s));
+      // Présents ET accessibles : un fichier d'un camp hors de portée n'est pas citable.
+      const present = await reachableShas(c, auth, shas);
+      const missing = shas.filter((s) => !present.has(s));
       if (missing.length)
         throw new HttpError(422, 'missing-files', 'Fichiers absents du serveur : envoyez-les d’abord.', {
           missing,

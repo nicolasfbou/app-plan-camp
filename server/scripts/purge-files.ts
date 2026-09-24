@@ -3,10 +3,12 @@
  *   MIGRATION_DATABASE_URL=… STORAGE_DRIVER=… npm run server:purge-files -- [--dry-run] [--grace-hours 24]
  */
 import { parseArgs } from 'node:util';
-import { loadConfig } from '../src/config.ts';
+import { applyFileSecretsToEnv, loadConfig } from '../src/config.ts';
 import { createPool } from '../src/db.ts';
 import { purgeUnusedFiles } from '../src/files/purge.ts';
 import { createStorage } from '../src/storage/storage.ts';
+
+applyFileSecretsToEnv();
 
 const { values } = parseArgs({
   options: { 'dry-run': { type: 'boolean' }, 'grace-hours': { type: 'string' } },

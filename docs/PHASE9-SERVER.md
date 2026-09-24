@@ -238,7 +238,9 @@ hors ligne ne peut rien recevoir, et CampPlanner ne prétend pas le contraire.
   - un onglet resté ouvert sans recevoir aucun signal ne peut plus écrire : les écritures
     IndexedDB et les journaux de récupération d'un espace retiré sont refusés ;
   - une base vide rouverte par ce type d'onglet est effacée au démarrage suivant (liste des bases
-    purgées, conservée).
+    purgées, conservée) ;
+  - les traces personnelles hors de la base sont effacées : journal d'erreurs, dernier nom
+    d'auteur de révision, avertissements de santé ignorés.
 - Déconnexion hors ligne : suspendue, car la session serveur resterait valable. Si la personne
   choisit « Effacer quand même », la session est fermée sur le serveur dès le retour du réseau
   (le cookie est encore envoyé), sauf nouvelle connexion entre-temps.
@@ -257,6 +259,11 @@ hors ligne ne peut rien recevoir, et CampPlanner ne prétend pas le contraire.
 - **Données non chiffrées** dans le navigateur (IndexedDB) : un accès direct au profil du
   navigateur les montrerait. Protection : chiffrement du disque de l'appareil, session du système
   d'exploitation.
+- **Restes hors de CampPlanner** sur un appareil partagé : le cache HTTP du navigateur ne garde
+  aucune réponse de l'API (`Cache-Control: no-store`), mais un fichier téléchargé ou exporté
+  (dossier « Téléchargements »), l'historique du navigateur (titres et adresses des pages) et
+  les mots de passe enregistrés par le navigateur restent sous la responsabilité de la personne
+  et de l'administration du poste.
 - Un client **modifié** qui ignorerait la période d'accès se heurterait au refus du serveur.
   Seules les modifications ordinaires faites pendant une période **valide** sont acceptées.
 
@@ -502,6 +509,12 @@ Lancement : `npm run test:server`, qui démarre un PostgreSQL temporaire (binair
   organisation à l'autre demande une reconnexion ; l'espace local reste accessible hors
   session.
 - **Pas de fusion automatique** : un conflit demande toujours une décision humaine.
+- **Restauration du serveur** : les droits reviennent à l'état de la sauvegarde. Les suspensions,
+  changements de rôle et révocations d'invitations faits après doivent être réappliqués
+  ([OPERATIONS.md](OPERATIONS.md) § 7). Toutes les sessions sont fermées par la restauration.
+- **Éditeur limité à certains camps** : il ne voit que les fichiers de ses camps, des modèles, et
+  ceux qu'il a lui-même envoyés (ou renvoyés à l'identique). Un fichier d'un autre camp est traité
+  comme absent, même si son empreinte est connue.
 - **Pas de temps réel** : les changements des autres arrivent au prochain cycle (au plus 20 s,
   ou immédiatement au retour sur l'onglet).
 - **Poste partagé fermé sans déconnexion** (navigateur fermé de force) : les données restent dans
