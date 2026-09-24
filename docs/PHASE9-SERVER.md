@@ -240,7 +240,10 @@ hors ligne ne peut rien recevoir, et CampPlanner ne prétend pas le contraire.
   - une base vide rouverte par ce type d'onglet est effacée au démarrage suivant (liste des bases
     purgées, conservée) ;
   - les traces personnelles hors de la base sont effacées : journal d'erreurs, dernier nom
-    d'auteur de révision, avertissements de santé ignorés.
+    d'auteur de révision, avertissements de santé ignorés. Le journal est **scellé** (date
+    d'effacement) et chaque entrée porte son espace : un onglet figé qui le réécrit avec une vue
+    périmée (localStorage est propagé de façon asynchrone entre processus) ne fait réapparaître
+    aucune entrée, et ces entrées sont retirées au démarrage suivant.
 - Déconnexion hors ligne : suspendue, car la session serveur resterait valable. Si la personne
   choisit « Effacer quand même », la session est fermée sur le serveur dès le retour du réseau
   (le cookie est encore envoyé), sauf nouvelle connexion entre-temps.

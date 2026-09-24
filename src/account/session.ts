@@ -14,6 +14,7 @@ import {
   saveProfile,
   setActiveProfile,
 } from '@/app/profile.ts';
+import { pruneErrorLog, sealErrorLog } from '@/diagnostics/errorLog.ts';
 import { nowIso } from '@/domain/model/factories.ts';
 import { IndexedDbRepository } from '@/persistence/indexedDbRepository.ts';
 import { clearNamespaceJournals } from '@/persistence/recovery.ts';
@@ -64,6 +65,8 @@ export async function sweepPurgedDatabases(): Promise<void> {
     // Journaux de récupération éventuellement réécrits par un onglet tardif : effacés aussi.
     clearNamespaceJournals(`${name}.`);
   }
+  // Journal d'erreurs réécrit par un onglet tardif : entrées invalidées retirées.
+  pruneErrorLog();
 }
 
 /**
@@ -213,18 +216,14 @@ function clearPersonalTraces() {
     const keys: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (
-        k &&
-        (k === 'campplanner.errorLog' ||
-          k === 'campplanner.revisionAuthor' ||
-          k.startsWith('campplanner.health.ignored.'))
-      )
+      if (k && (k === 'campplanner.revisionAuthor' || k.startsWith('campplanner.health.ignored.')))
         keys.push(k);
     }
     for (const k of keys) localStorage.removeItem(k);
   } catch {
     // ignoré
   }
+  sealErrorLog();
 }
 
 /**

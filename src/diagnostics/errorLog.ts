@@ -28,17 +28,23 @@ export interface ErrorEntry {
   message: string;
   /** Contexte court (identifiant de plan, nom de fichier) ; jamais de données du plan. */
   context?: string;
+  /** Base de l'espace d'organisation où l'évènement a eu lieu (absent : espace local). */
+  space?: string;
 }
 
-import { activeSpaceRemoved } from '@/app/profile';
+import { ACTIVE_PROFILE, activeSpaceRemoved } from '@/app/profile';
 
 const KEY = 'campplanner.errorLog';
+/** Effacement du journal (déconnexion d'un poste partagé) : toute entrée antérieure est ignorée. */
+const CLEARED_KEY = 'campplanner.errorLog.clearedAt';
+/** Bases effacées (même clé que account/session.ts). */
+const PURGED_KEY = 'campplanner.purgedDatabases';
 export const MAX_ENTRIES = 200;
 const MAX_MESSAGE = 500;
 
 const listeners = new Set<() => void>();
 
-function read(): ErrorEntry[] {
+function readRaw(): ErrorEntry[] {
   try {
     const raw = localStorage.getItem(KEY);
     const list = raw ? (JSON.parse(raw) as unknown) : [];
@@ -48,6 +54,27 @@ function read(): ErrorEntry[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Entrées encore valables. Un onglet d'un espace effacé qui n'a pas encore vu la déconnexion
+ * (localStorage est propagé de façon asynchrone entre processus) peut réécrire le journal APRÈS
+ * son effacement, avec d'anciennes entrées : elles sont ignorées (antérieures à l'effacement, ou
+ * d'un espace effacé), puis retirées physiquement à la prochaine écriture ou au démarrage.
+ */
+function read(): ErrorEntry[] {
+  let cleared: string | null = null;
+  let purged: string[] = [];
+  try {
+    cleared = localStorage.getItem(CLEARED_KEY);
+    purged = JSON.parse(localStorage.getItem(PURGED_KEY) ?? '[]') as string[];
+  } catch {
+    // stockage illisible : aucun filtre
+  }
+  return readRaw().filter(
+    (e) =>
+      (!cleared || (typeof e.at === 'string' && e.at > cleared)) && !(e.space && purged.includes(e.space)),
+  );
 }
 
 function write(list: ErrorEntry[]) {
@@ -82,6 +109,7 @@ export function logEvent(
     level: options.level ?? 'error',
     message,
     ...(options.context ? { context: options.context.slice(0, 120) } : {}),
+    ...(ACTIVE_PROFILE.kind === 'org' ? { space: ACTIVE_PROFILE.dbName } : {}),
   };
   write([...read(), entry].slice(-MAX_ENTRIES));
 }
@@ -91,6 +119,31 @@ export const readErrorLog = (): ErrorEntry[] => read();
 export function clearErrorLog(): void {
   try {
     localStorage.removeItem(KEY);
+  } catch {
+    // ignoré
+  }
+  listeners.forEach((l) => l());
+}
+
+/** Effacement lors de la déconnexion d'un poste partagé : tout ce qui précède est invalidé. */
+export function sealErrorLog(now: Date = new Date()): void {
+  try {
+    localStorage.setItem(CLEARED_KEY, now.toISOString());
+    localStorage.removeItem(KEY);
+  } catch {
+    // ignoré
+  }
+  listeners.forEach((l) => l());
+}
+
+/** Retire physiquement les entrées invalidées (démarrage, balayage des espaces effacés). */
+export function pruneErrorLog(): void {
+  const raw = readRaw();
+  const kept = read();
+  if (kept.length === raw.length) return;
+  try {
+    if (kept.length) localStorage.setItem(KEY, JSON.stringify(kept));
+    else localStorage.removeItem(KEY);
   } catch {
     // ignoré
   }

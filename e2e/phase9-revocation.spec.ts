@@ -68,12 +68,6 @@ test.describe('Phase 9.1 — déconnexion, révocation, données locales', () =>
     expect(await orgDatabases(p1)).toContain(dbName);
     await p2.evaluate(() => ((window as unknown as { __avant: number }).__avant = 1));
 
-    // Point de synchronisation : l'onglet 3 a ouvert le plan en lecture seule (l'onglet 2 le
-    // tient) et l'a noté dans le journal ; cette écriture est visible dans l'onglet 1
-    // (localStorage est propagé de façon asynchrone entre processus).
-    await expect
-      .poll(() => p1.evaluate(() => localStorage.getItem('campplanner.errorLog') ?? ''), { timeout: 15_000 })
-      .toContain('Plan ouvert ailleurs');
     // Traces personnelles hors de la base (journal d'erreurs, nom d'auteur de révision).
     await p1.evaluate(() => {
       localStorage.setItem('campplanner.errorLog', '[{"message":"plan PAMM"}]');
@@ -83,12 +77,11 @@ test.describe('Phase 9.1 — déconnexion, révocation, données locales', () =>
     await p1.getByTestId('logout').click();
     await p1.getByTestId('logout-confirm').click();
     await expect(p1.getByTestId('workspace-select')).toHaveValue('local');
-    expect(
-      await p1.evaluate(() => [
-        localStorage.getItem('campplanner.errorLog'),
-        localStorage.getItem('campplanner.revisionAuthor'),
-      ]),
-    ).toEqual([null, null]);
+    expect(await p1.evaluate(() => localStorage.getItem('campplanner.revisionAuthor'))).toBeNull();
+    // Journal d'erreurs : effacé et scellé. (L'onglet 3, figé, peut encore le réécrire un instant
+    // avec une vue périmée — propagation asynchrone entre processus — : ces entrées sont ignorées,
+    // puis retirées au démarrage ; état final vérifié plus bas.)
+    expect(await p1.evaluate(() => localStorage.getItem('campplanner.errorLog.clearedAt'))).not.toBeNull();
     // Onglet 2 : base fermée pour de bon, page rechargée (marqueur disparu) sur l'espace local.
     await expect
       .poll(() => p2.evaluate(() => (window as unknown as { __avant?: number }).__avant ?? 0), {
@@ -138,6 +131,16 @@ test.describe('Phase 9.1 — déconnexion, révocation, données locales', () =>
     await expect(p3.getByTestId('workspace-select')).toHaveValue('local');
     await expect.poll(() => orgDatabases(p3), { timeout: 15_000 }).toEqual([]);
     expect(await journals()).toEqual([]);
+    // Aucune trace personnelle de l'espace effacé ne subsiste, même réécrite par l'onglet figé.
+    const planId = planUrl.split('/').pop()!;
+    for (const p of [p1, p3]) {
+      await p.reload();
+      await expect(p.getByTestId('workspace-select')).toHaveValue('local');
+      const log = (await p.evaluate(() => localStorage.getItem('campplanner.errorLog'))) ?? '';
+      expect(log).not.toContain('plan PAMM');
+      expect(log).not.toContain(planId);
+      expect(log).not.toContain(dbName);
+    }
     await expect(p3.getByText(camp)).toHaveCount(0);
     await ctx.close();
   });
