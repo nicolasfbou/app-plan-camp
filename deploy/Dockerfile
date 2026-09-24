@@ -7,7 +7,6 @@
 #   docker build --secret id=ca,src=/chemin/ca.pem …
 
 ARG NODE_IMAGE=node:22-bookworm-slim
-ARG POSTGRES_IMAGE=postgres:16-bookworm
 
 FROM ${NODE_IMAGE} AS build
 WORKDIR /app
@@ -41,21 +40,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["node_modules/.bin/tsx", "--tsconfig", "server/tsconfig.json", "server/src/main.ts"]
 
-# Image d'exploitation (sauvegarde, restauration, migrations, nettoyage) : outils PostgreSQL 16
-# officiels (pg_dump / pg_restore de la même version que le serveur) + Node et l'application.
-#   docker build -f deploy/Dockerfile --target ops -t campplanner-ops:<version> .
-FROM ${POSTGRES_IMAGE} AS ops
-COPY --from=runtime /usr/local/bin/node /usr/local/bin/node
-COPY --from=runtime /app /app
-WORKDIR /app
-ENV NODE_ENV=production PG_BIN=/usr/lib/postgresql/16/bin STORAGE_FS_ROOT=/data/files
-# Même compte que le serveur (node, uid 1000) : les fichiers restaurés ou écrits dans le volume
-# lui appartiennent (un fichier créé par root en 0600 serait illisible pour le serveur).
-# (Volume neuf monté d'abord ici, ex. restauration : il hérite de ces droits.)
-RUN mkdir -p /data/files /backups && chown 1000:1000 /data/files /backups
-USER 1000:1000
-ENTRYPOINT ["node_modules/.bin/tsx", "--tsconfig", "server/tsconfig.json"]
-CMD ["server/scripts/backup.ts"]
+# Image d'exploitation (sauvegarde, restauration, nettoyage) : deploy/Dockerfile.ops.
 
 # Cible par défaut : le serveur.
 FROM runtime AS server

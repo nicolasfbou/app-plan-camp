@@ -644,3 +644,41 @@ describe('revue 9.1 : en-têtes, génération, relecture interrompue', () => {
     }
   });
 });
+
+describe('déploiement pilote : expiration de la session', () => {
+  it('session expirée : rien n’est envoyé ni perdu ; après reconnexion, tout part ; la nouvelle session a une nouvelle échéance', async () => {
+    const m = await device(h, 'gestion@pamm.test', h.orgA.id);
+    try {
+      const { doc } = await newLocalPlan(m, 'Plan session expirée');
+      await m.sync();
+      expect(await serverVersions(doc.plan.id)).toEqual([1]);
+      // Échéance atteinte (durée fixe : 30 jours sur un appareil de confiance, 12 h sur un poste partagé).
+      await h.db.owner.query(
+        "UPDATE sessions SET expires_at = now() - interval '1 second' WHERE user_id = $1",
+        [h.users.managerA.id],
+      );
+      await edit(m, doc.plan.id, 'modifié après expiration');
+      await m.sync();
+      expect(m.engine.status.authRequired).toBe(true);
+      expect(await serverVersions(doc.plan.id)).toEqual([1]);
+      expect((await m.engine.outbox.list()).some((o) => o.entityId === doc.plan.id)).toBe(true);
+      // Nouvelle connexion : la modification en attente part, rien n'est perdu.
+      await m.relogin();
+      m.engine.status.authRequired = false;
+      await m.sync();
+      expect(await serverVersions(doc.plan.id)).toEqual([1, 2]);
+      const latest = await h.db.owner.query(
+        "SELECT document #>> '{plan,titleBlock,notes}' AS n FROM plan_versions WHERE plan_id = $1 AND version = 2",
+        [doc.plan.id],
+      );
+      expect(latest.rows[0].n).toBe('modifié après expiration');
+      const next = await h.db.owner.query(
+        "SELECT max(expires_at) > now() + interval '29 days' AS ok FROM sessions WHERE user_id = $1 AND revoked_at IS NULL",
+        [h.users.managerA.id],
+      );
+      expect(next.rows[0].ok).toBe(true);
+    } finally {
+      m.close();
+    }
+  });
+});

@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1
+# CampPlanner — image d'exploitation : sauvegarde (dossier local ou compartiment S3), vérification,
+# restauration, nettoyage des fichiers. Outils PostgreSQL de la MÊME version majeure que le serveur
+# PostgreSQL visé (pg_dump / pg_restore) : POSTGRES_IMAGE (16 pour la pile docker compose, la
+# version du service PostgreSQL de l'hébergeur ailleurs, ex. postgres:17-bookworm sur Railway).
+#   docker build -f deploy/Dockerfile.ops --build-arg POSTGRES_IMAGE=postgres:17-bookworm -t campplanner-ops:<version> .
+# Aucun secret dans l'image.
+
+ARG NODE_IMAGE=node:22-bookworm-slim
+ARG POSTGRES_IMAGE=postgres:16-bookworm
+
+FROM ${NODE_IMAGE} AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN --mount=type=secret,id=ca,required=false \
+    if [ -f /run/secrets/ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/ca npm_config_cafile=/run/secrets/ca; fi; \
+    npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
+
+FROM ${POSTGRES_IMAGE}
+COPY --from=deps /usr/local/bin/node /usr/local/bin/node
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json tsconfig.json tsconfig.app.json tsconfig.node.json ./
+COPY server ./server
+COPY src ./src
+# PG_MAJOR vient de l'image PostgreSQL officielle : outils de la même version que le serveur.
+ENV NODE_ENV=production PG_BIN=/usr/lib/postgresql/${PG_MAJOR}/bin STORAGE_FS_ROOT=/data/files
+# Même compte que le serveur (node, uid 1000) : les fichiers restaurés ou écrits dans le volume
+# lui appartiennent (un fichier créé par root en 0600 serait illisible pour le serveur).
+# (Volume neuf monté d'abord ici, ex. restauration : il hérite de ces droits.)
+RUN mkdir -p /data/files /backups && chown 1000:1000 /data/files /backups
+USER 1000:1000
+ENTRYPOINT ["node_modules/.bin/tsx", "--tsconfig", "server/tsconfig.json"]
+# Par défaut (tâche planifiée sur l'hébergeur) : sauvegarde complète vers le compartiment S3.
+CMD ["server/scripts/backup-bucket.ts", "backup"]

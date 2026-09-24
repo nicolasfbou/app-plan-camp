@@ -93,7 +93,7 @@ services:
   #   docker compose -f deploy/docker-compose.yml --profile ops run --rm ops server/scripts/backup.ts backup --out /backups/AAAA-MM-JJ
   ops:
     image: campplanner-ops:${CAMPPLANNER_VERSION:-local}
-    build: { <<: *build, target: ops }
+    build: { <<: *build, dockerfile: deploy/Dockerfile.ops }
     profiles: ['ops']
     env_file: campplanner.env
     environment:
