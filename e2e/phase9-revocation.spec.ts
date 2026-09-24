@@ -68,6 +68,12 @@ test.describe('Phase 9.1 — déconnexion, révocation, données locales', () =>
     expect(await orgDatabases(p1)).toContain(dbName);
     await p2.evaluate(() => ((window as unknown as { __avant: number }).__avant = 1));
 
+    // Point de synchronisation : l'onglet 3 a ouvert le plan en lecture seule (l'onglet 2 le
+    // tient) et l'a noté dans le journal ; cette écriture est visible dans l'onglet 1
+    // (localStorage est propagé de façon asynchrone entre processus).
+    await expect
+      .poll(() => p1.evaluate(() => localStorage.getItem('campplanner.errorLog') ?? ''), { timeout: 15_000 })
+      .toContain('Plan ouvert ailleurs');
     // Traces personnelles hors de la base (journal d'erreurs, nom d'auteur de révision).
     await p1.evaluate(() => {
       localStorage.setItem('campplanner.errorLog', '[{"message":"plan PAMM"}]');

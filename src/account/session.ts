@@ -198,6 +198,9 @@ export async function purgeProfile(profile: Profile): Promise<void> {
   clearNamespaceJournals(namespace(profile));
   clearPersonalTraces();
   await sweepPurgedDatabases();
+  // Une écriture d'un autre onglet faite JUSTE AVANT la déconnexion peut arriver après le premier
+  // effacement (localStorage est propagé de façon asynchrone entre processus) : second passage.
+  clearPersonalTraces();
 }
 
 /**
