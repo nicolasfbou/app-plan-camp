@@ -66,33 +66,43 @@ const keyOf = (tool: Tool) =>
 /** Barre latérale foncée. Dans l'éditeur, elle contient les outils réellement disponibles. */
 export function LeftSidebar({ showTools }: { showTools: boolean }) {
   const collapsed = useUiStore((s) => s.leftCollapsed);
+  const toggleLeft = useUiStore((s) => s.toggleLeft);
   if (collapsed) return null;
 
   return (
-    <aside
-      className="flex h-full min-h-0 w-60 shrink-0 flex-col overflow-y-auto bg-sidebar text-slate-200"
-      data-testid="left-sidebar"
-    >
-      <a
-        href={routeHref({ name: 'camps' })}
-        className="flex items-center gap-2 border-b border-white/10 px-4 py-3"
+    <>
+      {/* Téléphone : la barre recouvre le contenu ; toucher à côté la referme. */}
+      <button
+        type="button"
+        aria-label={t('topbar.closeMenu')}
+        onClick={toggleLeft}
+        className="absolute inset-0 z-30 bg-slate-900/40 md:hidden"
+      />
+      <aside
+        className="flex h-full min-h-0 w-60 shrink-0 flex-col overflow-y-auto bg-sidebar text-slate-200 max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:w-72 max-md:max-w-[85vw] max-md:shadow-xl"
+        data-testid="left-sidebar"
       >
-        <TentTree size={22} className="text-white" aria-hidden />
-        <div>
-          <div className="text-base font-semibold text-white">{t('app.name')}</div>
-          <div className="text-xs text-slate-400">{t('app.tagline')}</div>
-        </div>
-      </a>
-      <nav className="px-2 py-2">
         <a
           href={routeHref({ name: 'camps' })}
-          className="block rounded-md px-3 py-2 text-sm hover:bg-white/10"
+          className="flex items-center gap-2 border-b border-white/10 px-4 py-3"
         >
-          {t('nav.camps')}
+          <TentTree size={22} className="text-white" aria-hidden />
+          <div>
+            <div className="text-base font-semibold text-white">{t('app.name')}</div>
+            <div className="text-xs text-slate-400">{t('app.tagline')}</div>
+          </div>
         </a>
-      </nav>
-      {showTools && <ToolPalette />}
-    </aside>
+        <nav className="px-2 py-2">
+          <a
+            href={routeHref({ name: 'camps' })}
+            className="block rounded-md px-3 py-2 text-sm hover:bg-white/10"
+          >
+            {t('nav.camps')}
+          </a>
+        </nav>
+        {showTools && <ToolPalette />}
+      </aside>
+    </>
   );
 }
 
@@ -117,7 +127,10 @@ function ToolPalette() {
                 aria-pressed={tool === id}
                 aria-label={label}
                 title={t('tools.shortcut', { name: label, key: keyOf(id) })}
-                onClick={() => setTool(id)}
+                onClick={() => {
+                  setTool(id);
+                  useUiStore.getState().closeLeftOnNarrowScreen();
+                }}
                 className={`flex h-9 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-white ${
                   tool === id ? 'bg-accent text-white' : 'text-slate-300 hover:bg-white/10'
                 }`}

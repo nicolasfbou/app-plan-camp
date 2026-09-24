@@ -60,7 +60,7 @@ export function CampsPage() {
       title={t('camps.title')}
       subtitle={t('camps.subtitle')}
       action={
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button onClick={() => importInput.current?.click()}>
             <FolderInput size={16} /> {t('campplan.importButton')}
           </Button>

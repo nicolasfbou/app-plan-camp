@@ -248,7 +248,7 @@ export function EditorPage({ siteId, planId }: { siteId: string; planId: string 
           useRevisionsStore.getState().open({ kind: 'create' });
         }}
       />
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
         <main className="relative min-w-0 flex-1">
           <CanvasStage />
           {background.kind === 'ready' && <NavigationControls />}

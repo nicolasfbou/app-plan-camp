@@ -30,7 +30,7 @@ export function Modal({ open, title, onClose, children, footer, wide = false }: 
         event.stopPropagation();
         onClose();
       }}
-      className={`m-auto w-full rounded-lg bg-white p-0 shadow-xl backdrop:bg-slate-900/50 ${wide ? 'max-w-3xl' : 'max-w-md'}`}
+      className={`m-auto w-[calc(100%-2rem)] rounded-lg bg-white p-0 shadow-xl backdrop:bg-slate-900/50 ${wide ? 'max-w-3xl' : 'max-w-md'}`}
     >
       {open && (
         <div className="flex max-h-[85vh] flex-col">
