@@ -25,6 +25,9 @@ window.addEventListener('online', () => void retryPendingLogout());
 const closeSpace = () => {
   if (isClosingHere()) return;
   repository.shutdown();
+  // L'onglet était peut-être sur un plan de l'espace effacé : il revient à l'accueil (sinon il
+  // rouvrirait ce plan, introuvable, dans l'espace local, et le noterait dans le journal).
+  history.replaceState(null, '', `${location.pathname}${location.search}#/`);
   window.location.reload();
 };
 onSync((message) => {
