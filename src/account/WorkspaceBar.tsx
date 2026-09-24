@@ -2,7 +2,7 @@
  * Barre de l'espace de travail : espace actif (local / organisation), état de synchronisation,
  * connexion, organisation (membres, audit), déconnexion. Toujours visible hors de l'éditeur.
  */
-import { Building2, LogIn, LogOut, Trash2 } from 'lucide-react';
+import { Building2, LogIn, LogOut, PanelLeftClose, PanelLeftOpen, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import {
   ACTIVE_PROFILE,
@@ -13,7 +13,9 @@ import {
 } from '@/app/profile.ts';
 import { t } from '@/i18n/index.ts';
 import { SyncIndicator } from '@/sync/ui/SyncIndicator.tsx';
+import { useUiStore } from '@/store/uiStore.ts';
 import { Button } from '@/ui/Button.tsx';
+import { IconButton } from '@/ui/IconButton.tsx';
 import { Modal } from '@/ui/Modal.tsx';
 import { useSubmit } from '@/ui/useSubmit.ts';
 import { logout, pendingChanges, purgeProfile, ServerUnreachableError } from './session.ts';
@@ -33,12 +35,17 @@ export function WorkspaceBar() {
   const active = ACTIVE_PROFILE;
   const [dialog, setDialog] = useState<null | { kind: 'logout' | 'remove'; pending: number }>(null);
   const manage = active.role === 'admin' || active.role === 'manager';
+  const leftCollapsed = useUiStore((s) => s.leftCollapsed);
+  const toggleLeft = useUiStore((s) => s.toggleLeft);
 
   return (
     <div
       className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-4 py-1.5 text-sm"
       data-testid="workspace-bar"
     >
+      <IconButton label={t('topbar.toggleMenu')} onClick={toggleLeft} pressed={!leftCollapsed}>
+        {leftCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+      </IconButton>
       <label className="flex items-center gap-2">
         <span className="text-slate-500">{t('account.space')}</span>
         <select

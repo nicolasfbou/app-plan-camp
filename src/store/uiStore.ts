@@ -12,8 +12,14 @@ interface UiState {
   setRightTab(tab: RightTab): void;
 }
 
+/** Petit écran (téléphone) : la barre latérale démarre repliée pour laisser la place au contenu. */
+const narrowScreen = () =>
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(max-width: 767px)').matches;
+
 export const useUiStore = create<UiState>()((set) => ({
-  leftCollapsed: false,
+  leftCollapsed: narrowScreen(),
   rightCollapsed: false,
   rightTab: 'background',
   toggleLeft: () => set((s) => ({ leftCollapsed: !s.leftCollapsed })),
