@@ -49,6 +49,11 @@ COPY --from=runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=runtime /app /app
 WORKDIR /app
 ENV NODE_ENV=production PG_BIN=/usr/lib/postgresql/16/bin STORAGE_FS_ROOT=/data/files
+# Même compte que le serveur (node, uid 1000) : les fichiers restaurés ou écrits dans le volume
+# lui appartiennent (un fichier créé par root en 0600 serait illisible pour le serveur).
+# (Volume neuf monté d'abord ici, ex. restauration : il hérite de ces droits.)
+RUN mkdir -p /data/files /backups && chown 1000:1000 /data/files /backups
+USER 1000:1000
 ENTRYPOINT ["node_modules/.bin/tsx", "--tsconfig", "server/tsconfig.json"]
 CMD ["server/scripts/backup.ts"]
 

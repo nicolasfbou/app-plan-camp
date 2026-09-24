@@ -1,6 +1,6 @@
 /** Pilote « disque » : objets sous un dossier racine, écriture atomique (fichier temporaire + renommage). */
 import { createReadStream } from 'node:fs';
-import { access, copyFile, mkdir, rename, rm } from 'node:fs/promises';
+import { access, chmod, copyFile, mkdir, rename, rm } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import type { Readable } from 'node:stream';
 import type { ObjectStorage } from './storage.ts';
@@ -22,6 +22,8 @@ export class FsStorage implements ObjectStorage {
     await mkdir(dirname(target), { recursive: true });
     const temp = `${target}.tmp-${process.pid}-${Date.now()}`;
     await copyFile(path, temp);
+    // Droits explicites : jamais ceux du fichier source (une sauvegarde est en 0600).
+    await chmod(temp, 0o644);
     await rename(temp, target);
   }
   async get(key: string): Promise<Readable | null> {

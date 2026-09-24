@@ -183,6 +183,10 @@ describe('sauvegarde complète et restauration isolée', () => {
       const report = await restore({ fromDir: dir, databaseUrl: ownerUrl, storage, pgBin: PG_BIN });
       expect(report.mismatches).toEqual([]);
       expect(report.counts).toEqual(report.manifest.counts);
+      // Fichiers restaurés lisibles par le serveur : jamais les droits 0600 de la sauvegarde.
+      const { stat } = await import('node:fs/promises');
+      const restoredFile = join(filesRoot, report.manifest.files[0]!.storageKey);
+      expect((await stat(restoredFile)).mode & 0o777).toBe(0o644);
       // Restauration refusée par-dessus une base non vide.
       await expect(restore({ fromDir: dir, databaseUrl: ownerUrl, storage, pgBin: PG_BIN })).rejects.toThrow(
         /pas vide/,
