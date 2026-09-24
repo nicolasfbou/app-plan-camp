@@ -461,8 +461,10 @@ export class SyncEngine {
     }
     const local = await this.deps.raw.openPlan(op.entityId);
     if (!local) return 'done'; // supprimé localement : l'opération de suppression suit
-    await this.ensureFiles(local.doc);
     const link = await this.link('plan', op.entityId);
+    // Serveur restauré : rien n'est envoyé avant la comparaison avec sa version (réception).
+    if (link?.restored) return 'wait';
+    await this.ensureFiles(local.doc);
     try {
       const r = await this.request<{ serverVersion: number }>(
         'PUT',
@@ -566,11 +568,25 @@ export class SyncEngine {
 
   async pull(): Promise<void> {
     let cursor = ((await this.t.syncState.get('cursor'))?.value as number | undefined) ?? 0;
+    let restoredPass = false;
     for (let page = 0; page < 50; page++) {
-      const r = await this.request<{ changes: Change[]; cursor: number; more: boolean }>(
+      const r = await this.request<{ changes: Change[]; cursor: number; more: boolean; generation?: string }>(
         'GET',
         `/api/sync/changes?since=${cursor}&limit=500`,
       );
+      if (r.generation) {
+        const known = (await this.t.syncState.get('generation'))?.value as string | undefined;
+        if (known && known !== r.generation) {
+          // Serveur restauré (retour arrière) : curseur et liens ne sont plus fiables. Tout est
+          // relu depuis le début ; chaque plan est comparé (voir pullPlan / finishRestoredPass).
+          await this.markRestored(r.generation);
+          cursor = 0;
+          restoredPass = true;
+          page = -1;
+          continue;
+        }
+        if (!known) await this.t.syncState.put({ key: 'generation', value: r.generation });
+      }
       // Dernier état par élément (plusieurs changements d'un même plan = une seule lecture).
       const latest = new Map<string, Change>();
       for (const c of r.changes) latest.set(`${c.kind}:${c.id}`, c);
@@ -599,6 +615,39 @@ export class SyncEngine {
       if (ordered.length) this.post({ type: 'pull-applied' });
       if (!r.more) break;
     }
+    if (restoredPass) await this.finishRestoredPass();
+  }
+
+  /** Nouvelle génération du serveur : liens marqués « à revérifier », curseur remis à zéro. */
+  private async markRestored(generation: string) {
+    for (const link of await this.t.syncLinks.toArray())
+      await this.t.syncLinks.put({
+        ...link,
+        restored: true,
+        serverVersion: link.entityType === 'plan' ? -1 : 0,
+      });
+    await this.t.syncState.put({ key: 'cursor', value: 0 });
+    await this.t.syncState.put({ key: 'generation', value: generation });
+    this.setStatus({
+      lastError: 'Le serveur a été restauré depuis une sauvegarde : vérification de chaque plan.',
+    });
+  }
+
+  /**
+   * Fin de la relecture après restauration : un plan lié que le serveur restauré ne connaît plus
+   * (créé après la sauvegarde) devient un conflit « supprimé » — la personne décide (le renvoyer,
+   * le garder en copie ou le retirer), rien ne disparaît en silence.
+   */
+  private async finishRestoredPass() {
+    for (const link of await this.t.syncLinks.where('entityType').equals('plan').toArray()) {
+      if (!link.restored) continue;
+      const local = await this.deps.raw.openPlan(link.entityId);
+      await this.setLink({ ...link, restored: false, serverVersion: 0 });
+      if (local && !(await this.t.conflicts.get(link.entityId)))
+        await this.saveConflict(link.entityId, local, 'deleted', null, link);
+    }
+    for (const link of await this.t.syncLinks.toArray())
+      if (link.restored) await this.t.syncLinks.put({ ...link, restored: false });
   }
 
   private async pullCamp(
@@ -645,6 +694,7 @@ export class SyncEngine {
 
   private async pullPlan(change: Change) {
     const link = await this.link('plan', change.id);
+    if (link?.restored) return this.pullRestoredPlan(change, link);
     if (link && change.serverVersion <= link.serverVersion && !link.pendingPull) return;
     if (await this.t.conflicts.get(change.id)) return; // décision en attente : rien n'est touché
     const dirty = await this.locallyDirty(change.id, link);
@@ -680,6 +730,43 @@ export class SyncEngine {
       return;
     }
     await this.applyServerPlan(change.id);
+  }
+
+  /**
+   * Plan relu après une restauration du serveur : identique à la copie locale → simplement
+   * relié ; différent (dans un sens ou dans l'autre) → conflit, la personne décide. Jamais
+   * d'écrasement silencieux, ni de la copie locale par une version plus ancienne, ni l'inverse.
+   */
+  private async pullRestoredPlan(change: Change, link: SyncLinkRecord) {
+    const local = await this.deps.raw.openPlan(change.id);
+    const cleared = { ...link, restored: false };
+    if (!local) {
+      await this.setLink({ ...cleared, serverVersion: 0 });
+      if (!change.deleted) await this.applyServerPlan(change.id);
+      return;
+    }
+    if (await this.t.conflicts.get(change.id)) {
+      await this.setLink(cleared);
+      return;
+    }
+    if (change.deleted) {
+      await this.setLink({ ...cleared, serverVersion: change.serverVersion });
+      await this.saveConflict(change.id, local, 'deleted', null, link);
+      return;
+    }
+    const server = await this.request<ServerPlan>('GET', `/api/plans/${encodeURIComponent(change.id)}`);
+    const serverDoc = await this.localize(parsePlanDocument(server.document));
+    if (JSON.stringify(serverDoc) === JSON.stringify(local.doc)) {
+      await this.setLink({
+        ...cleared,
+        serverVersion: server.serverVersion,
+        syncedLocalVersion: local.version,
+        baseDoc: local.doc,
+      });
+      return;
+    }
+    await this.setLink({ ...cleared, serverVersion: server.serverVersion });
+    await this.saveConflict(change.id, local, 'version', server, link);
   }
 
   private async saveConflict(

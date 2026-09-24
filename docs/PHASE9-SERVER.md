@@ -195,6 +195,71 @@ La question est posée à chaque connexion. Le poste n'est jamais supposé perso
 L'espace **« Local (sans compte) »** des phases 1 à 8 reste intact : base `campplanner`, sans
 serveur.
 
+### Révocation d'accès et données déjà sur un appareil (phase 9.1)
+
+Révoquer un accès coupe immédiatement le **serveur** :
+
+- toutes les sessions sont fermées, et les nouvelles requêtes sont refusées même depuis un autre
+  navigateur ;
+- chaque requête revérifie le compte actif, l'adhésion active et la période d'accès.
+
+Cela n'efface **pas à distance** les données déjà présentes sur un appareil : un appareil
+hors ligne ne peut rien recevoir, et CampPlanner ne prétend pas le contraire.
+
+**Périodes d'accès.** Chaque suspension d'un membre ouvre une nouvelle période
+(`memberships.access_epoch`).
+
+- Une session n'est valable que dans la période où elle a été ouverte.
+- Chaque modification locale mise en file retient la période dans laquelle elle a été faite.
+- Le serveur refuse (`409 access-revoked-operation`) toute opération d'une période révoquée, même
+  envoyée plus tard avec une nouvelle session valide, après réactivation.
+
+**Appareil de confiance** :
+
+- Le travail hors ligne continue comme prévu.
+- Au retour en ligne, la session est revérifiée. Session refusée : rien n'est envoyé, et
+  l'indicateur affiche « Connexion requise ».
+- Après une nouvelle connexion, les modifications faites dans une période révoquée sont **mises
+  en quarantaine** : état « Accès révoqué — modifications non envoyées ». Elles ne sont jamais
+  synchronisées automatiquement, et les modifications suivantes du même plan attendent derrière
+  elles.
+- La personne peut exporter une **copie de secours** (`.campplan`) de ces modifications, puis les
+  **mettre de côté**. La version locale est archivée sur l'appareil, la version du serveur est
+  reprise, et rien n'est envoyé.
+
+**Appareil partagé** :
+
+- Dès que le serveur refuse la session (expirée, révoquée, compte suspendu), l'espace est
+  verrouillé dans l'onglet.
+- Déconnexion, et effacement depuis l'écran verrouillé :
+  - la base IndexedDB est détruite ;
+  - les journaux de récupération sont effacés ;
+  - les autres onglets sont fermés, par message entre onglets ET par l'évènement `storage` ;
+  - un onglet resté ouvert sans recevoir aucun signal ne peut plus écrire : les écritures
+    IndexedDB et les journaux de récupération d'un espace retiré sont refusés ;
+  - une base vide rouverte par ce type d'onglet est effacée au démarrage suivant (liste des bases
+    purgées, conservée).
+- Déconnexion hors ligne : suspendue, car la session serveur resterait valable. Si la personne
+  choisit « Effacer quand même », la session est fermée sur le serveur dès le retour du réseau
+  (le cookie est encore envoyé), sauf nouvelle connexion entre-temps.
+- Pas de sauvegarde externe automatique sur un appareil partagé.
+
+**Limites qui restent**, à assumer et à communiquer :
+
+- **Appareil hors ligne** : ses données locales restent lisibles par la personne tant qu'il ne se
+  reconnecte pas. C'est vrai pour tout appareil de confiance, et pour un appareil partagé jusqu'à
+  la déconnexion ou l'effacement. Aucun effacement à distance n'est possible.
+- **Fichiers `.campplan` déjà exportés** (sauvegardes externes, copies de secours, exports) : ce
+  sont des fichiers ordinaires, hors du contrôle de CampPlanner. Une révocation ne les atteint
+  pas. Ils contiennent le plan, la photo et les révisions. Leur diffusion relève des règles de
+  l'organisation : support chiffré, dossiers d'équipe à accès contrôlé, suppression à la fin
+  d'une mission.
+- **Données non chiffrées** dans le navigateur (IndexedDB) : un accès direct au profil du
+  navigateur les montrerait. Protection : chiffrement du disque de l'appareil, session du système
+  d'exploitation.
+- Un client **modifié** qui ignorerait la période d'accès se heurterait au refus du serveur.
+  Seules les modifications ordinaires faites pendant une période **valide** sont acceptées.
+
 ## 4. API
 
 Toutes les réponses sont en JSON. Les erreurs ont la forme `{ error, message, …détails }`.
@@ -204,17 +269,20 @@ organisation** (même réponse), 409 conflit de version, 413 trop gros, 422 donn
 
 ### Authentification et organisation
 
-| Méthode et route                      | Rôle                                                                                                              |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `POST /api/auth/login`                | `{ email, password, deviceMode, organization? }` → cookie + `{ user, organization, role, deviceMode, expiresAt }` |
-| `GET /api/auth/me`                    | session courante                                                                                                  |
-| `POST /api/auth/logout`               | révoque la session                                                                                                |
-| `GET /api/members`                    | membres (`members.read`)                                                                                          |
-| `POST /api/invitations`               | `{ email, role }` → lien à usage unique (`members.manage`)                                                        |
-| `GET /api/invitations/:token`         | aperçu de l'invitation (organisation, courriel, rôle)                                                             |
-| `POST /api/invitations/:token/accept` | crée le compte, ou rattache un compte existant après vérification de son mot de passe                             |
-| `PATCH /api/members/:userId`          | rôle, suspension (`members.manage`)                                                                               |
-| `GET /api/audit?before=&limit=`       | journal d'audit (`audit.read`)                                                                                    |
+| Méthode et route                      | Rôle                                                                                                                                                                                                    |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/auth/login`                | `{ email, password, deviceMode, organization? }` → cookie + `{ user, organization, role, deviceMode, expiresAt }`                                                                                       |
+| `GET /api/auth/me`                    | session courante                                                                                                                                                                                        |
+| `POST /api/auth/logout`               | révoque la session                                                                                                                                                                                      |
+| `GET /api/members`                    | membres (`members.read`)                                                                                                                                                                                |
+| `POST /api/invitations`               | `{ email, role }` → lien à usage unique (`members.manage`)                                                                                                                                              |
+| `GET /api/invitations/:token`         | aperçu de l'invitation (organisation, courriel, rôle)                                                                                                                                                   |
+| `POST /api/invitations/:token/accept` | crée le compte, ou rattache un compte existant après vérification de son mot de passe                                                                                                                   |
+| `PATCH /api/members/:userId`          | rôle, suspension ou réactivation (`members.manage`). Une suspension ferme toutes ses sessions et ouvre une nouvelle **période d'accès** (§ 3). Audit : `member.role`, `member.disable`, `member.enable` |
+| `GET /api/invitations`                | invitations non acceptées : en attente, expirées, révoquées (`members.manage`)                                                                                                                          |
+| `DELETE /api/invitations/:id`         | révocation : le lien est refusé immédiatement (audit `member.invite.revoke`)                                                                                                                            |
+| `POST /api/invitations/:id/resend`    | renvoi : l'ancien lien est révoqué, un nouveau jeton est émis (audit `member.invite.resend`)                                                                                                            |
+| `GET /api/audit?before=&limit=`       | journal d'audit (`audit.read`)                                                                                                                                                                          |
 
 ### Données
 
@@ -239,6 +307,7 @@ Toute écriture accepte `Idempotency-Key: <operationId>`.
 | `GET /api/sync/changes?since=&limit=`                    | changements depuis le curseur : `{ changes, cursor, more }`                                                                                                                                                 |
 | `POST /api/publish/check`                                | avant publication : identifiants et fichiers déjà présents sur le serveur                                                                                                                                   |
 | `GET /api/health`                                        | état du service                                                                                                                                                                                             |
+| `GET /api/health/ready`                                  | prêt à servir : base (rôle applicatif) et stockage joignables ; `503` sinon (orchestrateur, voir [OPERATIONS.md](OPERATIONS.md))                                                                            |
 
 L'organisation vient **toujours** de la session. Un `organizationId` ou un `userId` fourni par
 le client est ignoré ou refusé. Les tests `security.test.ts` le vérifient.
@@ -414,18 +483,19 @@ Lancement : `npm run test:server`, qui démarre un PostgreSQL temporaire (binair
   répètent pas le filtre d'organisation. Le flux des changements et les jointures sensibles le
   font.
 - **Nettoyage** : les clés d'idempotence et les invitations expirées restent en base (aucune
-  purge planifiée). Il n'existe pas encore de révocation manuelle d'une invitation par un
-  administrateur, hors expiration et annulation automatique après 5 échecs.
+  purge planifiée). Les fichiers jamais référencés se nettoient par une commande de maintenance
+  ([OPERATIONS.md](OPERATIONS.md) § 9).
 - **Invitation** : l'aperçu d'une invitation indique à son détenteur si le courriel correspond à
   un compte existant, pour adapter le formulaire.
 
 - **Microsoft Entra ID** : le modèle d'identité est prêt (`user_identities`), le flux OIDC n'est
   pas écrit.
-- **Azure Blob** : l'interface est prête, le pilote n'est pas écrit. Le pilote S3 est couvert par
-  la même interface, mais **n'a pas été testé contre un vrai service** dans cet environnement.
-- **Docker** n'est pas disponible dans l'environnement de développement : aucune image ni
-  `docker-compose` n'est livré ou testé. Le déploiement décrit au § 6 s'appuie sur Node et
-  PostgreSQL directement.
+- **Azure Blob** : l'interface est prête, le pilote n'est pas écrit. Le pilote S3 est testé
+  contre un vrai service compatible, SeaweedFS 3.80 isolé (phase 9.1), mais **pas contre AWS S3
+  ni Azure**.
+- **Docker** : image, `docker compose` et essai de fumée testés localement (phase 9.1). Pas de
+  déploiement de production. Voir [OPERATIONS.md](OPERATIONS.md).
+- **Révocation hors ligne** : voir « Révocation d'accès et données déjà sur un appareil » (§ 3).
 - **Chiffrement** : les données d'un poste de confiance sont stockées en clair dans IndexedDB,
   comme en phase 8. Le poste partagé les détruit à la déconnexion.
 - **Session** : une seule session serveur active par navigateur (un seul cookie). Passer d'une

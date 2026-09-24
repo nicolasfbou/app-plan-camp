@@ -249,6 +249,20 @@ export async function restore(options: {
     `--dbname=${options.databaseUrl}`,
     join(options.fromDir, manifest.database.path),
   ]);
+  // Nouvelle génération : les appareils sauront que l'historique du serveur a été remplacé.
+  const gen = new pg.Client({ connectionString: options.databaseUrl });
+  await gen.connect();
+  try {
+    // (Sauvegarde antérieure à la migration 004 : la table sera créée par la migration, avec une
+    // génération neuve de toute façon.)
+    if ((await gen.query("SELECT to_regclass('public.server_meta') AS t")).rows[0].t)
+      await gen.query(
+        `INSERT INTO server_meta (key, value) VALUES ('generation', gen_random_uuid()::text)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      );
+  } finally {
+    await gen.end();
+  }
   for (const f of manifest.files)
     if (!(await options.storage.exists(f.storageKey)))
       await options.storage.putFile(f.storageKey, join(options.fromDir, f.path), {

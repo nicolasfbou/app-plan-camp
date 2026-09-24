@@ -43,7 +43,10 @@ export function registerSyncRoutes(app: FastifyInstance, deps: Deps) {
           deleted: r.deleted,
         }));
       const last = rows.rows.at(-1)?.seq ?? since;
-      return { changes, cursor: last, more: rows.rows.length === limit };
+      const generation = (
+        await c.query<{ value: string }>("SELECT value FROM server_meta WHERE key = 'generation'")
+      ).rows[0]?.value;
+      return { changes, cursor: last, more: rows.rows.length === limit, generation };
     });
   });
 

@@ -73,6 +73,11 @@ export interface SyncLinkRecord {
   /** Version serveur reçue mais pas encore appliquée (plan ouvert en édition). */
   pendingPull?: number;
   deleted?: boolean;
+  /**
+   * Serveur restauré depuis une sauvegarde (nouvelle génération) : ce lien n'est plus fiable.
+   * La prochaine lecture compare le contenu ; une différence devient un conflit (jamais écrasée).
+   */
+  restored?: boolean;
 }
 
 /** Conflit : jamais résolu en silence ; la copie locale reste intacte jusqu'à décision. */

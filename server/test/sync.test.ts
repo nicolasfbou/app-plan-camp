@@ -476,3 +476,97 @@ describe('révocation d’accès (appareil de confiance)', () => {
     m.close();
   });
 });
+
+describe('serveur restauré depuis une sauvegarde (retour arrière)', () => {
+  it('rien n’est écrasé en silence : version locale plus récente = conflit ; plan inconnu du serveur restauré = conflit ; identique = relié', async () => {
+    const { backup, restore } = await import('../src/ops/backup.ts');
+    const { buildApp } = await import('../src/app.ts');
+    const { createPool } = await import('../src/db.ts');
+    const { FsStorage } = await import('../src/storage/fsStorage.ts');
+    const { loadConfig } = await import('../src/config.ts');
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const pgMod = await import('pg');
+    const m = await device(h, 'gestion@pamm.test', h.orgA.id);
+    const e = await device(h, 'edition@pamm.test', h.orgA.id);
+    const stable = await newLocalPlan(m, 'Plan inchangé');
+    const changed = await newLocalPlan(m, 'Plan modifié après la sauvegarde');
+    await m.sync();
+    await e.sync();
+    // Sauvegarde complète du serveur.
+    const dir = mkdtempSync(join(tmpdir(), 'cp-sync-backup-'));
+    await backup({
+      databaseUrl: h.db.ownerUrl,
+      storage: h.storage,
+      outDir: dir,
+      pgBin: process.env.PG_BIN ?? '/usr/lib/postgresql/16/bin',
+    });
+    // Après la sauvegarde : une modification (v2) et un nouveau plan, reçus par l'autre poste.
+    await edit(m, changed.doc.plan.id, 'modifié après la sauvegarde');
+    const later = await newLocalPlan(m, 'Plan créé après la sauvegarde');
+    await m.sync();
+    await e.sync();
+    expect((await e.repo.openPlan(changed.doc.plan.id))!.doc.plan.titleBlock.notes).toBe(
+      'modifié après la sauvegarde',
+    );
+    // Retour arrière : le serveur est restauré depuis la sauvegarde (autre base, nouvelle génération).
+    const admin = new pgMod.default.Client({
+      connectionString: h.db.ownerUrl.replace(/\/[^/]+$/, '/postgres'),
+    });
+    await admin.connect();
+    const name = `cp_restauree_${Date.now()}`;
+    await admin.query(`CREATE DATABASE ${name}`);
+    await admin.end();
+    const restoredUrl = h.db.ownerUrl.replace(/\/[^/]+$/, `/${name}`);
+    const files = mkdtempSync(join(tmpdir(), 'cp-sync-restore-'));
+    const storage = new FsStorage(files);
+    const report = await restore({
+      fromDir: dir,
+      databaseUrl: restoredUrl,
+      storage,
+      pgBin: process.env.PG_BIN ?? '/usr/lib/postgresql/16/bin',
+    });
+    expect(report.mismatches).toEqual([]);
+    const appUrl = new URL(restoredUrl);
+    appUrl.username = 'campplanner_app';
+    appUrl.password = 'app';
+    const pool = createPool(appUrl.toString());
+    const app2 = await buildApp({
+      config: loadConfig({ DATABASE_URL: appUrl.toString(), STORAGE_FS_ROOT: files }),
+      pool,
+      storage,
+    });
+    try {
+      e.net.app = app2;
+      await e.relogin();
+      await e.sync();
+      // Version locale plus récente que le serveur restauré : conflit, copie locale intacte.
+      const conflicts = await e.raw.sync.conflicts.toArray();
+      const byPlan = new Map(conflicts.map((c) => [c.planId, c.reason]));
+      expect(byPlan.get(changed.doc.plan.id)).toBe('version');
+      expect((await e.repo.openPlan(changed.doc.plan.id))!.doc.plan.titleBlock.notes).toBe(
+        'modifié après la sauvegarde',
+      );
+      // Plan inconnu du serveur restauré : conflit « supprimé », copie locale intacte.
+      expect(byPlan.get(later.doc.plan.id)).toBe('deleted');
+      expect(await e.repo.openPlan(later.doc.plan.id)).toBeTruthy();
+      // Plan identique des deux côtés : simplement relié, pas de conflit.
+      expect(byPlan.has(stable.doc.plan.id)).toBe(false);
+      const link = await e.raw.sync.syncLinks.get(`plan:${stable.doc.plan.id}`);
+      expect(link?.restored).toBeFalsy();
+      expect(link?.serverVersion).toBe(1);
+      // Aucune écriture n'est partie vers le serveur restauré sans décision.
+      const owner = new pgMod.default.Client({ connectionString: restoredUrl });
+      await owner.connect();
+      const versions = await owner.query('SELECT count(*)::int AS n FROM plan_versions');
+      await owner.end();
+      expect(versions.rows[0].n).toBe(report.manifest.counts.plan_versions);
+    } finally {
+      await app2.close();
+      await pool.end();
+      m.close();
+      e.close();
+    }
+  }, 60_000);
+});

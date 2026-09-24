@@ -25,6 +25,8 @@ export interface NetworkControl {
    */
   beforeRequest?: (method: string, url: string) => Promise<void> | undefined;
   requests: string[];
+  /** Autre serveur (ex. serveur restauré depuis une sauvegarde) : remplace celui du départ. */
+  app?: FastifyInstance;
 }
 
 export function injectFetch(app: FastifyInstance, getCookie: () => string, net: NetworkControl): Fetch {
@@ -45,7 +47,12 @@ export function injectFetch(app: FastifyInstance, getCookie: () => string, net: 
     const headers: Record<string, string> = { ...(init.headers as Record<string, string>) };
     const cookie = getCookie();
     if (cookie) headers.cookie = cookie;
-    const r = await app.inject({ method: method as 'GET', url, headers, ...(payload ? { payload } : {}) });
+    const r = await (net.app ?? app).inject({
+      method: method as 'GET',
+      url,
+      headers,
+      ...(payload ? { payload } : {}),
+    });
     if (net.loseNextResponse?.(method, url)) {
       net.loseNextResponse = undefined;
       throw new TypeError('response lost');
@@ -58,12 +65,13 @@ export function injectFetch(app: FastifyInstance, getCookie: () => string, net: 
 }
 
 export async function device(h: Harness, email: string, orgId: string) {
+  // (déclaré avant la connexion : `net.app` peut rediriger vers un autre serveur)
   const net: NetworkControl = { online: true, requests: [] };
   let cookie = '';
   /** Période d'accès connue de l'appareil (comme `Profile.accessEpoch`). */
   let epoch: number | undefined;
   const login = async () => {
-    const r = await h.app.inject({
+    const r = await (net.app ?? h.app).inject({
       method: 'POST',
       url: '/api/auth/login',
       headers: { 'x-campplanner': '1' },
