@@ -79,19 +79,42 @@ export function startCluster(): { adminUrl: string; stop(): void } {
   writeFileSync(join(dir, 'owner.pid'), String(process.pid));
   chmodSync(dir, 0o777);
   if (process.getuid?.() === 0) execFileSync('chown', ['postgres', dir]);
-  const port = 56000 + Math.floor(Math.random() * 4000);
   run([`${BIN}/initdb`, '-D', `${dir}/data`, '-A', 'trust', '-U', 'postgres', '-E', 'UTF8']);
-  run([
-    `${BIN}/pg_ctl`,
-    '-D',
-    `${dir}/data`,
-    '-o',
-    `-p ${port} -k ${dir} -c fsync=off -c full_page_writes=off`,
-    '-l',
-    `${dir}/log`,
-    '-w',
-    'start',
-  ]);
+  // Port tiré au hasard : il peut être déjà pris (plage des ports éphémères du système). Échec de
+  // démarrage = nouvel essai sur un autre port ; au dernier échec, le journal de PostgreSQL est
+  // joint à l'erreur et le dossier est supprimé (jamais d'instance à moitié démarrée laissée).
+  let port: number;
+  for (let attempt = 1; ; attempt++) {
+    port = 56000 + Math.floor(Math.random() * 4000);
+    try {
+      run([
+        `${BIN}/pg_ctl`,
+        '-D',
+        `${dir}/data`,
+        '-o',
+        `-p ${port} -k ${dir} -c fsync=off -c full_page_writes=off`,
+        '-l',
+        `${dir}/log`,
+        '-w',
+        'start',
+      ]);
+      break;
+    } catch (error) {
+      let log = '';
+      try {
+        log = readFileSync(join(dir, 'log'), 'utf8').split('\n').slice(-8).join('\n');
+      } catch {
+        // pas de journal
+      }
+      if (attempt >= 5) {
+        stopDir(dir);
+        throw new Error(`${error instanceof Error ? error.message : String(error)}\n${log}`, {
+          cause: error,
+        });
+      }
+      console.warn(`[pgCluster] démarrage refusé sur le port ${port} (essai ${attempt}) :\n${log}`);
+    }
+  }
   const adminUrl = `postgres://postgres@127.0.0.1:${port}/postgres`;
   run([`${BIN}/psql`, adminUrl, '-c', 'CREATE ROLE campplanner_app LOGIN']);
   let stopped = false;

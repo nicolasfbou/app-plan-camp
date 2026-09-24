@@ -30,6 +30,8 @@ export interface ErrorEntry {
   context?: string;
 }
 
+import { activeSpaceRemoved } from '@/app/profile';
+
 const KEY = 'campplanner.errorLog';
 export const MAX_ENTRIES = 200;
 const MAX_MESSAGE = 500;
@@ -49,6 +51,9 @@ function read(): ErrorEntry[] {
 }
 
 function write(list: ErrorEntry[]) {
+  // Onglet d'un espace effacé (poste partagé, pas encore rechargé) : il n'écrit plus rien, sinon
+  // il recréerait une trace personnelle que la déconnexion vient d'effacer.
+  if (activeSpaceRemoved()) return;
   try {
     localStorage.setItem(KEY, JSON.stringify(list));
   } catch {
