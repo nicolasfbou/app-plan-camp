@@ -2,6 +2,7 @@
  * Configuration du serveur, uniquement par variables d'environnement (portable : serveur PAMM,
  * Azure, ailleurs). Aucune valeur secrète par défaut.
  */
+import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 
 const bool = (v: string | undefined, fallback: boolean) =>
@@ -24,6 +25,8 @@ const schema = z.object({
   maxSvgBytes: z.number().int().positive(),
   maxPlanBytes: z.number().int().positive(),
   staticDir: z.string().nullable(),
+  /** Migrations au démarrage (pratique en développement) ; en production : étape séparée. */
+  migrateOnStart: z.boolean(),
   storage: z.discriminatedUnion('driver', [
     z.object({ driver: z.literal('fs'), root: z.string().min(1) }),
     z.object({
@@ -39,8 +42,38 @@ const schema = z.object({
 
 export type ServerConfig = z.infer<typeof schema>;
 
-export function loadConfig(env: Record<string, string | undefined> = process.env): ServerConfig {
-  const databaseUrl = env.DATABASE_URL ?? '';
+/** Variables secrètes lisibles depuis un fichier monté (`<NOM>_FILE`, secrets Docker / coffre). */
+export const FILE_SECRETS = [
+  'DATABASE_URL',
+  'MIGRATION_DATABASE_URL',
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'BOOTSTRAP_PASSWORD',
+] as const;
+
+/**
+ * Remplace `<NOM>_FILE` par le contenu du fichier (sans fin de ligne). Une valeur directe et un
+ * fichier en même temps : refusé (ambiguïté).
+ */
+export function resolveFileSecrets(
+  env: Record<string, string | undefined>,
+  read: (path: string) => string = (path) => readFileSync(path, 'utf8'),
+): Record<string, string | undefined> {
+  const out = { ...env };
+  for (const name of FILE_SECRETS) {
+    const file = env[`${name}_FILE`];
+    if (!file) continue;
+    if (env[name]) throw new Error(`${name} et ${name}_FILE sont tous deux définis : n’en garder qu’un.`);
+    out[name] = read(file).replace(/\r?\n$/, '');
+  }
+  return out;
+}
+
+export function loadConfig(rawEnv: Record<string, string | undefined> = process.env): ServerConfig {
+  const env = resolveFileSecrets(rawEnv);
+  // Outils d'exploitation (migrations, sauvegarde) : l'URL du propriétaire suffit. Le serveur, lui,
+  // refuse de démarrer avec un rôle qui contourne la RLS (assertRowSecurityApplies).
+  const databaseUrl = env.DATABASE_URL ?? env.MIGRATION_DATABASE_URL ?? '';
   const driver = env.STORAGE_DRIVER ?? 'fs';
   return schema.parse({
     databaseUrl,
@@ -56,6 +89,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     maxSvgBytes: Number(env.MAX_SVG_BYTES ?? 2 * 1024 * 1024),
     maxPlanBytes: Number(env.MAX_PLAN_BYTES ?? 25 * 1024 * 1024),
     staticDir: env.STATIC_DIR ?? null,
+    migrateOnStart: bool(env.MIGRATE_ON_START, true),
     storage:
       driver === 's3'
         ? {

@@ -1,0 +1,11 @@
+node_modules
+dist
+dev-dist
+test-results
+playwright-report
+local-test-data
+server-data
+deploy/secrets
+deploy/campplanner.env
+.git
+*.log

@@ -1,0 +1,13 @@
+# Terminaison HTTPS devant CampPlanner.
+# Production : remplacer {$CAMPPLANNER_DOMAIN} par le vrai nom (certificat Let's Encrypt
+# automatique) ; essai local : CAMPPLANNER_DOMAIN=localhost (certificat interne de Caddy).
+{$CAMPPLANNER_DOMAIN:localhost} {
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+	reverse_proxy campplanner:8787
+}

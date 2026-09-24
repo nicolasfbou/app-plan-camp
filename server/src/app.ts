@@ -41,7 +41,11 @@ export interface Deps {
   throttle: LoginThrottle;
 }
 
-const PUBLIC_ROUTES = [/^\/api\/health$/, /^\/api\/auth\/login$/, /^\/api\/invitations\/[^/]+(\/accept)?$/];
+const PUBLIC_ROUTES = [
+  /^\/api\/health(\/ready)?$/,
+  /^\/api\/auth\/login$/,
+  /^\/api\/invitations\/[^/]+(\/accept)?$/,
+];
 
 export function requireAuth(request: FastifyRequest): Auth {
   if (!request.auth) throw new HttpError(401, 'unauthenticated', 'Connexion requise.');
@@ -124,6 +128,21 @@ export async function buildApp(
   });
 
   app.get('/api/health', async () => ({ ok: true, service: 'campplanner', api: 1 }));
+  // Prêt à servir : base joignable (rôle applicatif) ET stockage des fichiers joignable. Utilisé
+  // par l'orchestrateur (redémarrage, bascule) ; ne révèle aucune donnée.
+  app.get('/api/health/ready', async (_request, reply) => {
+    const checks = { database: false, storage: false };
+    await full.pool
+      .query('SELECT 1')
+      .then(() => (checks.database = true))
+      .catch(() => undefined);
+    await full.storage
+      .exists('health/probe')
+      .then(() => (checks.storage = true))
+      .catch(() => undefined);
+    const ok = checks.database && checks.storage;
+    return reply.status(ok ? 200 : 503).send({ ok, ...checks });
+  });
   registerAuthRoutes(app, full);
   registerMemberRoutes(app, full);
   registerFileRoutes(app, full);

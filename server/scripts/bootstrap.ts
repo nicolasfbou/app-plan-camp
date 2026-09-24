@@ -6,7 +6,7 @@
  */
 import { parseArgs } from 'node:util';
 import { addUser, createOrganization } from '../src/bootstrap.ts';
-import { loadConfig } from '../src/config.ts';
+import { loadConfig, resolveFileSecrets } from '../src/config.ts';
 import { createPool } from '../src/db.ts';
 import { migrate } from '../src/migrate.ts';
 
@@ -18,7 +18,7 @@ const { values } = parseArgs({
     name: { type: 'string' },
   },
 });
-const password = process.env.BOOTSTRAP_PASSWORD ?? '';
+const password = resolveFileSecrets(process.env).BOOTSTRAP_PASSWORD ?? '';
 if (!values.org || !values.slug || !values.email || !values.name || !password) {
   console.error(
     'Usage : BOOTSTRAP_PASSWORD=… bootstrap --org <nom> --slug <slug> --email <courriel> --name <nom>',

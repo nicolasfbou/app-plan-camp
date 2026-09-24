@@ -1,0 +1,123 @@
+# CampPlanner — déploiement de référence (un hôte) : PostgreSQL 16, migrations (étape séparée),
+# serveur CampPlanner, HTTPS (Caddy), outils d'exploitation (sauvegarde / restauration).
+# Stockage des fichiers : volume disque (STORAGE_DRIVER=fs) par défaut, ou service compatible S3
+# (voir campplanner.env.example). Secrets : fichiers dans deploy/secrets/ (jamais dans Git).
+#
+#   cp deploy/campplanner.env.example deploy/campplanner.env      # puis l'adapter
+#   ./deploy/make-secrets.sh                                       # secrets locaux aléatoires
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#
+# Images de base : variables NODE_IMAGE, POSTGRES_IMAGE, CADDY_IMAGE (miroir si Docker Hub est
+# inaccessible, ex. mirror.gcr.io/library/…). Procédures complètes : docs/OPERATIONS.md.
+
+name: campplanner
+
+x-build: &build
+  context: ..
+  dockerfile: deploy/Dockerfile
+  args:
+    NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
+    POSTGRES_IMAGE: ${POSTGRES_IMAGE:-postgres:16-bookworm}
+
+services:
+  db:
+    image: ${POSTGRES_IMAGE:-postgres:16-bookworm}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: campplanner
+      POSTGRES_USER: campplanner_owner
+      POSTGRES_PASSWORD_FILE: /run/secrets/campplanner_owner_db_password
+    secrets:
+      - campplanner_owner_db_password
+      - campplanner_app_db_password
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U campplanner_owner -d campplanner']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Migrations : étape séparée, avant le serveur (rôle propriétaire du schéma).
+  migrate:
+    image: campplanner:${CAMPPLANNER_VERSION:-local}
+    build: { <<: *build, target: server }
+    command: ['node_modules/.bin/tsx', '--tsconfig', 'server/tsconfig.json', 'server/scripts/migrate.ts']
+    env_file: campplanner.env
+    environment:
+      MIGRATION_DATABASE_URL_FILE: /run/secrets/campplanner_migration_url
+    secrets:
+      - campplanner_migration_url
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: 'no'
+
+  campplanner:
+    image: campplanner:${CAMPPLANNER_VERSION:-local}
+    build: { <<: *build, target: server }
+    restart: unless-stopped
+    env_file: campplanner.env
+    environment:
+      DATABASE_URL_FILE: /run/secrets/campplanner_database_url
+      MIGRATE_ON_START: 'false'
+      TRUST_PROXY: 'true'
+      COOKIE_SECURE: 'true'
+    secrets:
+      - campplanner_database_url
+    volumes:
+      - files:/data/files
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - '8787'
+
+  https:
+    image: ${CADDY_IMAGE:-caddy:2}
+    restart: unless-stopped
+    environment:
+      CAMPPLANNER_DOMAIN: ${CAMPPLANNER_DOMAIN:-localhost}
+    ports:
+      - '${HTTPS_PORT:-443}:443'
+      - '${HTTP_PORT:-80}:80'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      - campplanner
+
+  # Exploitation (profil « ops », lancé à la demande) : sauvegarde, vérification, restauration,
+  # nettoyage des fichiers jamais référencés.
+  #   docker compose -f deploy/docker-compose.yml --profile ops run --rm ops server/scripts/backup.ts backup --out /backups/AAAA-MM-JJ
+  ops:
+    image: campplanner-ops:${CAMPPLANNER_VERSION:-local}
+    build: { <<: *build, target: ops }
+    profiles: ['ops']
+    env_file: campplanner.env
+    environment:
+      MIGRATION_DATABASE_URL_FILE: /run/secrets/campplanner_migration_url
+    secrets:
+      - campplanner_migration_url
+    volumes:
+      - files:/data/files
+      - ${BACKUP_DIR:-./backups}:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+
+secrets:
+  campplanner_owner_db_password:
+    file: ./secrets/owner_db_password
+  campplanner_app_db_password:
+    file: ./secrets/app_db_password
+  campplanner_database_url:
+    file: ./secrets/database_url
+  campplanner_migration_url:
+    file: ./secrets/migration_url
+
+volumes:
+  db-data:
+  files:
+  caddy-data:

@@ -16,3 +16,4 @@ server-data
 # Déploiement : secrets et configuration locale (jamais dans Git)
 deploy/secrets/
 deploy/campplanner.env
+deploy/backups/
