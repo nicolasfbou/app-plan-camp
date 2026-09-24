@@ -25,6 +25,12 @@ export class S3Storage implements ObjectStorage {
       region: config.region,
       ...(config.endpoint ? { endpoint: config.endpoint } : {}),
       forcePathStyle: config.forcePathStyle,
+      // Sommes de contrôle « flexibles » seulement si le service les exige : sinon le SDK envoie
+      // un corps « aws-chunked » que certains services compatibles S3 stockent TEL QUEL (octets
+      // de découpage inclus dans l'objet) — constaté avec SeaweedFS lors du test d'intégration.
+      // L'intégrité est vérifiée par CampPlanner (SHA-256 à l'envoi, taille relue après écriture).
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
     });
   }
   private key(key: string) {
@@ -40,6 +46,17 @@ export class S3Storage implements ObjectStorage {
         ContentLength: meta.byteLength,
       }),
     );
+    // Relecture : l'objet stocké doit avoir exactement la taille vérifiée (sinon il est retiré et
+    // l'envoi refusé — jamais un fichier altéré présenté comme valide).
+    const stored = await this.client.send(
+      new HeadObjectCommand({ Bucket: this.config.bucket, Key: this.key(key) }),
+    );
+    if (stored.ContentLength !== meta.byteLength) {
+      await this.delete(key).catch(() => undefined);
+      throw new Error(
+        `Stockage S3 : objet enregistré de ${stored.ContentLength ?? '?'} octets au lieu de ${meta.byteLength}.`,
+      );
+    }
   }
   async get(key: string): Promise<Readable | null> {
     try {

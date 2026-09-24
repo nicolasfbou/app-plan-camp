@@ -14,6 +14,7 @@ import { buildApp } from '../src/app.ts';
 import { addUser, createOrganization } from '../src/bootstrap.ts';
 import { loadConfig } from '../src/config.ts';
 import { FsStorage } from '../src/storage/fsStorage.ts';
+import type { ObjectStorage } from '../src/storage/storage.ts';
 import { createTestDatabase } from './db.ts';
 
 export const PASSWORD = 'mot-de-passe-solide-2026';
@@ -22,12 +23,13 @@ export type Harness = Awaited<ReturnType<typeof createHarness>>;
 
 export async function createHarness(
   overrides: Record<string, string> = {},
-  options: { bypassRls?: boolean } = {},
+  options: { bypassRls?: boolean; storage?: ObjectStorage } = {},
 ) {
   const db = await createTestDatabase(options);
   const filesRoot = mkdtempSync(join(tmpdir(), 'campplanner-files-'));
   const config = loadConfig({ DATABASE_URL: db.appUrl, STORAGE_FS_ROOT: filesRoot, ...overrides });
-  const app = await buildApp({ config, pool: db.pool, storage: new FsStorage(filesRoot) });
+  const storage = options.storage ?? new FsStorage(filesRoot);
+  const app = await buildApp({ config, pool: db.pool, storage });
   const orgA = await createOrganization(db.owner, { name: 'PAMM', slug: 'pamm' });
   const orgB = await createOrganization(db.owner, { name: 'Autre entreprise', slug: 'autre' });
   const mk = (orgId: string, email: string, name: string, role: 'admin' | 'manager' | 'editor' | 'reader') =>
@@ -57,6 +59,7 @@ export async function createHarness(
     db,
     app,
     config,
+    storage,
     orgA,
     orgB,
     users,

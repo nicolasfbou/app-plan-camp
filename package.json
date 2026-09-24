@@ -18,7 +18,9 @@
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run test && npm run build",
     "server": "tsx --tsconfig server/tsconfig.json server/src/main.ts",
     "server:bootstrap": "tsx --tsconfig server/tsconfig.json server/scripts/bootstrap.ts",
-    "test:server": "vitest run --project server"
+    "test:server": "vitest run --project server",
+    "test:s3": "vitest run --project server server/test/s3.test.ts",
+    "server:purge-files": "tsx --tsconfig server/tsconfig.json server/scripts/purge-files.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1138.0",
