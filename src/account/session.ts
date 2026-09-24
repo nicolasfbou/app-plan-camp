@@ -49,13 +49,47 @@ const writePurged = (names: string[]) => {
 
 export async function sweepPurgedDatabases(): Promise<void> {
   const active = new Set(readProfiles().map((p) => p.dbName));
-  const remaining: string[] = [];
-  for (const name of readPurged()) {
-    if (active.has(name)) continue; // espace recréé depuis par une nouvelle connexion
-    const repo = new IndexedDbRepository(name);
-    await repo.destroy().catch(() => remaining.push(name));
+  const purged = readPurged();
+  // Liste CONSERVÉE : un onglet tardif peut recréer la base après un premier balayage. Une entrée
+  // n'est retirée que si l'espace est recréé par une nouvelle connexion sur cet appareil.
+  writePurged(purged.filter((name) => !active.has(name)));
+  const existing = new Set(
+    ((await indexedDB.databases?.().catch(() => undefined)) ?? purged.map((name) => ({ name }))).map(
+      (d) => d.name,
+    ),
+  );
+  for (const name of purged) {
+    if (active.has(name)) continue;
+    if (existing.has(name)) await new IndexedDbRepository(name).destroy().catch(() => undefined);
+    // Journaux de récupération éventuellement réécrits par un onglet tardif : effacés aussi.
+    clearNamespaceJournals(`${name}.`);
   }
-  writePurged(remaining);
+}
+
+/**
+ * Déconnexion forcée hors ligne (poste partagé, « effacer quand même ») : la session serveur n'a
+ * pas pu être fermée. Elle l'est dès que le réseau revient (le cookie est encore envoyé), sauf si
+ * une nouvelle connexion a eu lieu entre-temps.
+ */
+const PENDING_LOGOUT_KEY = 'campplanner.pendingLogout';
+
+export async function retryPendingLogout(): Promise<void> {
+  try {
+    if (localStorage.getItem(PENDING_LOGOUT_KEY) !== '1') return;
+  } catch {
+    return;
+  }
+  try {
+    await api.request('POST', '/api/auth/logout');
+  } catch (error) {
+    // Hors ligne : nouvel essai au retour du réseau. Session déjà invalide (401) : c'est fait.
+    if (error instanceof ApiError && error.network) return;
+  }
+  try {
+    localStorage.removeItem(PENDING_LOGOUT_KEY);
+  } catch {
+    // ignoré
+  }
 }
 
 /** Session serveur non révocable (réseau) : la déconnexion d'un poste partagé est suspendue. */
@@ -78,6 +112,12 @@ export interface LoginInput {
 /** Connexion : crée (ou met à jour) l'espace de cette organisation et le rend actif. */
 export async function login(input: LoginInput): Promise<Profile> {
   const me = await api.request<MeResponse>('POST', '/api/auth/login', { body: input });
+  // Nouvelle session : une ancienne déconnexion en attente ne doit pas la fermer.
+  try {
+    localStorage.removeItem('campplanner.pendingLogout');
+  } catch {
+    // ignoré
+  }
   const id = profileIdOf(me.organization.id, me.user.id);
   const existing = readProfiles().find((p) => p.id === id);
   const profile: Profile = {
@@ -93,6 +133,7 @@ export async function login(input: LoginInput): Promise<Profile> {
     role: me.role,
     deviceMode: input.deviceMode,
     createdAt: existing?.createdAt ?? nowIso(),
+    ...(me.accessEpoch !== undefined ? { accessEpoch: me.accessEpoch } : {}),
   };
   saveProfile(profile);
   markUnlocked(profile);
@@ -108,8 +149,15 @@ export async function checkSession(profile: Profile = ACTIVE_PROFILE): Promise<S
   try {
     const me = await api.request<MeResponse>('GET', '/api/auth/me');
     if (me.user.id !== profile.userId || me.organization.id !== profile.orgId) return 'expired';
-    // Rôle à jour (changé par un administrateur).
-    if (me.role !== profile.role) saveProfile({ ...profile, role: me.role });
+    // Rôle et période d'accès à jour (changés par un administrateur) ; relus : un autre onglet
+    // peut avoir mis l'espace à jour entre-temps.
+    const fresh = readProfiles().find((p) => p.id === profile.id) ?? profile;
+    if (me.role !== fresh.role || (me.accessEpoch !== undefined && me.accessEpoch !== fresh.accessEpoch))
+      saveProfile({
+        ...fresh,
+        role: me.role,
+        ...(me.accessEpoch !== undefined ? { accessEpoch: me.accessEpoch } : {}),
+      });
     markUnlocked(profile);
     return 'valid';
   } catch (error) {
@@ -162,6 +210,12 @@ export async function logout(profile: Profile = ACTIVE_PROFILE, { force = false 
   } catch (error) {
     const unreachable = error instanceof ApiError && error.network;
     if (unreachable && profile.deviceMode === 'shared' && !force) throw new ServerUnreachableError();
+    if (unreachable && profile.deviceMode === 'shared')
+      try {
+        localStorage.setItem(PENDING_LOGOUT_KEY, '1');
+      } catch {
+        // ignoré
+      }
   }
   if (profile.deviceMode === 'shared') await purgeProfile(profile);
 }

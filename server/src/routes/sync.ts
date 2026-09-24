@@ -64,14 +64,20 @@ export function registerSyncRoutes(app: FastifyInstance, deps: Deps) {
       .parse(request.body);
     return tx(deps.pool, { orgId: auth.orgId, userId: auth.userId }, async (c) => {
       const q = async (sql: string, values: string[]) =>
-        values.length ? (await c.query<{ id: string }>(sql, [values])).rows.map((r) => r.id) : [];
+        values.length ? (await c.query<{ id: string }>(sql, [values, auth.orgId])).rows.map((r) => r.id) : [];
       return {
         existing: {
-          camps: await q('SELECT id FROM camps WHERE id = ANY($1)', body.campIds),
-          plans: await q('SELECT id FROM plans WHERE id = ANY($1)', body.planIds),
-          revisions: await q('SELECT id FROM revisions WHERE id = ANY($1)', body.revisionIds),
+          camps: await q('SELECT id FROM camps WHERE organization_id = $2 AND id = ANY($1)', body.campIds),
+          plans: await q('SELECT id FROM plans WHERE organization_id = $2 AND id = ANY($1)', body.planIds),
+          revisions: await q(
+            'SELECT id FROM revisions WHERE organization_id = $2 AND id = ANY($1)',
+            body.revisionIds,
+          ),
         },
-        presentFiles: await q('SELECT sha256 AS id FROM files WHERE sha256 = ANY($1)', body.sha256),
+        presentFiles: await q(
+          'SELECT sha256 AS id FROM files WHERE organization_id = $2 AND sha256 = ANY($1)',
+          body.sha256,
+        ),
       };
     });
   });

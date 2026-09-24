@@ -40,9 +40,10 @@ export class SyncingRepository extends IndexedDbRepository {
     onEnqueue: () => void = () => undefined,
     /** Envoi immédiat de la file (avant une action serveur qui dépend d'éléments pas encore envoyés). */
     private readonly flush: () => Promise<void> = async () => undefined,
+    accessEpoch: () => number | undefined = () => undefined,
   ) {
     super(databaseName);
-    this.outbox = new Outbox(this.sync, organizationId, onEnqueue);
+    this.outbox = new Outbox(this.sync, organizationId, onEnqueue, accessEpoch);
   }
 
   override async saveSite(site: Site): Promise<void> {

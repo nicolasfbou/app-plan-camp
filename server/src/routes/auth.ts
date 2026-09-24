@@ -33,6 +33,7 @@ async function whoAmI(deps: Deps, auth: Auth) {
     organization: org.rows[0],
     role: auth.role,
     deviceMode: auth.deviceMode,
+    accessEpoch: auth.accessEpoch,
   };
 }
 
@@ -68,7 +69,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps) {
       )
     ).rows;
     if (!orgs.length)
-      throw new HttpError(403, 'no-organization', 'Ce compte n’appartient à aucune organisation.');
+      throw new HttpError(
+        403,
+        'no-organization',
+        'Aucun accès actif pour ce compte (accès suspendu ou retiré par un administrateur).',
+      );
     const wanted = body.organization?.toLowerCase();
     const chosen = wanted
       ? orgs.find((o) => o.slug === wanted || o.id === wanted)

@@ -9,6 +9,9 @@ export type AuditAction =
   | 'auth.login'
   | 'auth.logout'
   | 'member.invite'
+  | 'member.invite.revoke'
+  | 'member.invite.resend'
+  | 'member.invite.locked'
   | 'member.join'
   | 'member.role'
   | 'member.disable'
@@ -28,6 +31,7 @@ export type AuditAction =
   | 'revision.archive'
   | 'revision.delete'
   | 'file.upload'
+  | 'file.purge'
   | 'template.create'
   | 'template.update'
   | 'template.delete';

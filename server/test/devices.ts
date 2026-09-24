@@ -60,19 +60,34 @@ export function injectFetch(app: FastifyInstance, getCookie: () => string, net: 
 export async function device(h: Harness, email: string, orgId: string) {
   const net: NetworkControl = { online: true, requests: [] };
   let cookie = '';
-  const login = await h.app.inject({
-    method: 'POST',
-    url: '/api/auth/login',
-    headers: { 'x-campplanner': '1' },
-    payload: { email, password: PASSWORD, deviceMode: 'trusted' },
-  });
-  cookie = `cp_session=${login.cookies.find((c) => c.name === 'cp_session')!.value}`;
+  /** Période d'accès connue de l'appareil (comme `Profile.accessEpoch`). */
+  let epoch: number | undefined;
+  const login = async () => {
+    const r = await h.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      headers: { 'x-campplanner': '1' },
+      payload: { email, password: PASSWORD, deviceMode: 'trusted' },
+    });
+    if (r.statusCode !== 200) throw new Error(`login ${email}: ${r.statusCode} ${r.body}`);
+    cookie = `cp_session=${r.cookies.find((c) => c.name === 'cp_session')!.value}`;
+    epoch = r.json().accessEpoch;
+  };
+  await login();
   const api = new Api(injectFetch(h.app, () => cookie, net));
   const dbName = `device-${newId()}`;
-  const repo = new SyncingRepository(dbName, orgId, api);
+  const accessEpoch = () => epoch;
+  const repo = new SyncingRepository(dbName, orgId, api, undefined, undefined, accessEpoch);
   const raw = new IndexedDbRepository(dbName);
   const open = new Set<string>();
-  const engine = new SyncEngine({ raw, api, orgId, openPlanIds: async () => open, post: () => undefined });
+  const engine = new SyncEngine({
+    raw,
+    api,
+    orgId,
+    openPlanIds: async () => open,
+    post: () => undefined,
+    accessEpoch,
+  });
   return {
     net,
     api,
@@ -80,6 +95,9 @@ export async function device(h: Harness, email: string, orgId: string) {
     raw,
     engine,
     open,
+    /** Nouvelle connexion (après une session révoquée) : période d'accès relue. */
+    relogin: login,
+    epoch: () => epoch,
     sync: () => engine.runOnce(),
     close() {
       repo.close();

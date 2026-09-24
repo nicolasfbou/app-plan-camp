@@ -36,8 +36,9 @@ async function planRow(c: Client, auth: Auth, id: string, lock = false): Promise
   if (!ID.test(id)) return undefined;
   const row = (
     await c.query<PlanRow>(
-      `SELECT id, camp_id, name, server_version, deleted_at, updated_at, updated_by FROM plans WHERE id = $1${lock ? ' FOR UPDATE' : ''}`,
-      [id],
+      `SELECT id, camp_id, name, server_version, deleted_at, updated_at, updated_by FROM plans
+        WHERE organization_id = $2 AND id = $1${lock ? ' FOR UPDATE' : ''}`,
+      [id, auth.orgId],
     )
   ).rows[0];
   if (row) await requireCampAccess(c, auth, row.camp_id);
@@ -68,8 +69,8 @@ export function registerPlanRoutes(app: FastifyInstance, deps: Deps) {
         `SELECT p.id, p.camp_id AS "campId", p.name, p.kind, p.status, p.server_version AS "serverVersion",
                 p.updated_at AS "updatedAt", u.display_name AS "updatedBy", p.deleted_at AS "deletedAt"
            FROM plans p JOIN users u ON u.id = p.updated_by
-          WHERE ($1::text IS NULL OR p.camp_id = $1) ORDER BY p.name`,
-        [request.query.campId ?? null],
+          WHERE p.organization_id = $2 AND ($1::text IS NULL OR p.camp_id = $1) ORDER BY p.name`,
+        [request.query.campId ?? null, auth.orgId],
       );
       return { plans: r.rows.filter((row) => !allowed || allowed.has(row.campId)) };
     });
@@ -83,8 +84,8 @@ export function registerPlanRoutes(app: FastifyInstance, deps: Deps) {
       // Dernier document enregistré (une suppression / restauration change la version serveur
       // sans créer de nouveau document).
       const doc = await c.query<{ document: unknown }>(
-        'SELECT document FROM plan_versions WHERE plan_id = $1 ORDER BY version DESC LIMIT 1',
-        [row.id],
+        'SELECT document FROM plan_versions WHERE organization_id = $2 AND plan_id = $1 ORDER BY version DESC LIMIT 1',
+        [row.id, auth.orgId],
       );
       return { campId: row.camp_id, ...(await versionInfo(c, row)), document: doc.rows[0]?.document ?? null };
     });
@@ -97,8 +98,9 @@ export function registerPlanRoutes(app: FastifyInstance, deps: Deps) {
       const r = await c.query(
         `SELECT v.version, v.base_version AS "baseVersion", v.created_at AS "createdAt",
                 u.display_name AS "author", v.document_sha256 AS "sha256"
-           FROM plan_versions v JOIN users u ON u.id = v.author_id WHERE v.plan_id = $1 ORDER BY v.version DESC`,
-        [request.params.id],
+           FROM plan_versions v JOIN users u ON u.id = v.author_id
+          WHERE v.organization_id = $2 AND v.plan_id = $1 ORDER BY v.version DESC`,
+        [request.params.id, auth.orgId],
       );
       return { versions: r.rows };
     });
@@ -110,10 +112,10 @@ export function registerPlanRoutes(app: FastifyInstance, deps: Deps) {
       const auth = requireAuth(request);
       return tx(deps.pool, ctx(auth), async (c) => {
         if (!(await planRow(c, auth, request.params.id))) throw notFound('Plan');
-        const r = await c.query('SELECT document FROM plan_versions WHERE plan_id = $1 AND version = $2', [
-          request.params.id,
-          Number(request.params.version) || 0,
-        ]);
+        const r = await c.query(
+          'SELECT document FROM plan_versions WHERE organization_id = $3 AND plan_id = $1 AND version = $2',
+          [request.params.id, Number(request.params.version) || 0, auth.orgId],
+        );
         if (!r.rows[0]) throw notFound('Version');
         return { document: r.rows[0].document };
       });
@@ -139,7 +141,11 @@ export function registerPlanRoutes(app: FastifyInstance, deps: Deps) {
         if (expected !== 0)
           throw new HttpError(409, 'deleted', 'Ce plan n’existe plus sur le serveur.', { deleted: true });
         requirePermission(auth, 'plan.create');
-        const camp = await c.query('SELECT 1 FROM camps WHERE id = $1 AND deleted_at IS NULL', [body.campId]);
+        // Référence vérifiée : le camp appartient à l'organisation de la session et existe encore.
+        const camp = await c.query(
+          'SELECT 1 FROM camps WHERE organization_id = $2 AND id = $1 AND deleted_at IS NULL',
+          [body.campId, auth.orgId],
+        );
         if (!camp.rowCount) throw new HttpError(409, 'camp-missing', 'Camp absent du serveur.');
         await requireCampAccess(c, auth, body.campId);
         version = 1;
@@ -165,9 +171,10 @@ export function registerPlanRoutes(app: FastifyInstance, deps: Deps) {
       }
       // Fichiers référencés : tous doivent être présents dans l'organisation.
       const shas = referencedShas(doc);
-      const present = await c.query<{ sha256: string }>('SELECT sha256 FROM files WHERE sha256 = ANY($1)', [
-        shas,
-      ]);
+      const present = await c.query<{ sha256: string }>(
+        'SELECT sha256 FROM files WHERE organization_id = $2 AND sha256 = ANY($1)',
+        [shas, auth.orgId],
+      );
       const missing = shas.filter((s) => !present.rows.some((r) => r.sha256 === s));
       if (missing.length)
         throw new HttpError(422, 'missing-files', 'Fichiers absents du serveur : envoyez-les d’abord.', {
@@ -190,15 +197,24 @@ export function registerPlanRoutes(app: FastifyInstance, deps: Deps) {
       else
         await c.query(
           `UPDATE plans SET name = $2, kind = $3, status = $4, updated_by = $5, updated_at = now(), server_version = $6
-            WHERE id = $1`,
-          [doc.plan.id, doc.plan.name, doc.plan.kind, doc.plan.titleBlock.status, auth.userId, version],
+            WHERE organization_id = $7 AND id = $1`,
+          [
+            doc.plan.id,
+            doc.plan.name,
+            doc.plan.kind,
+            doc.plan.titleBlock.status,
+            auth.userId,
+            version,
+            auth.orgId,
+          ],
         );
       await c.query(
         `INSERT INTO plan_versions (organization_id, plan_id, version, base_version, document, document_sha256, schema_version, author_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [auth.orgId, doc.plan.id, version, expected, json, sha256, doc.schemaVersion, auth.userId],
       );
-      await c.query("DELETE FROM file_refs WHERE owner_kind = 'plan' AND owner_id = $1", [doc.plan.id]);
+      // Références de fichiers CUMULÉES sur tout l'historique du plan (jamais retirées) : un
+      // fichier d'une ancienne version reste protégé tant que cette version existe.
       for (const s of shas)
         await c.query(
           `INSERT INTO file_refs (organization_id, sha256, owner_kind, owner_id) VALUES ($1, $2, 'plan', $3)
@@ -239,8 +255,8 @@ export function registerPlanRoutes(app: FastifyInstance, deps: Deps) {
       const version = current.server_version + 1;
       // Suppression LOGIQUE : historique, révisions (dont approuvées) et fichiers conservés.
       await c.query(
-        'UPDATE plans SET deleted_at = now(), server_version = $2, updated_by = $3, updated_at = now() WHERE id = $1',
-        [current.id, version, auth.userId],
+        'UPDATE plans SET deleted_at = now(), server_version = $2, updated_by = $3, updated_at = now() WHERE organization_id = $4 AND id = $1',
+        [current.id, version, auth.userId, auth.orgId],
       );
       await logChange(c, auth.orgId, 'plan', current.id, version, true);
       await audit(c, {
@@ -268,15 +284,15 @@ export function registerPlanRoutes(app: FastifyInstance, deps: Deps) {
       if (!current.deleted_at) return { serverVersion: current.server_version };
       const version = current.server_version + 1;
       await c.query(
-        'UPDATE plans SET deleted_at = NULL, server_version = $2, updated_by = $3, updated_at = now() WHERE id = $1',
-        [current.id, version, auth.userId],
+        'UPDATE plans SET deleted_at = NULL, server_version = $2, updated_by = $3, updated_at = now() WHERE organization_id = $4 AND id = $1',
+        [current.id, version, auth.userId, auth.orgId],
       );
       // Le document restauré est la dernière version connue (nouvelle entrée d'historique).
       await c.query(
         `INSERT INTO plan_versions (organization_id, plan_id, version, base_version, document, document_sha256, schema_version, author_id)
          SELECT organization_id, plan_id, $2, $4, document, document_sha256, schema_version, $3
-           FROM plan_versions WHERE plan_id = $1 ORDER BY version DESC LIMIT 1`,
-        [current.id, version, auth.userId, current.server_version],
+           FROM plan_versions WHERE organization_id = $5 AND plan_id = $1 ORDER BY version DESC LIMIT 1`,
+        [current.id, version, auth.userId, current.server_version, auth.orgId],
       );
       await logChange(c, auth.orgId, 'plan', current.id, version);
       await audit(c, {

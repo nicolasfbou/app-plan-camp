@@ -12,3 +12,7 @@ test-results
 local-test-data/*
 !local-test-data/README.md
 server-data
+
+# Déploiement : secrets et configuration locale (jamais dans Git)
+deploy/secrets/
+deploy/campplanner.env

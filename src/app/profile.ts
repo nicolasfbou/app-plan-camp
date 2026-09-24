@@ -28,6 +28,11 @@ export interface Profile {
   role?: 'admin' | 'manager' | 'editor' | 'reader';
   deviceMode?: DeviceMode;
   createdAt?: string;
+  /**
+   * Période d'accès donnée par le serveur (incrémentée à chaque suspension). Les modifications
+   * faites dans une période révoquée ne sont jamais envoyées automatiquement.
+   */
+  accessEpoch?: number;
 }
 
 export const LOCAL_PROFILE: Profile = { id: 'local', kind: 'local', dbName: 'campplanner' };
@@ -58,6 +63,11 @@ export function readProfiles(): Profile[] {
 export function saveProfile(profile: Profile) {
   const list = readProfiles().filter((p) => p.id !== profile.id);
   localStorage.setItem(PROFILES_KEY, JSON.stringify([...list, profile]));
+}
+
+/** Période d'accès connue ACTUELLEMENT pour cet espace (relue : un autre onglet peut l'avoir changée). */
+export function currentAccessEpoch(id: string): number | undefined {
+  return readProfiles().find((p) => p.id === id)?.accessEpoch;
 }
 
 export function removeProfile(id: string) {
@@ -105,6 +115,14 @@ export function lockProfile(profile: Profile) {
 
 /** Espace actif de cette page (fixé au chargement). */
 export const ACTIVE_PROFILE: Profile = resolveActiveProfile();
+
+/**
+ * L'espace de cette page a-t-il été retiré depuis son chargement (déconnexion d'un poste partagé
+ * dans un autre onglet) ? Relu à chaque appel : aucune donnée ne doit plus être écrite pour lui.
+ */
+export function activeSpaceRemoved(): boolean {
+  return ACTIVE_PROFILE.kind === 'org' && !readProfiles().some((p) => p.id === ACTIVE_PROFILE.id);
+}
 
 /**
  * Préfixe des clés locales (journaux de récupération, verrous d'onglet) de l'espace actif :

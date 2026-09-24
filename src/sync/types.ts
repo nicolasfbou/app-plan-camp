@@ -45,6 +45,13 @@ export interface SyncOperationRecord {
   label: string;
   planId?: string;
   campId?: string;
+  /** Période d'accès au moment de la modification (voir Profile.accessEpoch). */
+  accessEpoch?: number;
+  /**
+   * Modification faite pendant une période d'accès révoquée : jamais envoyée automatiquement.
+   * La personne peut en exporter une copie de secours, puis la mettre de côté.
+   */
+  revoked?: boolean;
   /** Au moins un envoi commencé (le serveur a peut-être reçu l'opération, réponse perdue). */
   attempted?: boolean;
   /** Suppression d'un élément dont la création a peut-être atteint le serveur : à vérifier. */

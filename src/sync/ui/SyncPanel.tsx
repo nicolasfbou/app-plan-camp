@@ -6,6 +6,9 @@ import { useEffect, useState } from 'react';
 import { ACTIVE_PROFILE } from '@/app/profile.ts';
 import { navigate } from '@/app/router.ts';
 import { formatDateTime, t } from '@/i18n/index.ts';
+import { downloadBytes } from '@/app/download.ts';
+import { repository } from '@/app/repository.ts';
+import { exportCampplan } from '@/persistence/campplan.ts';
 import { IndexedDbRepository } from '@/persistence/indexedDbRepository.ts';
 import { Button } from '@/ui/Button.tsx';
 import { Modal } from '@/ui/Modal.tsx';
@@ -63,6 +66,52 @@ export function SyncPanel({ onClose }: { onClose(): void }) {
           </div>
         </div>
         {store.engine?.lastError && <p className="text-slate-600">{store.engine.lastError}</p>}
+
+        {store.operations.some((o) => o.revoked) && (
+          <section data-testid="sync-revoked">
+            <h3 className="mb-1 font-semibold text-red-800">{t('sync.revokedTitle')}</h3>
+            <p className="mb-2 text-slate-700">{t('sync.revokedHelp')}</p>
+            <ul className="space-y-1">
+              {store.operations
+                .filter((o) => o.revoked)
+                .map((op) => (
+                  <li
+                    key={op.operationId}
+                    data-testid="revoked-op"
+                    className="flex flex-wrap items-center justify-between gap-2 rounded border border-red-200 bg-red-50 px-2 py-1"
+                  >
+                    <span>
+                      <span className="font-mono text-xs text-slate-500">{op.kind}</span> — {op.label}
+                    </span>
+                    <span className="flex gap-1">
+                      {op.entityType === 'plan' && (
+                        <Button
+                          data-testid="revoked-backup"
+                          onClick={() =>
+                            void exportCampplan(repository, op.entityId).then(({ bytes, fileName }) =>
+                              downloadBytes(bytes, fileName, 'application/octet-stream'),
+                            )
+                          }
+                        >
+                          {t('sync.revokedBackup')}
+                        </Button>
+                      )}
+                      <Button
+                        variant="danger"
+                        data-testid="revoked-discard"
+                        onClick={() => {
+                          if (window.confirm(t('sync.revokedDiscardConfirm')))
+                            void actionEngine().discardRevoked(op.seq!).then(afterAction);
+                        }}
+                      >
+                        {t('sync.revokedDiscard')}
+                      </Button>
+                    </span>
+                  </li>
+                ))}
+            </ul>
+          </section>
+        )}
 
         {store.conflicts.length > 0 && (
           <section>

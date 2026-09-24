@@ -51,6 +51,8 @@ export interface EngineDeps {
   openPlanIds?: () => Promise<Set<string>>;
   post?: (message: SyncMessage) => void;
   now?: () => number;
+  /** Période d'accès actuelle de l'espace (voir Profile.accessEpoch). */
+  accessEpoch?: () => number | undefined;
 }
 
 const MAX_BACKOFF_MS = 5 * 60_000;
@@ -77,6 +79,16 @@ export class SyncEngine {
 
   private get t() {
     return this.deps.raw.sync;
+  }
+  /** Période d'accès de l'opération en cours d'envoi (en-tête vérifié par le serveur). */
+  private opEpoch: number | undefined;
+  private request<T>(...args: Parameters<Api['request']>): Promise<T> {
+    const [method, path, options = {}] = args;
+    const headers =
+      this.opEpoch === undefined
+        ? options.headers
+        : { ...options.headers, 'X-Operation-Epoch': String(this.opEpoch) };
+    return this.deps.api.request<T>(method, path, { ...options, ...(headers ? { headers } : {}) });
   }
   private now() {
     return this.deps.now?.() ?? Date.now();
@@ -147,6 +159,13 @@ export class SyncEngine {
     for (const op of ops) {
       const own = op.keys[0]!;
       if (op.status === 'done') continue;
+      // Période d'accès révoquée depuis : bloquée AVANT tout (même si elle attendait une autre).
+      const current = this.deps.accessEpoch?.();
+      if (!op.revoked && current !== undefined && op.accessEpoch !== undefined && op.accessEpoch < current) {
+        await this.quarantine(op);
+        waiting.add(own);
+        continue;
+      }
       if (op.keys.some((k) => waiting.has(k)) || op.status !== 'pending' || op.nextAttemptAt > this.now()) {
         waiting.add(own);
         continue;
@@ -170,6 +189,10 @@ export class SyncEngine {
           });
           this.setStatus({ reachable: false, lastError: error.message });
           return; // inutile d'essayer les suivantes maintenant
+        }
+        if (error instanceof ApiError && error.code === 'access-revoked-operation') {
+          await this.quarantine(op);
+          continue;
         }
         if (error instanceof ApiError && error.status === 401) {
           this.setStatus({
@@ -199,6 +222,7 @@ export class SyncEngine {
 
   /** `done` : opération terminée (retirée) ; `wait` : bloquée (conflit) ou reportée. */
   private async execute(op: SyncOperationRecord): Promise<'done' | 'wait'> {
+    this.opEpoch = op.accessEpoch;
     try {
       return await this.executeOnce(op);
     } catch (error) {
@@ -219,7 +243,53 @@ export class SyncEngine {
       const operationId = `op-${newId()}-${newId()}`;
       await this.outbox.update(op.seq!, { operationId });
       return this.executeOnce({ ...op, operationId });
+    } finally {
+      this.opEpoch = undefined;
     }
+  }
+
+  /** Modification d'une période d'accès révoquée : bloquée, jamais envoyée automatiquement. */
+  private async quarantine(op: SyncOperationRecord) {
+    if (op.revoked) return;
+    await this.outbox.update(op.seq!, {
+      status: 'blocked',
+      revoked: true,
+      lastError:
+        'Modification faite pendant une période où votre accès a été révoqué : elle ne sera pas envoyée. Exportez une copie de secours si nécessaire, puis mettez-la de côté.',
+    });
+  }
+
+  /**
+   * Met de côté une modification bloquée (accès révoqué) : pour un plan, la version locale est
+   * archivée sur l'appareil (récupérable), puis remplacée par la version du serveur (ou retirée
+   * si le serveur ne l'a jamais reçue). Rien n'est envoyé.
+   */
+  async discardRevoked(seq: number): Promise<void> {
+    const op = (await this.outbox.list()).find((o) => o.seq === seq);
+    if (!op?.revoked) return;
+    if (op.entityType !== 'plan') {
+      await this.outbox.remove(seq);
+      return;
+    }
+    const planId = op.entityId;
+    const local = await this.deps.raw.openPlan(planId);
+    if (local)
+      await this.t.conflictArchive.add({
+        planId,
+        planName: local.doc.plan.name,
+        doc: local.doc,
+        archivedAt: nowIso(),
+        reason: 'Modifications faites pendant un accès révoqué, mises de côté (non envoyées)',
+      });
+    await this.dropPlanOps(planId);
+    for (const o of await this.outbox.list())
+      if (o.planId === planId && o.revoked) await this.outbox.remove(o.seq!);
+    const state = await this.serverState('plan', planId).catch(() => null);
+    const link = await this.link('plan', planId);
+    if (link) await this.setLink({ ...link, serverVersion: 0, syncedLocalVersion: undefined });
+    if (state) await this.applyServerPlanChange({ seq: 0, kind: 'plan', id: planId, ...state });
+    else if (local) await this.deps.raw.deletePlan(planId);
+    this.post({ type: 'pull-applied', planId });
   }
 
   private async executeOnce(op: SyncOperationRecord): Promise<'done' | 'wait'> {
@@ -230,7 +300,7 @@ export class SyncEngine {
         const blobId = await this.deps.raw.findBlobBySha256(op.entityId);
         const blob = blobId ? await this.deps.raw.getBlob(blobId) : undefined;
         if (!blob) throw new Error('Fichier absent de cet appareil : impossible de l’envoyer.');
-        await this.deps.api.request('PUT', `/api/files/${op.entityId}`, {
+        await this.request('PUT', `/api/files/${op.entityId}`, {
           raw: new Uint8Array(blob.bytes),
           headers: { 'X-File-Type': blob.mimeType },
         });
@@ -261,7 +331,7 @@ export class SyncEngine {
         const link = await this.link('camp', op.entityId);
         if (!link) return 'done';
         try {
-          await this.deps.api.request('DELETE', `/api/camps/${enc(op.entityId)}`, {
+          await this.request('DELETE', `/api/camps/${enc(op.entityId)}`, {
             headers: headers(link.serverVersion),
           });
         } catch (error) {
@@ -292,7 +362,7 @@ export class SyncEngine {
         }
         if (!link) return 'done';
         try {
-          const r = await this.deps.api.request<{ serverVersion: number }>(
+          const r = await this.request<{ serverVersion: number }>(
             'DELETE',
             `/api/plans/${enc(op.entityId)}`,
             {
@@ -320,7 +390,7 @@ export class SyncEngine {
         return this.pushRevision(op);
       case 'revision.delete':
         try {
-          await this.deps.api.request('DELETE', `/api/revisions/${enc(op.entityId)}`);
+          await this.request('DELETE', `/api/revisions/${enc(op.entityId)}`);
         } catch (error) {
           if (!(error instanceof ApiError && error.status === 404)) throw error;
         }
@@ -329,7 +399,7 @@ export class SyncEngine {
         const entry = await this.deps.raw.getTemplate(op.entityId);
         if (!entry) return 'done';
         if (entry.template.logo && entry.logo) {
-          await this.deps.api.request('PUT', `/api/files/${entry.template.logo.sha256}`, {
+          await this.request('PUT', `/api/files/${entry.template.logo.sha256}`, {
             raw: entry.logo,
             headers: { 'X-File-Type': entry.template.logo.mimeType },
           });
@@ -355,7 +425,7 @@ export class SyncEngine {
         const link = await this.link('template', op.entityId);
         if (!link) return 'done';
         try {
-          await this.deps.api.request('DELETE', `/api/templates/${enc(op.entityId)}`);
+          await this.request('DELETE', `/api/templates/${enc(op.entityId)}`);
         } catch (error) {
           if (!(error instanceof ApiError && error.status === 404)) throw error;
         }
@@ -367,7 +437,7 @@ export class SyncEngine {
   private async ensureFiles(doc: PlanDocument) {
     for (const sha of planShas(doc)) {
       if (await this.link('file', sha)) continue;
-      const present = await this.deps.api.request<{ present: string[] }>('POST', '/api/files/check', {
+      const present = await this.request<{ present: string[] }>('POST', '/api/files/check', {
         body: { sha256: [sha] },
       });
       if (!present.present.includes(sha))
@@ -394,7 +464,7 @@ export class SyncEngine {
     await this.ensureFiles(local.doc);
     const link = await this.link('plan', op.entityId);
     try {
-      const r = await this.deps.api.request<{ serverVersion: number }>(
+      const r = await this.request<{ serverVersion: number }>(
         'PUT',
         `/api/plans/${encodeURIComponent(op.entityId)}`,
         {
@@ -442,10 +512,7 @@ export class SyncEngine {
   ) {
     let server: ServerPlan | null = null;
     try {
-      server = await this.deps.api.request<ServerPlan>(
-        'GET',
-        `/api/plans/${encodeURIComponent(op.entityId)}`,
-      );
+      server = await this.request<ServerPlan>('GET', `/api/plans/${encodeURIComponent(op.entityId)}`);
     } catch (error) {
       if (!(error instanceof ApiError && error.status === 404)) throw error;
     }
@@ -484,7 +551,7 @@ export class SyncEngine {
       return 'done'; // supprimée localement depuis
     }
     await this.ensureFiles(parsePlanDocument(loaded.json));
-    await this.deps.api.request('PUT', `/api/revisions/${encodeURIComponent(op.entityId)}`, {
+    await this.request('PUT', `/api/revisions/${encodeURIComponent(op.entityId)}`, {
       body: { planId: loaded.meta.planId, meta: loaded.meta, snapshot: loaded.json },
     });
     await this.setLink({
@@ -500,7 +567,7 @@ export class SyncEngine {
   async pull(): Promise<void> {
     let cursor = ((await this.t.syncState.get('cursor'))?.value as number | undefined) ?? 0;
     for (let page = 0; page < 50; page++) {
-      const r = await this.deps.api.request<{ changes: Change[]; cursor: number; more: boolean }>(
+      const r = await this.request<{ changes: Change[]; cursor: number; more: boolean }>(
         'GET',
         `/api/sync/changes?since=${cursor}&limit=500`,
       );
@@ -516,7 +583,7 @@ export class SyncEngine {
         if (change.kind === 'camp') {
           camps ??= new Map(
             (
-              await this.deps.api.request<{
+              await this.request<{
                 camps: { id: string; name: string; notes: string; createdAt: string; updatedAt: string }[];
               }>('GET', '/api/camps')
             ).camps.map((c) => [c.id, c]),
@@ -599,10 +666,7 @@ export class SyncEngine {
     if (dirty) {
       const local = await this.deps.raw.openPlan(change.id);
       if (!local) return; // suppression locale en attente : décidée à l'envoi
-      const server = await this.deps.api.request<ServerPlan>(
-        'GET',
-        `/api/plans/${encodeURIComponent(change.id)}`,
-      );
+      const server = await this.request<ServerPlan>('GET', `/api/plans/${encodeURIComponent(change.id)}`);
       await this.saveConflict(change.id, local, 'version', server, link);
       return;
     }
@@ -650,11 +714,11 @@ export class SyncEngine {
 
   /** Télécharge un plan serveur (et ses fichiers manquants) et l'écrit localement. */
   async applyServerPlan(planId: string): Promise<void> {
-    const server = await this.deps.api.request<ServerPlan>('GET', `/api/plans/${encodeURIComponent(planId)}`);
+    const server = await this.request<ServerPlan>('GET', `/api/plans/${encodeURIComponent(planId)}`);
     const doc = await this.localize(parsePlanDocument(server.document));
     if (!(await this.deps.raw.getSite(doc.plan.siteId))) {
       const camps = (
-        await this.deps.api.request<{
+        await this.request<{
           camps: { id: string; name: string; notes: string; createdAt: string; updatedAt: string }[];
         }>('GET', '/api/camps')
       ).camps;
@@ -681,7 +745,7 @@ export class SyncEngine {
     // Première réception : ses révisions déjà passées dans le flux (plan alors absent) sont
     // récupérées maintenant — aucune n'est sautée.
     if (current === undefined) {
-      const list = await this.deps.api.request<{
+      const list = await this.request<{
         revisions: { id: string; deleted: boolean; meta: unknown }[];
       }>('GET', `/api/plans/${encodeURIComponent(planId)}/revisions`);
       for (const r of list.revisions)
@@ -775,7 +839,7 @@ export class SyncEngine {
     if (change.deleted) {
       await this.deps.raw.deleteTemplate(change.id);
     } else {
-      const list = await this.deps.api.request<{ templates: { id: string; template: unknown }[] }>(
+      const list = await this.request<{ templates: { id: string; template: unknown }[] }>(
         'GET',
         '/api/templates',
       );
@@ -927,7 +991,7 @@ export class SyncEngine {
     };
     if (type === 'plan') await this.applyServerPlanChange(change);
     else if (type === 'camp') {
-      const camps = await this.deps.api.request<{
+      const camps = await this.request<{
         camps: { id: string; name: string; notes: string; createdAt: string; updatedAt: string }[];
       }>('GET', '/api/camps');
       await this.pullCamp(
@@ -970,12 +1034,12 @@ export class SyncEngine {
     const list =
       type === 'camp'
         ? (
-            await this.deps.api.request<{
+            await this.request<{
               camps: { id: string; serverVersion: number; deletedAt: string | null }[];
             }>('GET', '/api/camps')
           ).camps
         : (
-            await this.deps.api.request<{
+            await this.request<{
               templates: { id: string; serverVersion: number; deletedAt: string | null }[];
             }>('GET', '/api/templates')
           ).templates;

@@ -32,6 +32,9 @@ const users: [string, string, string, 'admin' | 'manager' | 'editor' | 'reader']
   [pamm.id, 'gestion@pamm.test', 'M. Gagnon', 'manager'],
   [pamm.id, 'edition@pamm.test', 'N. Tremblay', 'editor'],
   [pamm.id, 'lecture@pamm.test', 'L. Roy', 'reader'],
+  // Comptes réservés aux tests de révocation (jamais utilisés par les autres tests en parallèle).
+  [pamm.id, 'suspendu@pamm.test', 'S. Suspendu', 'reader'],
+  [pamm.id, 'cible@pamm.test', 'C. Cible', 'reader'],
   [autre.id, 'admin@autre.test', 'Admin Autre', 'admin'],
 ];
 for (const [orgId, email, displayName, role] of users)

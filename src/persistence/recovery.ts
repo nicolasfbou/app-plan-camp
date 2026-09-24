@@ -11,7 +11,7 @@ import type { PlanDocument } from '@/domain/model/types.ts';
 import { parsePlanDocument, serializePlanDocument } from '@/domain/schema/serialization.ts';
 import { logEvent } from '@/diagnostics/errorLog.ts';
 
-import { namespace } from '@/app/profile.ts';
+import { activeSpaceRemoved, namespace } from '@/app/profile.ts';
 
 const PREFIX = 'campplanner.recovery.';
 /** Clé du journal d'un plan dans l'espace actif (espace local : clé historique inchangée). */
@@ -65,6 +65,8 @@ export interface RecoveryEntry {
 }
 
 export function writeRecovery(doc: PlanDocument, baseVersion?: number, now = Date.now()): void {
+  // Espace purgé entre-temps (déconnexion dans un autre onglet) : rien n'est réécrit pour lui.
+  if (activeSpaceRemoved()) return;
   try {
     localStorage.setItem(
       key(doc.plan.id),

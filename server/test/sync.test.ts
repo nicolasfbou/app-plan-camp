@@ -415,3 +415,64 @@ describe('stabilité : relance pendant un cycle en cours', () => {
     a.close();
   });
 });
+
+describe('révocation d’accès (appareil de confiance)', () => {
+  it('modifications hors ligne pendant une suspension : jamais envoyées, même après réactivation et reconnexion ; copie mise de côté', async () => {
+    const admin = await h.login('admin@pamm.test');
+    const e = await device(h, 'edition@pamm.test', h.orgA.id);
+    const m = await device(h, 'gestion@pamm.test', h.orgA.id);
+    const { doc } = await newLocalPlan(m);
+    await m.sync();
+    await e.sync();
+    const epochBefore = e.epoch();
+    // L'éditeur travaille hors ligne ; pendant ce temps, son accès est suspendu puis rétabli.
+    e.net.online = false;
+    await edit(e, doc.plan.id, 'modifié pendant la révocation');
+    const id = h.users.editorA.id;
+    await admin.req('PATCH', `/api/members/${id}`, { body: { status: 'disabled' } });
+    await admin.req('PATCH', `/api/members/${id}`, { body: { status: 'active' } });
+    // Retour en ligne : l'ancienne session est refusée ; rien n'est envoyé.
+    e.net.online = true;
+    await e.engine.resetBackoff();
+    await e.sync();
+    expect(e.engine.status.authRequired).toBe(true);
+    expect(await serverVersions(doc.plan.id)).toEqual([1]);
+    // Nouvelle connexion (nouvelle période d'accès) : la modification reste bloquée.
+    await e.relogin();
+    expect(e.epoch()).toBe(epochBefore! + 1);
+    e.engine.status.authRequired = false;
+    await e.sync();
+    let ops = await e.engine.outbox.list();
+    // Toutes les opérations de la période révoquée (plan et photo associée) sont bloquées.
+    expect(ops.length).toBeGreaterThan(0);
+    expect(ops.every((o) => o.revoked && o.status === 'blocked')).toBe(true);
+    expect(ops.map((o) => o.kind)).toContain('plan.upsert');
+    expect(await serverVersions(doc.plan.id)).toEqual([1]);
+    // Une modification faite APRÈS la reconnexion s'appuie sur la version bloquée : elle attend.
+    await edit(e, doc.plan.id, 'après reconnexion');
+    await e.sync();
+    expect(await serverVersions(doc.plan.id)).toEqual([1]);
+    // Envoi forcé par un client qui ignorerait le blocage : refusé par le serveur.
+    const forced = await h.app.inject({
+      method: 'DELETE',
+      url: `/api/plans/${doc.plan.id}`,
+      headers: { 'x-campplanner': '1', 'if-match': '1', 'x-operation-epoch': String(epochBefore) },
+    });
+    expect([401, 409]).toContain(forced.statusCode);
+    // « Mettre de côté » : version locale archivée, version serveur reprise, file vide.
+    ops = await e.engine.outbox.list();
+    for (const op of ops.filter((o) => o.revoked)) await e.engine.discardRevoked(op.seq!);
+    // Reste au plus l'envoi (idempotent) de la photo déjà présente sur le serveur ; plus aucune
+    // modification du plan ni opération bloquée.
+    const left = await e.engine.outbox.list();
+    expect(left.filter((o) => o.revoked || o.entityType === 'plan')).toEqual([]);
+    await e.sync();
+    expect(await serverVersions(doc.plan.id)).toEqual([1]);
+    expect((await e.repo.openPlan(doc.plan.id))!.doc.plan.titleBlock.notes).not.toBe('après reconnexion');
+    const archive = await e.raw.sync.conflictArchive.toArray();
+    expect(archive.map((a) => (a.doc as typeof doc).plan.titleBlock.notes)).toContain('après reconnexion');
+    expect(await serverVersions(doc.plan.id)).toEqual([1]);
+    e.close();
+    m.close();
+  });
+});

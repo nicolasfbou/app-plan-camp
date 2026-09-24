@@ -9,9 +9,9 @@ import { type Deps, requireAuth } from '../app.ts';
 import { audit } from '../audit.ts';
 import { checkPasswordPolicy, hashPassword, verifyPassword } from '../auth/passwords.ts';
 import { LoginThrottle, newToken, sha256 } from '../auth/sessions.ts';
-import { tx } from '../db.ts';
+import { type Client, tx } from '../db.ts';
 import { badRequest, HttpError, notFound } from '../errors.ts';
-import { requirePermission, ROLES } from '../permissions.ts';
+import { type Auth, requirePermission, ROLES } from '../permissions.ts';
 
 const INVITATION_DAYS = 7;
 
@@ -29,41 +29,129 @@ export function registerMemberRoutes(app: FastifyInstance, deps: Deps) {
     return { members: r.rows };
   });
 
+  /** Crée une invitation (jeton à usage unique, seul son SHA-256 est stocké). */
+  const createInvitation = async (
+    c: Client,
+    auth: Auth,
+    email: string,
+    role: (typeof ROLES)[number],
+    requestId: string,
+    action: 'member.invite' | 'member.invite.resend',
+  ) => {
+    const token = newToken();
+    const expiresAt = new Date(Date.now() + INVITATION_DAYS * 86400_000);
+    const id = (
+      await c.query<{ id: string }>(
+        `INSERT INTO invitations (token_hash, organization_id, email, role, invited_by, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        [sha256(token), auth.orgId, email, role, auth.userId, expiresAt],
+      )
+    ).rows[0]!.id;
+    await audit(c, {
+      orgId: auth.orgId,
+      userId: auth.userId,
+      action,
+      targetKind: 'invitation',
+      targetId: id,
+      requestId,
+      context: { role },
+    });
+    return {
+      id,
+      token,
+      link: `${deps.config.publicOrigin}/#/invitation/${token}`,
+      expiresAt: expiresAt.toISOString(),
+    };
+  };
+
   app.post('/api/invitations', async (request) => {
     const auth = requireAuth(request);
     requirePermission(auth, 'members.manage');
     const body = z
       .object({ email: z.string().trim().toLowerCase().email().max(320), role: z.enum(ROLES) })
       .parse(request.body);
-    const token = newToken();
-    const expiresAt = new Date(Date.now() + INVITATION_DAYS * 86400_000);
-    await tx(deps.pool, { orgId: auth.orgId, userId: auth.userId }, async (c) => {
+    return tx(deps.pool, { orgId: auth.orgId, userId: auth.userId }, async (c) => {
       const member = await c.query(
         `SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id
           WHERE m.organization_id = $1 AND u.email = $2`,
         [auth.orgId, body.email],
       );
       if (member.rowCount) throw new HttpError(409, 'already-member', 'Cette personne est déjà membre.');
-      await c.query(
-        `INSERT INTO invitations (token_hash, organization_id, email, role, invited_by, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [sha256(token), auth.orgId, body.email, body.role, auth.userId, expiresAt],
-      );
+      return createInvitation(c, auth, body.email, body.role, request.id, 'member.invite');
+    });
+  });
+
+  /** Invitations de l'organisation (en attente, expirées, révoquées ; acceptées exclues). */
+  app.get('/api/invitations', async (request) => {
+    const auth = requireAuth(request);
+    requirePermission(auth, 'members.manage');
+    const r = await deps.pool.query(
+      `SELECT i.id, i.email, i.role, i.created_at AS "createdAt", i.expires_at AS "expiresAt",
+              i.revoked_at AS "revokedAt", u.display_name AS "invitedBy",
+              CASE WHEN i.revoked_at IS NOT NULL THEN 'revoked'
+                   WHEN i.expires_at <= now() THEN 'expired' ELSE 'pending' END AS status
+         FROM invitations i JOIN users u ON u.id = i.invited_by
+        WHERE i.organization_id = $1 AND i.accepted_at IS NULL
+          AND i.created_at > now() - interval '90 days'
+        ORDER BY i.created_at DESC`,
+      [auth.orgId],
+    );
+    return { invitations: r.rows };
+  });
+
+  const pendingInvitation = async (c: Client, auth: Auth, id: string) => {
+    if (!z.string().uuid().safeParse(id).success) throw notFound('Invitation');
+    const inv = (
+      await c.query<{
+        email: string;
+        role: (typeof ROLES)[number];
+        accepted_at: Date | null;
+        revoked_at: Date | null;
+      }>(
+        'SELECT email, role, accepted_at, revoked_at FROM invitations WHERE organization_id = $2 AND id = $1 FOR UPDATE',
+        [id, auth.orgId],
+      )
+    ).rows[0];
+    if (!inv) throw notFound('Invitation');
+    if (inv.accepted_at) throw new HttpError(409, 'invitation-accepted', 'Invitation déjà acceptée.');
+    return inv;
+  };
+
+  const revoke = async (c: Client, auth: Auth, id: string) =>
+    c.query(
+      'UPDATE invitations SET revoked_at = now(), revoked_by = $3 WHERE organization_id = $2 AND id = $1 AND revoked_at IS NULL',
+      [id, auth.orgId, auth.userId],
+    );
+
+  /** Révocation : le lien cesse immédiatement de fonctionner (refusé par le serveur). */
+  app.delete<{ Params: { id: string } }>('/api/invitations/:id', async (request) => {
+    const auth = requireAuth(request);
+    requirePermission(auth, 'members.manage');
+    await tx(deps.pool, { orgId: auth.orgId, userId: auth.userId }, async (c) => {
+      const inv = await pendingInvitation(c, auth, request.params.id);
+      if (inv.revoked_at) return;
+      await revoke(c, auth, request.params.id);
       await audit(c, {
         orgId: auth.orgId,
         userId: auth.userId,
-        action: 'member.invite',
+        action: 'member.invite.revoke',
         targetKind: 'invitation',
-        targetId: sha256(token).slice(0, 16),
+        targetId: request.params.id,
         requestId: request.id,
-        context: { role: body.role },
       });
     });
-    return {
-      token,
-      link: `${deps.config.publicOrigin}/#/invitation/${token}`,
-      expiresAt: expiresAt.toISOString(),
-    };
+    return { ok: true };
+  });
+
+  /** Renvoi : l'ancien lien est révoqué, un nouveau jeton est émis (nouvelle échéance). */
+  app.post<{ Params: { id: string } }>('/api/invitations/:id/resend', async (request) => {
+    const auth = requireAuth(request);
+    requirePermission(auth, 'members.manage');
+    return tx(deps.pool, { orgId: auth.orgId, userId: auth.userId }, async (c) => {
+      const inv = await pendingInvitation(c, auth, request.params.id);
+      await revoke(c, auth, request.params.id);
+      return createInvitation(c, auth, inv.email, inv.role, request.id, 'member.invite.resend');
+    });
   });
 
   const invitationOf = async (token: string) => {
@@ -123,12 +211,25 @@ export function registerMemberRoutes(app: FastifyInstance, deps: Deps) {
         throw new HttpError(429, 'throttled', 'Trop de tentatives. Réessayez dans quelques minutes.');
       if (!(await verifyPassword(existing.secret_hash, body.password))) {
         deps.throttle.fail(...keys);
-        await deps.pool.query(
-          `UPDATE invitations SET failed_attempts = failed_attempts + 1,
-                  revoked_at = CASE WHEN failed_attempts + 1 >= 5 THEN now() ELSE revoked_at END
-            WHERE token_hash = $1`,
-          [sha256(request.params.token)],
-        );
+        await tx(deps.pool, { orgId: inv.organization_id, userId: null }, async (c) => {
+          const r = await c.query<{ id: string; failed_attempts: number }>(
+            `UPDATE invitations SET failed_attempts = failed_attempts + 1,
+                    revoked_at = CASE WHEN failed_attempts + 1 >= 5 THEN now() ELSE revoked_at END
+              WHERE token_hash = $1 RETURNING id, failed_attempts`,
+            [sha256(request.params.token)],
+          );
+          const row = r.rows[0];
+          if (row && row.failed_attempts === 5)
+            await audit(c, {
+              orgId: inv.organization_id,
+              userId: null,
+              action: 'member.invite.locked',
+              targetKind: 'invitation',
+              targetId: row.id,
+              requestId: request.id,
+              context: { reason: 'Trop de mots de passe faux pour un compte existant' },
+            });
+        });
         throw new HttpError(401, 'invalid-credentials', 'Mot de passe du compte existant incorrect.');
       }
     } else {
@@ -208,8 +309,12 @@ export function registerMemberRoutes(app: FastifyInstance, deps: Deps) {
             'L’organisation doit garder au moins un administrateur actif.',
           );
       }
+      // Suspension : nouvelle période d'accès (anciennes sessions et opérations hors ligne créées
+      // pendant la période révoquée ne seront plus jamais acceptées automatiquement).
       await c.query(
-        'UPDATE memberships SET role = $3, status = $4 WHERE organization_id = $1 AND user_id = $2',
+        `UPDATE memberships SET role = $3, status = $4,
+                access_epoch = access_epoch + CASE WHEN $4 = 'disabled' AND status = 'active' THEN 1 ELSE 0 END
+          WHERE organization_id = $1 AND user_id = $2`,
         [auth.orgId, target.data, role, status],
       );
       // Accès retiré : ses sessions sur CETTE organisation sont révoquées immédiatement.
@@ -251,8 +356,8 @@ export function registerMemberRoutes(app: FastifyInstance, deps: Deps) {
         `SELECT a.id, a.action, a.target_kind AS "targetKind", a.target_id AS "targetId", a.at,
                 a.context, a.user_id AS "userId", u.display_name AS "userName"
            FROM audit_events a LEFT JOIN users u ON u.id = a.user_id
-          WHERE ($1::bigint IS NULL OR a.id < $1) ORDER BY a.id DESC LIMIT $2`,
-        [before, limit],
+          WHERE a.organization_id = $3 AND ($1::bigint IS NULL OR a.id < $1) ORDER BY a.id DESC LIMIT $2`,
+        [before, limit, auth.orgId],
       ),
     );
     return { events: rows.rows };

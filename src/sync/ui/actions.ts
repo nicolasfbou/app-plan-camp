@@ -1,5 +1,5 @@
 /** Actions de synchronisation depuis l'interface (dans l'onglet du moteur ou dans un autre). */
-import { ACTIVE_PROFILE } from '@/app/profile.ts';
+import { ACTIVE_PROFILE, currentAccessEpoch } from '@/app/profile.ts';
 import { IndexedDbRepository } from '@/persistence/indexedDbRepository.ts';
 import { openPlanIds } from '@/persistence/planLock.ts';
 import { api } from '../api.ts';
@@ -19,6 +19,7 @@ export function actionEngine(): SyncEngine {
     orgId: ACTIVE_PROFILE.orgId!,
     openPlanIds,
     post: postSync,
+    accessEpoch: () => currentAccessEpoch(ACTIVE_PROFILE.id),
   });
   return fallback;
 }

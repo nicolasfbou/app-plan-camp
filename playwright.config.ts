@@ -17,13 +17,13 @@ export default defineConfig({
     {
       // Phases 1 à 8 : application seule (aucun serveur), comme sur une clé USB ou hors ligne.
       name: 'chromium',
-      testIgnore: /phase9\.spec\.ts/,
+      testIgnore: /phase9[\w-]*\.spec\.ts/,
       use: { ...devices['Desktop Chrome'], ...(executablePath ? { launchOptions: { executablePath } } : {}) },
     },
     {
       // Phase 9 : application servie par le serveur CampPlanner (PostgreSQL temporaire).
       name: 'serveur',
-      testMatch: /phase9\.spec\.ts/,
+      testMatch: /phase9[\w-]*\.spec\.ts/,
       use: {
         ...devices['Desktop Chrome'],
         baseURL: 'http://localhost:8787',
@@ -47,6 +47,8 @@ export default defineConfig({
       url: 'http://localhost:8787/api/health',
       // Serveur et base neufs à chaque exécution, démarrés APRÈS la construction (tâches en série).
       reuseExistingServer: false,
+      // Arrêt propre (SIGTERM) : l'instance PostgreSQL temporaire est arrêtée et supprimée.
+      gracefulShutdown: { signal: 'SIGTERM', timeout: 15_000 },
       timeout: 180_000,
     },
   ],

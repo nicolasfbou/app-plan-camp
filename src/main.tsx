@@ -5,9 +5,9 @@ import { repository } from './app/repository.ts';
 import { startBackupScheduler } from './backups/backupService.ts';
 import { installGlobalErrorLogging, logEvent } from './diagnostics/errorLog.ts';
 import { recoveryJournalTexts } from './persistence/recovery.ts';
-import { checkSession, isClosingHere, sweepPurgedDatabases } from './account/session.ts';
+import { checkSession, isClosingHere, retryPendingLogout, sweepPurgedDatabases } from './account/session.ts';
 import { onSync } from './sync/bus.ts';
-import { ACTIVE_PROFILE, isUnlocked, lockProfile } from './app/profile.ts';
+import { ACTIVE_PROFILE, activeSpaceRemoved, isUnlocked, lockProfile } from './app/profile.ts';
 import { startSync } from './sync/runtime.ts';
 import './index.css';
 
@@ -16,11 +16,22 @@ void navigator.storage?.persist?.().catch(() => undefined);
 installGlobalErrorLogging();
 // Bases d'espaces purgés qu'un onglet tardif aurait recréées : effacées de nouveau.
 void sweepPurgedDatabases().catch(() => undefined);
+// Session d'un poste partagé effacé hors ligne : fermée sur le serveur dès que possible.
+void retryPendingLogout();
+window.addEventListener('online', () => void retryPendingLogout());
 // Espace purgé dans un autre onglet (déconnexion d'un poste partagé) : plus aucun accès ici.
-onSync((message) => {
-  if (message.type !== 'space-closed' || isClosingHere()) return;
+// Deux signaux indépendants : message entre onglets, et modification de la liste des espaces
+// (évènement « storage », reçu même si les messages entre onglets ne passent pas).
+const closeSpace = () => {
+  if (isClosingHere()) return;
   repository.shutdown();
   window.location.reload();
+};
+onSync((message) => {
+  if (message.type === 'space-closed') closeSpace();
+});
+window.addEventListener('storage', (event) => {
+  if (event.key === null || event.key === 'campplanner.profiles') if (activeSpaceRemoved()) closeSpace();
 });
 // Espace verrouillé (appareil partagé sans authentification) : aucune donnée n'est ouverte.
 if (isUnlocked(ACTIVE_PROFILE)) {

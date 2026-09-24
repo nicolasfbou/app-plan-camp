@@ -16,7 +16,9 @@ export function registerTemplateRoutes(app: FastifyInstance, deps: Deps) {
     const r = await tx(deps.pool, { orgId: auth.orgId, userId: auth.userId }, (c) =>
       c.query(
         `SELECT id, name, body AS template, logo_sha256 AS "logoSha256", server_version AS "serverVersion",
-                updated_at AS "updatedAt", deleted_at AS "deletedAt" FROM templates ORDER BY name`,
+                updated_at AS "updatedAt", deleted_at AS "deletedAt" FROM templates
+          WHERE organization_id = $1 ORDER BY name`,
+        [auth.orgId],
       ),
     );
     return { templates: r.rows };
@@ -40,14 +42,17 @@ export function registerTemplateRoutes(app: FastifyInstance, deps: Deps) {
       if (again) return again;
       const logo = template.logo?.sha256 ?? null;
       if (logo) {
-        const f = await c.query('SELECT 1 FROM files WHERE sha256 = $1', [logo]);
+        const f = await c.query('SELECT 1 FROM files WHERE organization_id = $2 AND sha256 = $1', [
+          logo,
+          auth.orgId,
+        ]);
         if (!f.rowCount)
           throw new HttpError(422, 'missing-files', 'Logo absent du serveur.', { missing: [logo] });
       }
       const current = (
         await c.query<{ server_version: number; deleted_at: Date | null }>(
-          'SELECT server_version, deleted_at FROM templates WHERE id = $1 FOR UPDATE',
-          [template.id],
+          'SELECT server_version, deleted_at FROM templates WHERE organization_id = $2 AND id = $1 FOR UPDATE',
+          [template.id, auth.orgId],
         )
       ).rows[0];
       let version = 1;
@@ -67,14 +72,15 @@ export function registerTemplateRoutes(app: FastifyInstance, deps: Deps) {
         version = current.server_version + 1;
         await c.query(
           `UPDATE templates SET name = $2, body = $3, logo_sha256 = $4, updated_by = $5, updated_at = now(),
-                  server_version = $6 WHERE id = $1`,
-          [template.id, template.name, JSON.stringify(template), logo, auth.userId, version],
+                  server_version = $6 WHERE organization_id = $7 AND id = $1`,
+          [template.id, template.name, JSON.stringify(template), logo, auth.userId, version, auth.orgId],
         );
       }
-      await c.query("DELETE FROM file_refs WHERE owner_kind = 'template' AND owner_id = $1", [template.id]);
+      // Références cumulées (jamais retirées) : un ancien logo reste protégé.
       if (logo)
         await c.query(
-          "INSERT INTO file_refs (organization_id, sha256, owner_kind, owner_id) VALUES ($1, $2, 'template', $3)",
+          `INSERT INTO file_refs (organization_id, sha256, owner_kind, owner_id) VALUES ($1, $2, 'template', $3)
+           ON CONFLICT DO NOTHING`,
           [auth.orgId, logo, template.id],
         );
       await logChange(c, auth.orgId, 'template', template.id, version);
@@ -100,17 +106,17 @@ export function registerTemplateRoutes(app: FastifyInstance, deps: Deps) {
     return tx(deps.pool, { orgId: auth.orgId, userId: auth.userId }, async (c) => {
       const current = (
         await c.query<{ server_version: number; deleted_at: Date | null }>(
-          'SELECT server_version, deleted_at FROM templates WHERE id = $1 FOR UPDATE',
-          [request.params.id],
+          'SELECT server_version, deleted_at FROM templates WHERE organization_id = $2 AND id = $1 FOR UPDATE',
+          [request.params.id, auth.orgId],
         )
       ).rows[0];
       if (!current) throw notFound('Modèle');
       if (current.deleted_at) return { serverVersion: current.server_version };
       const version = current.server_version + 1;
-      await c.query('UPDATE templates SET deleted_at = now(), server_version = $2 WHERE id = $1', [
-        request.params.id,
-        version,
-      ]);
+      await c.query(
+        'UPDATE templates SET deleted_at = now(), server_version = $2 WHERE organization_id = $3 AND id = $1',
+        [request.params.id, version, auth.orgId],
+      );
       await logChange(c, auth.orgId, 'template', request.params.id, version, true);
       await audit(c, {
         orgId: auth.orgId,

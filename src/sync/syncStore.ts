@@ -10,7 +10,8 @@ import type { IndexedDbRepository } from '@/persistence/indexedDbRepository.ts';
 import type { EngineStatus } from './engine.ts';
 import type { SyncConflictRecord, SyncOperationRecord } from './types.ts';
 
-export type SyncState = 'synced' | 'offline' | 'syncing' | 'local-changes' | 'conflict' | 'error' | 'auth';
+export type SyncState =
+  'synced' | 'offline' | 'syncing' | 'local-changes' | 'conflict' | 'error' | 'auth' | 'revoked';
 
 export interface PlanSyncInfo {
   state: 'synced' | 'local-changes' | 'conflict' | 'error' | 'local-only' | 'server-update';
@@ -41,6 +42,7 @@ export const useSyncStore = create<SyncStore>()((set) => ({
 export function overallState(
   s: Pick<SyncStore, 'online' | 'engine' | 'operations' | 'conflicts'>,
 ): SyncState {
+  if (s.operations.some((o) => o.revoked)) return 'revoked';
   if (s.conflicts.length) return 'conflict';
   if (s.engine?.authRequired) return 'auth';
   if (s.operations.some((o) => o.status === 'failed')) return 'error';

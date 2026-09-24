@@ -20,8 +20,11 @@ export const PASSWORD = 'mot-de-passe-solide-2026';
 
 export type Harness = Awaited<ReturnType<typeof createHarness>>;
 
-export async function createHarness(overrides: Record<string, string> = {}) {
-  const db = await createTestDatabase();
+export async function createHarness(
+  overrides: Record<string, string> = {},
+  options: { bypassRls?: boolean } = {},
+) {
+  const db = await createTestDatabase(options);
   const filesRoot = mkdtempSync(join(tmpdir(), 'campplanner-files-'));
   const config = loadConfig({ DATABASE_URL: db.appUrl, STORAGE_FS_ROOT: filesRoot, ...overrides });
   const app = await buildApp({ config, pool: db.pool, storage: new FsStorage(filesRoot) });

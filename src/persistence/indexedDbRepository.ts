@@ -27,6 +27,11 @@ import type {
   SyncOperationRecord,
 } from '@/sync/types.ts';
 import { PlanConflictError } from './ProjectRepository.ts';
+import { readProfiles } from '@/app/profile.ts';
+
+/** La base appartient-elle à un espace d'organisation retiré de cet appareil ? */
+const spaceRemoved = (databaseName: string) =>
+  databaseName.startsWith('campplanner-') && !readProfiles().some((p) => p.dbName === databaseName);
 import type {
   ImportedRevision,
   LoadedRevision,
@@ -150,6 +155,27 @@ export class IndexedDbRepository implements ProjectRepository {
 
   constructor(databaseName = 'campplanner') {
     this.db = new CampPlannerDatabase(databaseName);
+    // Espace d'organisation purgé (déconnexion d'un poste partagé dans un autre onglet) : toute
+    // écriture est refusée, même par un onglet resté ouvert qui n'aurait reçu aucun signal. Une
+    // base vide éventuellement rouverte par une lecture est effacée au prochain démarrage.
+    if (databaseName !== 'campplanner')
+      this.db.use({
+        stack: 'dbcore',
+        name: 'campplanner-closed-space',
+        create: (down) => ({
+          ...down,
+          table: (name) => {
+            const table = down.table(name);
+            return {
+              ...table,
+              mutate: (request) =>
+                spaceRemoved(databaseName)
+                  ? Promise.reject(new Error('Espace de travail fermé (déconnexion) : écriture refusée.'))
+                  : table.mutate(request),
+            };
+          },
+        }),
+      });
   }
 
   close(): void {

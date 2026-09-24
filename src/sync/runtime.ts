@@ -4,7 +4,7 @@
  * - cycles : au démarrage, toutes les 20 s, au retour du réseau, après chaque écriture locale
  *   (petit délai de regroupement), quand l'onglet redevient visible.
  */
-import { namespace, type Profile } from '@/app/profile.ts';
+import { currentAccessEpoch, lockProfile, namespace, type Profile } from '@/app/profile.ts';
 import { logEvent } from '@/diagnostics/errorLog.ts';
 import { IndexedDbRepository } from '@/persistence/indexedDbRepository.ts';
 import { openPlanIds } from '@/persistence/planLock.ts';
@@ -35,6 +35,13 @@ export function startSync(profile: Profile): () => void {
   const poll = setInterval(refresh, 2000);
   const offMessages = onSync((m) => {
     if (m.type === 'status' && m.status) useSyncStore.getState().set({ engine: m.status });
+    // Appareil partagé : session refusée par le serveur (expirée, révoquée, accès suspendu) →
+    // l'espace est verrouillé immédiatement dans CET onglet (aucune donnée accessible sans une
+    // nouvelle connexion ; effacement proposé sur l'écran verrouillé).
+    if (m.type === 'status' && m.status?.authRequired && profile.deviceMode === 'shared' && !stopped) {
+      lockProfile(profile);
+      window.location.reload();
+    }
     // Écriture locale mise en file (« kick ») : l'indicateur passe tout de suite à « Changements locaux ».
     if (m.type === 'server-updated' || m.type === 'pull-applied' || m.type === 'kick') refresh();
   });
@@ -44,7 +51,14 @@ export function startSync(profile: Profile): () => void {
 
   let release: () => void = () => undefined;
   const lead = () => {
-    engine = new SyncEngine({ raw, api, orgId: profile.orgId!, openPlanIds, post: postSync });
+    engine = new SyncEngine({
+      raw,
+      api,
+      orgId: profile.orgId!,
+      openPlanIds,
+      post: postSync,
+      accessEpoch: () => currentAccessEpoch(profile.id),
+    });
     const e = engine;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const run = () => {

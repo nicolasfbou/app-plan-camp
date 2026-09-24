@@ -42,9 +42,10 @@ export async function replayed(client: Client, auth: Auth, idem: Idempotency | n
     response: unknown;
     user_id: string;
     request_sha256: string | null;
-  }>('SELECT route, status, response, user_id, request_sha256 FROM idempotency_keys WHERE key = $1', [
-    idem.key,
-  ]);
+  }>(
+    'SELECT route, status, response, user_id, request_sha256 FROM idempotency_keys WHERE organization_id = $2 AND key = $1',
+    [idem.key, auth.orgId],
+  );
   const row = r.rows[0];
   if (!row) return null;
   if (row.route !== route || row.user_id !== auth.userId)

@@ -73,6 +73,18 @@ export async function buildApp(
     request.auth = await resolveSession(full.pool, request.cookies[SESSION_COOKIE]);
     if (!request.auth && !PUBLIC_ROUTES.some((r) => r.test(path)))
       throw new HttpError(401, 'unauthenticated', 'Connexion requise.');
+    // Opération hors ligne créée pendant une période d'accès révoquée depuis : jamais acceptée
+    // automatiquement, même envoyée avec une nouvelle session valide.
+    const opEpoch = request.headers['x-operation-epoch'];
+    if (request.auth && request.method !== 'GET' && typeof opEpoch === 'string') {
+      const epoch = Number(opEpoch);
+      if (!Number.isInteger(epoch) || epoch < request.auth.accessEpoch)
+        throw new HttpError(
+          409,
+          'access-revoked-operation',
+          'Modification faite pendant une période où votre accès a été révoqué : elle n’est pas acceptée automatiquement.',
+        );
+    }
   });
 
   app.setErrorHandler((error, request, reply) => {

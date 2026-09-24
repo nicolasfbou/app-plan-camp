@@ -107,6 +107,7 @@ export interface MeResponse {
   organization: { id: string; name: string; slug: string };
   role: 'admin' | 'manager' | 'editor' | 'reader';
   deviceMode: 'trusted' | 'shared';
+  accessEpoch?: number;
 }
 
 export interface ServerPlan {

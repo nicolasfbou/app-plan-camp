@@ -4,9 +4,8 @@
  * appareil partagé (verrouillage, purge), approbation réelle + audit, publication d'un projet
  * local (approbation locale conservée « non vérifiée »), refus serveur visible.
  */
-import { type Browser, type BrowserContext, type Page, expect, test } from '@playwright/test';
+import { type BrowserContext, expect, test } from '@playwright/test';
 import {
-  clickOnCanvas,
   createCamp,
   createPlan,
   fixture,
@@ -14,57 +13,17 @@ import {
   waitForBackground,
   waitSaved,
 } from './helpers.ts';
-
-const PASSWORD = 'mot-de-passe-solide-2026';
-const unique = (name: string) => `${name} ${Math.random().toString(36).slice(2, 7)}`;
-
-async function login(page: Page, email: string, mode: 'trusted' | 'shared' = 'trusted') {
-  await page.goto('/#/connexion');
-  await page.getByLabel('Courriel').fill(email);
-  await page.getByLabel('Mot de passe').fill(PASSWORD);
-  await page
-    .getByTestId('device-mode')
-    .getByRole('radio')
-    .nth(mode === 'trusted' ? 0 : 1)
-    .check();
-  await page.getByTestId('login-submit').click();
-  await expect(page.getByTestId('workspace-bar')).toBeVisible();
-  await expect(page.getByTestId('workspace-select')).toContainText('PAMM');
-}
-
-async function newContext(browser: Browser) {
-  return browser.newContext({ baseURL: 'http://localhost:8787', viewport: { width: 1600, height: 1000 } });
-}
-
-async function label(page: Page, at: [number, number], text: string) {
-  await page.keyboard.press('g');
-  await clickOnCanvas(page, at);
-  await page.getByTestId('text-editor').fill(text);
-  await page.keyboard.press('Enter');
-  await page.keyboard.press('Escape');
-}
-
-const indicator = (page: Page) => page.getByTestId('sync-indicator').first();
-/**
- * Point de synchronisation déterministe : état « synchronisé », AUCUN cycle en cours (aucune
- * requête en vol) et file vide. Jamais une simple attente de durée.
- */
-async function expectSynced(page: Page, timeout = 30_000) {
-  await expect(indicator(page)).toHaveAttribute('data-state', 'synced', { timeout });
-  await expect(indicator(page)).toHaveAttribute('data-syncing', 'false', { timeout });
-  await expect(indicator(page)).toHaveAttribute('data-pending', '0', { timeout });
-}
-async function campWithPhoto(page: Page, camp: string) {
-  await createCamp(page, camp);
-  await createPlan(page, 'Circulation');
-  await importBackground(page, fixture('quadrants.png'));
-  await waitForBackground(page);
-  await waitSaved(page);
-  await expectSynced(page);
-  return page.url();
-}
-
-const planIdOf = (url: string) => url.split('/plan/')[1]!;
+import {
+  campWithPhoto,
+  expectSynced,
+  indicator,
+  label,
+  login,
+  newContext,
+  PASSWORD,
+  planIdOf,
+  unique,
+} from './server.ts';
 
 test.describe('Phase 9 — comptes, organisation, synchronisation', () => {
   test('connexion : le type d’appareil est obligatoire ; espace PAMM ; état synchronisé', async ({

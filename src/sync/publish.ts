@@ -9,7 +9,7 @@
  * 4. Le projet local est marqué « publié » (lien vers l'espace d'organisation) ; il n'est ni
  *    modifié ni supprimé.
  */
-import type { Profile } from '@/app/profile.ts';
+import { currentAccessEpoch, type Profile } from '@/app/profile.ts';
 import { nowIso } from '@/domain/model/factories.ts';
 import { approvalVerification } from '@/domain/revisions/revision.ts';
 import { parsePlanDocument } from '@/domain/schema/serialization.ts';
@@ -132,7 +132,9 @@ export async function publishCamp(
   onProgress: (done: number, total: number) => void = () => undefined,
 ): Promise<{ pending: number }> {
   const site = (await local.getSite(campId))!;
-  const org = new SyncingRepository(target.dbName, target.orgId!, api);
+  const org = new SyncingRepository(target.dbName, target.orgId!, api, undefined, undefined, () =>
+    currentAccessEpoch(target.id),
+  );
   try {
     await org.saveSite({ ...site, updatedAt: nowIso() });
     for (const p of await local.listPlans(campId)) {
@@ -150,7 +152,12 @@ export async function publishCamp(
   }
   // Envoi immédiat (même moteur que la synchronisation ; reprend plus tard si interrompu).
   const raw = new IndexedDbRepository(target.dbName);
-  const engine = new SyncEngine({ raw, api, orgId: target.orgId! });
+  const engine = new SyncEngine({
+    raw,
+    api,
+    orgId: target.orgId!,
+    accessEpoch: () => currentAccessEpoch(target.id),
+  });
   try {
     const total = await raw.sync.outbox.count();
     for (let i = 0; i < 20; i++) {

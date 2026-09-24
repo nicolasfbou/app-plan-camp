@@ -24,9 +24,11 @@ export async function createSession(
       ? config.sharedSessionTtlHours * 3600_000
       : config.sessionTtlDays * 86400_000;
   const expiresAt = new Date(Date.now() + ttlMs);
+  // La session appartient à la période d'accès ACTUELLE du membre.
   await pool.query(
-    `INSERT INTO sessions (id_hash, user_id, organization_id, device_mode, expires_at)
-     VALUES ($1, $2, $3, $4, $5)`,
+    `INSERT INTO sessions (id_hash, user_id, organization_id, device_mode, expires_at, access_epoch)
+     SELECT $1, $2, $3, $4, $5, m.access_epoch FROM memberships m
+      WHERE m.organization_id = $3 AND m.user_id = $2`,
     [sha256(token), input.userId, input.orgId, input.deviceMode, expiresAt],
   );
   return { token, expiresAt };
@@ -55,12 +57,14 @@ export async function resolveSession(pool: pg.Pool, token: string | undefined): 
     display_name: string;
     device_mode: 'trusted' | 'shared';
     last_seen_at: Date;
+    access_epoch: number;
   }>(
-    `SELECT s.user_id, s.organization_id, m.role, u.email, u.display_name, s.device_mode, s.last_seen_at
+    `SELECT s.user_id, s.organization_id, m.role, u.email, u.display_name, s.device_mode, s.last_seen_at,
+            m.access_epoch
        FROM sessions s
        JOIN users u ON u.id = s.user_id AND u.status = 'active'
        JOIN memberships m ON m.organization_id = s.organization_id AND m.user_id = s.user_id
-                          AND m.status = 'active'
+                          AND m.status = 'active' AND m.access_epoch = s.access_epoch
       WHERE s.id_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now()`,
     [hash],
   );
@@ -76,6 +80,7 @@ export async function resolveSession(pool: pg.Pool, token: string | undefined): 
     displayName: row.display_name,
     sessionHash: hash,
     deviceMode: row.device_mode,
+    accessEpoch: row.access_epoch,
   };
 }
 

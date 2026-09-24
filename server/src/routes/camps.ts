@@ -23,7 +23,8 @@ export function registerCampRoutes(app: FastifyInstance, deps: Deps) {
       const r = await c.query(
         `SELECT id, name, notes, server_version AS "serverVersion", created_at AS "createdAt",
                 updated_at AS "updatedAt", deleted_at AS "deletedAt"
-           FROM camps ORDER BY name`,
+           FROM camps WHERE organization_id = $1 ORDER BY name`,
+        [auth.orgId],
       );
       return { camps: r.rows.filter((row) => !allowed || allowed.has(row.id)) };
     });
@@ -42,8 +43,8 @@ export function registerCampRoutes(app: FastifyInstance, deps: Deps) {
       if (again) return again;
       const current = (
         await c.query<{ server_version: number; deleted_at: Date | null; name: string }>(
-          'SELECT server_version, deleted_at, name FROM camps WHERE id = $1 FOR UPDATE',
-          [request.params.id],
+          'SELECT server_version, deleted_at, name FROM camps WHERE organization_id = $2 AND id = $1 FOR UPDATE',
+          [request.params.id, auth.orgId],
         )
       ).rows[0];
       let version: number;
@@ -72,8 +73,8 @@ export function registerCampRoutes(app: FastifyInstance, deps: Deps) {
           });
         version = current.server_version + 1;
         await c.query(
-          'UPDATE camps SET name = $2, notes = $3, updated_by = $4, updated_at = now(), server_version = $5 WHERE id = $1',
-          [request.params.id, body.name, body.notes, auth.userId, version],
+          'UPDATE camps SET name = $2, notes = $3, updated_by = $4, updated_at = now(), server_version = $5 WHERE organization_id = $6 AND id = $1',
+          [request.params.id, body.name, body.notes, auth.userId, version, auth.orgId],
         );
         if (current.name !== body.name)
           await audit(c, {
@@ -104,24 +105,26 @@ export function registerCampRoutes(app: FastifyInstance, deps: Deps) {
       if (again) return again;
       const current = (
         await c.query<{ server_version: number; deleted_at: Date | null }>(
-          'SELECT server_version, deleted_at FROM camps WHERE id = $1 FOR UPDATE',
-          [request.params.id],
+          'SELECT server_version, deleted_at FROM camps WHERE organization_id = $2 AND id = $1 FOR UPDATE',
+          [request.params.id, auth.orgId],
         )
       ).rows[0];
       if (!current) throw notFound('Camp');
+      await requireCampAccess(c, auth, request.params.id);
       if (current.deleted_at) return { status: 200, body: { serverVersion: current.server_version } };
       if (expected !== current.server_version)
         throw new HttpError(409, 'version', 'Le camp a été modifié ailleurs.', {
           serverVersion: current.server_version,
         });
-      const plans = await c.query('SELECT 1 FROM plans WHERE camp_id = $1 AND deleted_at IS NULL', [
-        request.params.id,
-      ]);
+      const plans = await c.query(
+        'SELECT 1 FROM plans WHERE organization_id = $2 AND camp_id = $1 AND deleted_at IS NULL',
+        [request.params.id, auth.orgId],
+      );
       if (plans.rowCount) throw new HttpError(409, 'not-empty', 'Supprimez d’abord les plans de ce camp.');
       const version = current.server_version + 1;
       await c.query(
-        'UPDATE camps SET deleted_at = now(), server_version = $2, updated_by = $3 WHERE id = $1',
-        [request.params.id, version, auth.userId],
+        'UPDATE camps SET deleted_at = now(), server_version = $2, updated_by = $3 WHERE organization_id = $4 AND id = $1',
+        [request.params.id, version, auth.userId, auth.orgId],
       );
       await logChange(c, auth.orgId, 'camp', request.params.id, version, true);
       await audit(c, {

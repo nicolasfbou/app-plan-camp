@@ -84,7 +84,10 @@ export function registerFileRoutes(app: FastifyInstance, deps: Deps) {
     const auth = requireAuth(request);
     const body = z.object({ sha256: z.array(z.string().regex(SHA)).max(1000) }).parse(request.body);
     const present = await tx(deps.pool, { orgId: auth.orgId, userId: auth.userId }, (c) =>
-      c.query<{ sha256: string }>('SELECT sha256 FROM files WHERE sha256 = ANY($1)', [body.sha256]),
+      c.query<{ sha256: string }>(
+        'SELECT sha256 FROM files WHERE organization_id = $2 AND sha256 = ANY($1)',
+        [body.sha256, auth.orgId],
+      ),
     );
     return { present: present.rows.map((r) => r.sha256) };
   });
@@ -126,7 +129,10 @@ export function registerFileRoutes(app: FastifyInstance, deps: Deps) {
         }
         const key = fileKey(auth.orgId, expected);
         const created = await tx(deps.pool, { orgId: auth.orgId, userId: auth.userId }, async (c) => {
-          const exists = await c.query('SELECT 1 FROM files WHERE sha256 = $1', [expected]);
+          const exists = await c.query('SELECT 1 FROM files WHERE organization_id = $2 AND sha256 = $1', [
+            expected,
+            auth.orgId,
+          ]);
           if (exists.rowCount) return false;
           // Objet écrit AVANT la ligne (si l'écriture échoue, rien n'est référencé).
           await deps.storage.putFile(key, received.path, { contentType: actual, byteLength: received.size });
@@ -159,8 +165,8 @@ export function registerFileRoutes(app: FastifyInstance, deps: Deps) {
     const row = await tx(deps.pool, { orgId: auth.orgId, userId: auth.userId }, async (c) => {
       const file = (
         await c.query<{ storage_key: string; mime_type: string; byte_length: number }>(
-          'SELECT storage_key, mime_type, byte_length FROM files WHERE sha256 = $1',
-          [request.params.sha256],
+          'SELECT storage_key, mime_type, byte_length FROM files WHERE organization_id = $2 AND sha256 = $1',
+          [request.params.sha256, auth.orgId],
         )
       ).rows[0];
       const allowed = await allowedCampIds(c, auth);
@@ -172,10 +178,10 @@ export function registerFileRoutes(app: FastifyInstance, deps: Deps) {
            LEFT JOIN plans p ON f.owner_kind = 'plan' AND p.organization_id = f.organization_id AND p.id = f.owner_id
            LEFT JOIN revisions r ON f.owner_kind = 'revision' AND r.organization_id = f.organization_id AND r.id = f.owner_id
            LEFT JOIN plans rp ON rp.organization_id = r.organization_id AND rp.id = r.plan_id
-          WHERE f.sha256 = $1
+          WHERE f.organization_id = $3 AND f.sha256 = $1
             AND (f.owner_kind = 'template' OR p.camp_id = ANY($2) OR rp.camp_id = ANY($2))
           LIMIT 1`,
-        [request.params.sha256, [...allowed]],
+        [request.params.sha256, [...allowed], auth.orgId],
       );
       return reachable.rowCount ? file : undefined;
     });

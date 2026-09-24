@@ -79,8 +79,12 @@ const view = (r: RevisionRow) => ({
 
 async function revisionRow(c: Client, auth: Auth, id: string, lock = false) {
   if (!ID.test(id)) return undefined;
-  const row = (await c.query<RevisionRow>(`${SELECT} WHERE r.id = $1${lock ? ' FOR UPDATE OF r' : ''}`, [id]))
-    .rows[0];
+  const row = (
+    await c.query<RevisionRow>(
+      `${SELECT} WHERE r.organization_id = $2 AND r.id = $1${lock ? ' FOR UPDATE OF r' : ''}`,
+      [id, auth.orgId],
+    )
+  ).rows[0];
   if (row) await requireCampAccess(c, auth, row.camp_id);
   return row;
 }
@@ -128,14 +132,16 @@ export function registerRevisionRoutes(app: FastifyInstance, deps: Deps) {
   app.get<{ Params: { id: string } }>('/api/plans/:id/revisions', async (request) => {
     const auth = requireAuth(request);
     return tx(deps.pool, ctx(auth), async (c) => {
-      const plan = await c.query<{ camp_id: string }>('SELECT camp_id FROM plans WHERE id = $1', [
-        request.params.id,
-      ]);
+      const plan = await c.query<{ camp_id: string }>(
+        'SELECT camp_id FROM plans WHERE organization_id = $2 AND id = $1',
+        [request.params.id, auth.orgId],
+      );
       if (!plan.rows[0]) throw notFound('Plan');
       await requireCampAccess(c, auth, plan.rows[0].camp_id);
-      const rows = await c.query<RevisionRow>(`${SELECT} WHERE r.plan_id = $1 ORDER BY r.created_at, r.id`, [
-        request.params.id,
-      ]);
+      const rows = await c.query<RevisionRow>(
+        `${SELECT} WHERE r.organization_id = $2 AND r.plan_id = $1 ORDER BY r.created_at, r.id`,
+        [request.params.id, auth.orgId],
+      );
       return { revisions: rows.rows.map(view) };
     });
   });
@@ -146,8 +152,8 @@ export function registerRevisionRoutes(app: FastifyInstance, deps: Deps) {
       const row = await revisionRow(c, auth, request.params.id);
       if (!row) throw notFound('Révision');
       const snap = await c.query<{ json: string }>(
-        'SELECT json FROM revision_snapshots WHERE revision_id = $1',
-        [row.id],
+        'SELECT json FROM revision_snapshots WHERE organization_id = $2 AND revision_id = $1',
+        [row.id, auth.orgId],
       );
       return { ...view(row), snapshot: snap.rows[0]!.json };
     });
@@ -202,15 +208,15 @@ export function registerRevisionRoutes(app: FastifyInstance, deps: Deps) {
         // Verrou du plan : deux révisions simultanées ne choisissent ni le même libellé ni le même
         // parent (la chaîne reste linéaire). Index unique en dernier rempart.
         const plan = await c.query<{ camp_id: string; deleted_at: Date | null }>(
-          'SELECT camp_id, deleted_at FROM plans WHERE id = $1 FOR UPDATE',
-          [body.planId],
+          'SELECT camp_id, deleted_at FROM plans WHERE organization_id = $2 AND id = $1 FOR UPDATE',
+          [body.planId, auth.orgId],
         );
         if (!plan.rows[0])
           throw new HttpError(409, 'plan-missing', 'Plan absent du serveur : envoyez-le d’abord.');
         await requireCampAccess(c, auth, plan.rows[0].camp_id);
         const labels = await c.query<{ label: string }>(
-          'SELECT label FROM revisions WHERE plan_id = $1 AND deleted_at IS NULL',
-          [body.planId],
+          'SELECT label FROM revisions WHERE organization_id = $2 AND plan_id = $1 AND deleted_at IS NULL',
+          [body.planId, auth.orgId],
         );
         if (labels.rows.some((r) => r.label.toUpperCase() === meta.label.toUpperCase()))
           throw new HttpError(
@@ -219,16 +225,17 @@ export function registerRevisionRoutes(app: FastifyInstance, deps: Deps) {
             `La révision ${meta.label} existe déjà sur le serveur pour ce plan.`,
           );
         const shas = referencedShas(doc);
-        const present = await c.query<{ sha256: string }>('SELECT sha256 FROM files WHERE sha256 = ANY($1)', [
-          shas,
-        ]);
+        const present = await c.query<{ sha256: string }>(
+          'SELECT sha256 FROM files WHERE organization_id = $2 AND sha256 = ANY($1)',
+          [shas, auth.orgId],
+        );
         const missing = shas.filter((s) => !present.rows.some((r) => r.sha256 === s));
         if (missing.length)
           throw new HttpError(422, 'missing-files', 'Fichiers absents du serveur.', { missing });
         const parent = (
           await c.query<{ id: string; seal: string; chain_hash: string }>(
-            'SELECT id, seal, chain_hash FROM revisions WHERE plan_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1',
-            [body.planId],
+            'SELECT id, seal, chain_hash FROM revisions WHERE organization_id = $2 AND plan_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1',
+            [body.planId, auth.orgId],
           )
         ).rows[0];
         const chainHash = sha256Text(`${parent?.chain_hash ?? ''}|${meta.seal}`);
@@ -293,8 +300,8 @@ export function registerRevisionRoutes(app: FastifyInstance, deps: Deps) {
       if (!row || row.deleted_at) throw notFound('Révision');
       // Intégrité de l'instantané revérifiée avant tout changement de statut.
       const snap = await c.query<{ json: string }>(
-        'SELECT json FROM revision_snapshots WHERE revision_id = $1',
-        [row.id],
+        'SELECT json FROM revision_snapshots WHERE organization_id = $2 AND revision_id = $1',
+        [row.id, auth.orgId],
       );
       if (sha256Text(snap.rows[0]!.json) !== row.meta.snapshot.sha256)
         throw new HttpError(409, 'snapshot-altered', 'Instantané altéré : aucun changement permis.');
@@ -324,8 +331,8 @@ export function registerRevisionRoutes(app: FastifyInstance, deps: Deps) {
                 verification_type = CASE WHEN $5 THEN 'authenticated_server' ELSE verification_type END,
                 approved_at = CASE WHEN $5 THEN $6::timestamptz ELSE approved_at END,
                 approved_by = CASE WHEN $5 THEN $7::uuid ELSE approved_by END
-          WHERE id = $1`,
-        [row.id, JSON.stringify(next), next.seal, next.status, approving, now, auth.userId],
+          WHERE organization_id = $8 AND id = $1`,
+        [row.id, JSON.stringify(next), next.seal, next.status, approving, now, auth.userId, auth.orgId],
       );
       await logChange(c, auth.orgId, 'revision', row.id, next.statusLog.length);
       await audit(c, {
@@ -365,7 +372,10 @@ export function registerRevisionRoutes(app: FastifyInstance, deps: Deps) {
           'Une révision approuvée ne peut jamais être supprimée.',
         );
       if (row.deleted_at) return { ok: true };
-      await c.query('UPDATE revisions SET deleted_at = now() WHERE id = $1', [row.id]);
+      await c.query('UPDATE revisions SET deleted_at = now() WHERE organization_id = $2 AND id = $1', [
+        row.id,
+        auth.orgId,
+      ]);
       await logChange(c, auth.orgId, 'revision', row.id, row.meta.statusLog.length, true);
       await audit(c, {
         orgId: auth.orgId,

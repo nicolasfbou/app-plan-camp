@@ -37,6 +37,8 @@ export class Outbox {
     private readonly tables: SyncTables,
     private readonly orgId: string,
     private readonly notify: () => void = () => undefined,
+    /** Période d'accès actuelle de l'espace (enregistrée avec chaque opération). */
+    private readonly accessEpoch: () => number | undefined = () => undefined,
   ) {}
 
   async enqueue(input: EnqueueInput): Promise<void> {
@@ -84,6 +86,7 @@ export class Outbox {
         ...(input.planId ? { planId: input.planId } : {}),
         ...(input.campId ? { campId: input.campId } : {}),
         ...(mayExistOnServer ? { mayExistOnServer } : {}),
+        ...(this.accessEpoch() !== undefined ? { accessEpoch: this.accessEpoch() } : {}),
       };
       await this.tables.outbox.add(op);
     });

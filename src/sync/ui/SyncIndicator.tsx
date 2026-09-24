@@ -10,6 +10,7 @@ import {
   GitMerge,
   KeyRound,
   Loader2,
+  ShieldOff,
   UploadCloud,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -25,6 +26,7 @@ const STYLE: Record<SyncState, string> = {
   conflict: 'border-red-300 bg-red-50 text-red-800',
   error: 'border-red-300 bg-red-50 text-red-800',
   auth: 'border-amber-300 bg-amber-50 text-amber-900',
+  revoked: 'border-red-400 bg-red-100 text-red-900',
 };
 
 const ICON: Record<SyncState, typeof CheckCircle2> = {
@@ -35,6 +37,7 @@ const ICON: Record<SyncState, typeof CheckCircle2> = {
   conflict: GitMerge,
   error: AlertTriangle,
   auth: KeyRound,
+  revoked: ShieldOff,
 };
 
 export function SyncIndicator({ compact = false }: { compact?: boolean }) {

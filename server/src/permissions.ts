@@ -73,6 +73,8 @@ export interface Auth {
   displayName: string;
   sessionHash: string;
   deviceMode: 'trusted' | 'shared';
+  /** Période d'accès du membre (incrémentée à chaque suspension). */
+  accessEpoch: number;
 }
 
 export function requirePermission(auth: Auth, action: Action) {
@@ -85,9 +87,10 @@ export function requirePermission(auth: Auth, action: Action) {
  */
 export async function allowedCampIds(client: Client, auth: Auth): Promise<Set<string> | null> {
   if (auth.role === 'admin' || auth.role === 'manager') return null;
-  const rows = await client.query<{ camp_id: string }>('SELECT camp_id FROM camp_access WHERE user_id = $1', [
-    auth.userId,
-  ]);
+  const rows = await client.query<{ camp_id: string }>(
+    'SELECT camp_id FROM camp_access WHERE organization_id = $2 AND user_id = $1',
+    [auth.userId, auth.orgId],
+  );
   return rows.rows.length ? new Set(rows.rows.map((r) => r.camp_id)) : null;
 }
 
