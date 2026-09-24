@@ -134,10 +134,15 @@ export function createAreaObject(
   geometry: AreaGeometry,
   presetId: string,
   zoom = 1,
+  /** Nom choisi pour une zone personnalisée (ex. « Héliport ») ; sinon le nom du modèle. */
+  customName?: string,
 ): PlanObject {
   const preset = findZonePreset(presetId) ?? findZonePreset('zone.custom')!;
   const style = withOverride(scaledStyle(preset.style, zoom), doc.plan.styleOverrides[preset.id]);
-  const common = base(doc, preset.tier, preset.name.fr, style, preset.id);
+  // Nom saisi : donné à la zone ET affiché (une forme simple, sans nom, reste sans étiquette).
+  const named = preset.id === 'zone.custom' && Boolean(customName?.trim());
+  const name = named ? customName!.trim() : preset.name.fr;
+  const common = base(doc, preset.tier, name, style, preset.id);
   return preset.objectType === 'building'
     ? { ...common, type: 'building', geometry }
     : {
@@ -145,7 +150,7 @@ export function createAreaObject(
         type: 'zone',
         geometry,
         icon: preset.icon ? { symbolId: preset.icon, size: screenToImage(ZONE_ICON_PX, zoom) } : null,
-        showName: preset.showName ?? false,
+        showName: named || (preset.showName ?? false),
         nameOffset: null,
       };
 }

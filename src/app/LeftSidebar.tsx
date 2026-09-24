@@ -21,6 +21,7 @@ import { useRef } from 'react';
 import { FLOW_PRESETS } from '@/domain/presets/flowPresets.ts';
 import {
   BUILDING_PRESETS,
+  findZonePreset,
   type PresetGroup,
   ZONE_PRESETS,
   type ZonePreset,
@@ -203,6 +204,10 @@ function PresetList() {
         {t('tools.presets')}
       </h2>
       <p className="px-1 text-xs text-slate-500">{t('tools.presets.help')}</p>
+      <CustomZoneName
+        active={presetId === 'zone.custom'}
+        onChoose={() => choose(findZonePreset('zone.custom')!)}
+      />
       {group(t('tools.presets.parking'), byGroup('parking'))}
       {group(t('tools.presets.deliveries'), byGroup('deliveries'))}
       {group(t('tools.presets.safety'), byGroup('safety'))}
@@ -219,6 +224,38 @@ function PresetList() {
       {group(t('tools.presets.zones'), byGroup('zones'))}
       {group(t('tools.presets.buildings'), BUILDING_PRESETS)}
     </section>
+  );
+}
+
+/**
+ * Zone personnalisée nommée (ex. « Héliport ») : le nom saisi est donné aux zones dessinées
+ * ensuite, affiché dans la zone, dans la légende et sur le PDF ; modifiable dans les propriétés.
+ */
+function CustomZoneName({ active, onChoose }: { active: boolean; onChoose: () => void }) {
+  const name = useEditorStore((s) => s.customZoneName);
+  return (
+    <div
+      className={`mt-2 rounded border px-2 py-2 ${active ? 'border-white/40 bg-white/10' : 'border-white/10'}`}
+    >
+      <label htmlFor="custom-zone-name" className="block text-xs font-semibold text-slate-200">
+        {t('tools.customZone.label')}
+      </label>
+      <input
+        id="custom-zone-name"
+        data-testid="custom-zone-name"
+        type="text"
+        maxLength={80}
+        value={name}
+        placeholder={t('tools.customZone.placeholder')}
+        onFocus={onChoose}
+        onChange={(e) => {
+          useEditorStore.getState().setCustomZoneName(e.target.value);
+          if (!active) onChoose();
+        }}
+        className="mt-1 w-full rounded border border-white/20 bg-slate-900 px-2 py-1 text-sm text-white placeholder:text-slate-500 focus-visible:outline-2 focus-visible:outline-white"
+      />
+      <p className="mt-1 text-xs text-slate-500">{t('tools.customZone.help')}</p>
+    </div>
   );
 }
 

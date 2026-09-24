@@ -73,9 +73,11 @@ function entryFor(o: PlanObject, doc: PlanDocument): Omit<LegendEntry, 'count'> 
       };
     case 'zone':
     case 'building': {
-      const preset = o.presetId ? findZonePreset(o.presetId) : undefined;
+      // Zone personnalisée : légendée sous SON nom (ex. « Héliport »), pas sous le nom du modèle.
+      const custom = o.presetId === 'zone.custom';
+      const preset = o.presetId && !custom ? findZonePreset(o.presetId) : undefined;
       return {
-        key: `${o.type}:${o.presetId ?? cleanName(o.name)}:${styleKey(o.style)}:${o.type === 'zone' ? (o.icon?.symbolId ?? '') : ''}`,
+        key: `${o.type}:${custom ? `custom:${cleanName(o.name)}` : (o.presetId ?? cleanName(o.name))}:${styleKey(o.style)}:${o.type === 'zone' ? (o.icon?.symbolId ?? '') : ''}`,
         group: preset?.group ?? (o.type === 'building' ? 'buildings' : 'zones'),
         defaultLabel: preset?.name.fr ?? cleanName(o.name),
         swatch: {

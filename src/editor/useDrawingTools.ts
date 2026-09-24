@@ -106,7 +106,7 @@ export function finishPathDraft(): void {
   } else if (draft.tool === 'polygon') {
     if (points.length >= 3)
       editActions.create(
-        createAreaObject(doc, { kind: 'polygon', points }, editor.presetId, scale()),
+        createAreaObject(doc, { kind: 'polygon', points }, editor.presetId, scale(), editor.customZoneName),
         'Créer un polygone',
       );
   } else if (points.length >= 2) {
@@ -125,7 +125,7 @@ function createBox(draft: Extract<Draft, { kind: 'box' }>): void {
   const width = Math.abs(draft.end.x - draft.start.x);
   const height = Math.abs(draft.end.y - draft.start.y);
   if (Math.max(width, height) * scale() < MIN_DRAG_PX) return;
-  const presetId = useEditorStore.getState().presetId;
+  const { presetId, customZoneName } = useEditorStore.getState();
   const object =
     draft.tool === 'ellipse'
       ? createAreaObject(
@@ -133,6 +133,7 @@ function createBox(draft: Extract<Draft, { kind: 'box' }>): void {
           { kind: 'ellipse', cx: x + width / 2, cy: y + height / 2, rx: width / 2, ry: height / 2 },
           presetId,
           scale(),
+          customZoneName,
         )
       : createAreaObject(
           doc,
@@ -146,6 +147,7 @@ function createBox(draft: Extract<Draft, { kind: 'box' }>): void {
           },
           presetId,
           scale(),
+          customZoneName,
         );
   editActions.create(object, draft.tool === 'ellipse' ? 'Créer une ellipse' : 'Créer un rectangle');
 }

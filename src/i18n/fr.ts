@@ -131,6 +131,10 @@ export const fr = {
   'tools.presets.help': 'Appliqué aux rectangles, ellipses et polygones.',
   'tools.presets.zones': 'Zones générales',
   'tools.presets.buildings': 'Bâtiments',
+  'tools.customZone.label': 'Zone personnalisée — nom',
+  'tools.customZone.placeholder': 'ex. Héliport',
+  'tools.customZone.help':
+    'Tapez un nom puis dessinez la zone (rectangle, ellipse ou polygone). Le nom s’affiche dans la zone, dans la légende et sur le PDF.',
 
   'text.editor': 'Texte de l’objet',
 

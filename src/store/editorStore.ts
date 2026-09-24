@@ -123,6 +123,9 @@ interface EditorState {
   setBackground(status: BackgroundStatus): void;
   setTool(tool: Tool): void;
   setPreset(presetId: string): void;
+  /** Nom donné aux zones personnalisées dessinées ensuite (ex. « Héliport »). */
+  customZoneName: string;
+  setCustomZoneName(name: string): void;
   setFlowCategory(category: FlowCategory): void;
   /** Choisit un pictogramme et active l'outil de placement. */
   pickSymbol(symbolId: string): void;
@@ -188,6 +191,8 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
     set({ tool, draft: null, vertexEditing: false, editingTextId: null });
   },
   setPreset: (presetId) => set({ presetId }),
+  customZoneName: '',
+  setCustomZoneName: (customZoneName) => set({ customZoneName }),
   setFlowCategory: (flowCategory) => set({ flowCategory }),
   pickSymbol: (symbolId) =>
     planStore.getState().readOnly
