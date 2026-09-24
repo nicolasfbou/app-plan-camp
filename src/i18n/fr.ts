@@ -64,6 +64,8 @@ export const fr = {
   'topbar.redo': 'Rétablir (Ctrl+Y)',
   'topbar.toggleLeft': 'Afficher ou masquer le panneau des outils',
   'topbar.toggleMenu': 'Afficher ou masquer le menu',
+  'topbar.closeMenu': 'Fermer le menu',
+  'topbar.closePanel': 'Fermer le panneau',
   'topbar.toggleRight': 'Afficher ou masquer le panneau des propriétés',
   'topbar.renamePlan': 'Renommer le plan',
   'topbar.import': 'Importer un fond',

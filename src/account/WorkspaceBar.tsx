@@ -40,17 +40,17 @@ export function WorkspaceBar() {
 
   return (
     <div
-      className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-4 py-1.5 text-sm"
+      className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-2 py-1.5 text-sm md:px-4"
       data-testid="workspace-bar"
     >
       <IconButton label={t('topbar.toggleMenu')} onClick={toggleLeft} pressed={!leftCollapsed}>
         {leftCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
       </IconButton>
       <label className="flex items-center gap-2">
-        <span className="text-slate-500">{t('account.space')}</span>
+        <span className="text-slate-500 max-md:sr-only">{t('account.space')}</span>
         <select
           data-testid="workspace-select"
-          className="rounded-md border border-slate-300 px-2 py-1"
+          className="max-w-[60vw] rounded-md border border-slate-300 px-2 py-1"
           value={active.id}
           onChange={(e) => {
             setActiveProfile(e.target.value);

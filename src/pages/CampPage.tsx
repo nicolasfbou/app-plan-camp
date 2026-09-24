@@ -81,7 +81,7 @@ export function CampPage({ siteId }: { siteId: string }) {
       title={site.name}
       subtitle={t('plans.title')}
       action={
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button onClick={() => setDialog({ kind: 'templates' })}>
             <LayoutTemplate size={16} /> {t('templates.open')}
           </Button>

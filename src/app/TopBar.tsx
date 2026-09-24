@@ -67,13 +67,13 @@ export function TopBar({
   const setActiveView = useEditorStore((s) => s.setActiveView);
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-2">
+    <header className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-2 max-md:flex-wrap max-md:gap-1 max-md:py-1 md:h-12">
       <IconButton label={t('topbar.toggleLeft')} onClick={toggleLeft} pressed={!leftCollapsed}>
         {leftCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
       </IconButton>
 
       <nav
-        className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden text-sm"
+        className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden text-sm max-md:order-first max-md:basis-full"
         aria-label="Fil d’Ariane"
       >
         <a href={routeHref({ name: 'camps' })} className="shrink-0 text-slate-500 hover:underline">
@@ -123,7 +123,7 @@ export function TopBar({
           ) : (
             <CircleCheck size={14} />
           )}
-          {isDirty || saveError ? t('save.dirty') : t('save.saved')}
+          <span className="max-md:sr-only">{isDirty || saveError ? t('save.dirty') : t('save.saved')}</span>
         </span>
       )}
 
