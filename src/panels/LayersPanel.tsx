@@ -9,13 +9,17 @@ import {
   LockOpen,
   Pencil,
   Plus,
+  Printer,
   Trash2,
 } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { addLayer, deleteLayer, duplicateLayer, moveLayer, renameLayer } from '@/domain/model/layers.ts';
 import { expandGroups } from '@/domain/model/multi.ts';
 import { objectsInRenderOrder, replaceObject, setLayerFlag } from '@/domain/model/operations.ts';
-import { RENDER_TIERS } from '@/domain/model/schema.ts';
+import { formatLength } from '@/domain/model/measure.ts';
+import { NETWORK_TIERS, RENDER_TIERS } from '@/domain/model/schema.ts';
+import { findNetworkPreset } from '@/domain/presets/networkPresets.ts';
+import { networkActions, networkSummaries } from '@/editor/networkActions.ts';
 import type { Layer, RenderTier } from '@/domain/model/types.ts';
 import { t } from '@/i18n/index.ts';
 import { useEditorStore } from '@/store/editorStore.ts';
@@ -60,6 +64,7 @@ type Dialog = { kind: 'new' } | { kind: 'rename'; layer: Layer } | null;
 const FILTER_TIERS: readonly RenderTier[] = [
   'circulation',
   'pedestrians',
+  ...NETWORK_TIERS,
   'parking',
   'deliveries',
   'signage',
@@ -121,6 +126,107 @@ function CategoryFilter() {
 }
 
 /**
+ * Réseaux techniques superposables : chaque réseau tracé (ses calques) peut être affiché, masqué,
+ * isolé parmi les réseaux (« seul ») ou atténué, sans toucher aux autres calques du plan. Une vue
+ * imprimable par réseau peut être créée (photo, zones, bâtiments, textes et ce réseau).
+ */
+function NetworksOverview() {
+  const doc = usePlanStore((s) => s.doc);
+  const readOnly = usePlanStore((s) => s.readOnly);
+  if (!doc) return null;
+  const drawn = networkSummaries(doc).filter((n) => n.layers.length > 0);
+  return (
+    <fieldset
+      className="min-w-0 rounded-md border border-slate-200 bg-white p-2"
+      data-testid="networks-overview"
+    >
+      <legend className="px-1 text-xs font-semibold text-slate-700">{t('networks.title')}</legend>
+      {drawn.length === 0 ? (
+        <p className="text-xs text-slate-500">{t('networks.empty')}</p>
+      ) : (
+        <>
+          <ul className="space-y-2">
+            {drawn.map((n) => {
+              const name = t(`tier.${n.network}`);
+              const color = findNetworkPreset(n.network).style.stroke ?? '#64748b';
+              return (
+                <li key={n.network} data-network-row={n.network}>
+                  <div className="flex items-center gap-2 text-sm">
+                    <label className="flex min-w-0 flex-1 items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={n.visible}
+                        disabled={readOnly}
+                        aria-label={t(n.visible ? 'networks.hide' : 'networks.show', { name })}
+                        onChange={() => networkActions.setVisible(n.network, !n.visible)}
+                        className="accent-accent"
+                      />
+                      <span aria-hidden className="w-5 shrink-0 border-t-4" style={{ borderColor: color }} />
+                      <span className="truncate">{name}</span>
+                    </label>
+                    <button
+                      type="button"
+                      disabled={readOnly}
+                      className="shrink-0 rounded px-1 text-xs text-accent hover:underline disabled:text-slate-300"
+                      aria-label={t('networks.only', { name })}
+                      onClick={() => networkActions.showOnly(n.network)}
+                    >
+                      {t('layers.only')}
+                    </button>
+                    <FlagButton
+                      label={t('networks.createView')}
+                      disabled={readOnly}
+                      onClick={() => networkActions.createView(n.network)}
+                    >
+                      <Printer size={14} />
+                    </FlagButton>
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-2 pl-6">
+                    <span className="min-w-0 flex-1 text-[11px] text-slate-500 tabular-nums">
+                      {t('networks.count', {
+                        count: n.lines,
+                        length: formatLength(n.length, doc.plan.calibration, doc.plan.units),
+                      })}
+                    </span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={Math.round(n.opacity * 100)}
+                      disabled={readOnly}
+                      aria-label={t('networks.opacityOf', { name })}
+                      title={`${t('networks.opacity')} : ${Math.round(n.opacity * 100)} %`}
+                      onChange={(e) => networkActions.setOpacity(n.network, Number(e.target.value) / 100)}
+                      className="w-20 shrink-0 accent-accent"
+                    />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="mt-2 flex gap-2">
+            <Button
+              className="flex-1 px-1 text-xs"
+              disabled={readOnly}
+              onClick={() => networkActions.setAllVisible(true)}
+            >
+              {t('networks.showAll')}
+            </Button>
+            <Button
+              className="flex-1 px-1 text-xs"
+              disabled={readOnly}
+              onClick={() => networkActions.setAllVisible(false)}
+            >
+              {t('networks.hideAll')}
+            </Button>
+          </div>
+        </>
+      )}
+    </fieldset>
+  );
+}
+
+/**
  * Calques du plan, du dessus (dessiné en dernier) vers le dessous. Chaque calque a une catégorie
  * logique. Cliquer son nom le rend actif : les nouveaux objets y sont ajoutés.
  */
@@ -159,6 +265,7 @@ export function LayersPanel() {
         </Button>
       </div>
       <p className="text-xs text-slate-500">{t('layers.help')}</p>
+      <NetworksOverview />
       <CategoryFilter />
 
       <ul className="space-y-2">

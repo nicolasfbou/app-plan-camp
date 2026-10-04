@@ -26,6 +26,12 @@ const NAMES = [
   'person-standing',
   'footprints',
   'arrow-left-right',
+  'gauge',
+  'cylinder',
+  'droplet',
+  'utility-pole',
+  'plug',
+  'radio-tower',
 ];
 const glyphs = {};
 for (const name of NAMES) {

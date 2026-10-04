@@ -5,9 +5,11 @@
  */
 import { newId } from '../model/factories.ts';
 import { PRINT_STYLES } from '../model/planDefaults.ts';
+import { NETWORK_TIERS } from '../model/schema.ts';
 import type {
   Audience,
   LegendSettings,
+  NetworkTier,
   PlanDocument,
   PlanView,
   PrintSettings,
@@ -37,17 +39,17 @@ export const AUDIENCE_PRESETS: Record<
     note: string;
   }
 > = {
-  // Employés : piétons, stationnement, rassemblement ; les livraisons ne les concernent pas.
+  // Employés : piétons, stationnement, rassemblement ; ni livraisons ni réseaux techniques.
   employees: {
-    hiddenTiers: ['deliveries'],
+    hiddenTiers: ['deliveries', ...NETWORK_TIERS],
     style: 'employees',
     detail: 'standard',
     legendMode: 'compact',
     note: 'Destiné aux employés du camp',
   },
-  // Fournisseurs : accès, livraison, débarquement, sécurité ; pas le stationnement du personnel.
+  // Fournisseurs : accès, livraison, débarquement, sécurité ; ni stationnement du personnel ni réseaux.
   suppliers: {
-    hiddenTiers: ['parking'],
+    hiddenTiers: ['parking', ...NETWORK_TIERS],
     style: 'supplier',
     detail: 'standard',
     legendMode: 'compact',
@@ -96,8 +98,61 @@ export function createView(doc: PlanDocument, audience: Audience, name?: string)
       detail: preset.detail,
       style: styleFromPreset(preset.style),
     },
+    network: null,
   };
 }
+
+/** Catégories gardées dans la vue d'un réseau, pour se repérer : zones, bâtiments et textes. */
+const NETWORK_VIEW_TIERS: readonly RenderTier[] = ['zones', 'buildings', 'texts'];
+
+/**
+ * Vue imprimable d'un seul réseau technique (« un plan par réseau ») : la photo, les zones,
+ * bâtiments et textes pour se repérer, et ce réseau seulement. Comme toute vue, c'est un filtre :
+ * rien n'est copié ; les calques de ce réseau créés ensuite y apparaissent, ceux des autres réseaux
+ * y restent masqués (voir `hideNewNetworkLayerInViews`).
+ */
+export function createNetworkView(
+  doc: PlanDocument,
+  network: NetworkTier,
+  name: string,
+  note: string,
+): PlanView {
+  const view = createView(doc, 'custom', name);
+  const hidden = doc.layers
+    .filter((l) => l.tier !== network && !NETWORK_VIEW_TIERS.includes(l.tier))
+    .map((l) => l.id);
+  view.title = name;
+  view.audienceNote = note;
+  view.network = network;
+  view.print.excludedLayerIds = [...new Set([...view.print.excludedLayerIds, ...hidden])];
+  return view;
+}
+
+/**
+ * Nouveau calque de réseau : masqué dans les vues qui filtrent les réseaux (vues Employés et
+ * Fournisseurs, vue d'un AUTRE réseau, vue qui masque déjà un réseau), pour qu'un réseau tracé
+ * plus tard n'apparaisse pas sans prévenir dans une vue préparée sans lui. Les autres vues (et la
+ * vue de ce même réseau) l'affichent.
+ */
+export function hideNewNetworkLayerInViews(doc: PlanDocument, layerId: string): void {
+  const layer = doc.layers.find((l) => l.id === layerId);
+  if (!layer) return;
+  const networkLayers = new Set(
+    doc.layers.filter((l) => l.id !== layerId && isNetwork(l.tier)).map((l) => l.id),
+  );
+  for (const view of doc.plan.views) {
+    const excluded = view.print.excludedLayerIds;
+    const filters =
+      view.network !== null
+        ? view.network !== layer.tier
+        : view.audience === 'employees' ||
+          view.audience === 'suppliers' ||
+          excluded.some((id) => networkLayers.has(id));
+    if (filters && !excluded.includes(layerId)) excluded.push(layerId);
+  }
+}
+
+const isNetwork = (tier: RenderTier) => (NETWORK_TIERS as readonly string[]).includes(tier);
 
 /** Réglages effectifs d'un export : ceux de la vue, ou ceux du plan de base (`viewId` null). */
 export interface EffectiveSettings {

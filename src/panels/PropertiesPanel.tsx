@@ -41,6 +41,7 @@ import {
   IconProperties,
   ZoneMarkerProperties,
 } from './OperationalProperties.tsx';
+import { UtilityProperties } from './UtilityProperties.tsx';
 
 type TextObject = Extract<PlanObject, { type: 'text' }>;
 
@@ -375,6 +376,7 @@ function ObjectProperties({ object, doc }: { object: PlanObject; doc: PlanDocume
       </Section>
 
       {object.type === 'flow' && <FlowProperties object={object} disabled={disabled} set={set} />}
+      {object.type === 'utility' && <UtilityProperties object={object} disabled={disabled} set={set} />}
       {object.type === 'corridor' && (
         <CorridorProperties object={object} doc={doc} disabled={disabled} set={set} />
       )}
@@ -414,7 +416,11 @@ function ObjectProperties({ object, doc }: { object: PlanObject; doc: PlanDocume
 
       {hasStroke && (
         <Section
-          title={object.type === 'flow' || object.type === 'line' ? t('props.line') : t('props.stroke')}
+          title={
+            object.type === 'flow' || object.type === 'utility' || object.type === 'line'
+              ? t('props.line')
+              : t('props.stroke')
+          }
         >
           <ColorField
             label={t('props.strokeColor')}
@@ -454,6 +460,7 @@ function ObjectProperties({ object, doc }: { object: PlanObject; doc: PlanDocume
       {object.type === 'text' && <TextProperties object={object} disabled={disabled} set={set} />}
 
       {(object.type === 'flow' ||
+        (object.type === 'utility' && object.arrows.visible) ||
         object.type === 'corridor' ||
         object.type === 'icon' ||
         (object.type === 'zone' && object.icon)) && <DisplayLimits display={doc.plan.display} />}

@@ -1,7 +1,8 @@
 # CampPlanner
 
 Éditeur de plans de campements industriels : on importe une photo aérienne (drone, satellite, PDF)
-et on dessine par-dessus des zones, la circulation, les corridors piétons, la signalisation et des textes.
+et on dessine par-dessus des zones, la circulation, les corridors piétons, la signalisation, des textes
+et les réseaux techniques (eau potable, égouts, électricité, propane…), chacun dans son calque superposable.
 
 **Principe fondamental : photo originale intacte + calques éditables au-dessus.**
 

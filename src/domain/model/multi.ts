@@ -5,7 +5,7 @@
  */
 import { translateGeometry } from './geometry.ts';
 import { newId, nowIso } from './factories.ts';
-import { isLayerUsable, tierForType, layerForTier, topZIndex } from './objectFactory.ts';
+import { copyLayerFor, isLayerUsable, topZIndex } from './objectFactory.ts';
 import { dropCrossingReviews, isDisplayed, isEditable } from './operations.ts';
 import type { PlanDocument, PlanObject, Style } from './types.ts';
 
@@ -80,8 +80,7 @@ export function insertCopies(
   const created: string[] = [];
   const ordered = [...sources].sort((a, b) => a.zIndex - b.zIndex);
   for (const source of ordered) {
-    const layer =
-      doc.layers.find((l) => l.id === source.layerId) ?? layerForTier(doc, tierForType(source.type));
+    const layer = copyLayerFor(doc, source);
     if (!isLayerUsable(layer)) continue;
     const groupId = source.groupId
       ? (groups.get(source.groupId) ?? groups.set(source.groupId, newId()).get(source.groupId)!)

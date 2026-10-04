@@ -5,7 +5,9 @@
 import { create } from 'zustand';
 import { DEFAULT_AREA_PRESET_ID } from '@/domain/presets/zonePresets.ts';
 import { DEFAULT_FLOW_CATEGORY } from '@/domain/presets/flowPresets.ts';
-import type { FlowCategory, PlanObject, Point } from '@/domain/model/types.ts';
+import { DEFAULT_NETWORK } from '@/domain/presets/networkPresets.ts';
+import { findSymbol } from '@/domain/symbols/catalog.ts';
+import type { FlowCategory, NetworkTier, PlanObject, Point, UtilityStatus } from '@/domain/model/types.ts';
 import { type LoadedBackground, releaseBackground } from '@/editor/backgroundImage.ts';
 import { planStore } from './planStore.ts';
 
@@ -38,6 +40,7 @@ export const DRAWING_TOOLS = [
   'text',
   'label',
   'flow',
+  'utility',
   'corridor',
   'symbol',
   'measure',
@@ -54,7 +57,8 @@ export type Draft =
   | { kind: 'box'; tool: 'rect' | 'roundedRect' | 'ellipse'; start: Point; end: Point }
   | {
       kind: 'path';
-      tool: 'polygon' | 'polyline' | 'line' | 'flow' | 'corridor' | 'measure' | 'calibrate' | 'north';
+      tool:
+        'polygon' | 'polyline' | 'line' | 'flow' | 'utility' | 'corridor' | 'measure' | 'calibrate' | 'north';
       points: Point[];
       cursor: Point | null;
     };
@@ -65,6 +69,7 @@ export const PATH_TOOLS = [
   'polyline',
   'line',
   'flow',
+  'utility',
   'corridor',
   'measure',
   'calibrate',
@@ -81,6 +86,10 @@ interface EditorState {
   presetId: string;
   /** Catégorie appliquée par l'outil « Circulation véhicules ». */
   flowCategory: FlowCategory;
+  /** Réseau tracé par l'outil « Réseaux techniques » (eau potable, égout, électricité…). */
+  network: NetworkTier;
+  /** État donné aux nouvelles lignes de réseau (existant ou projeté). */
+  networkStatus: UtilityStatus;
   /** Pictogramme placé par l'outil « Pictogramme » (bibliothèque ou importé). */
   symbolId: string;
   /** Analyse des croisements piétons / véhicules affichée sur le plan. */
@@ -127,6 +136,8 @@ interface EditorState {
   customZoneName: string;
   setCustomZoneName(name: string): void;
   setFlowCategory(category: FlowCategory): void;
+  setNetwork(network: NetworkTier): void;
+  setNetworkStatus(status: UtilityStatus): void;
   /** Choisit un pictogramme et active l'outil de placement. */
   pickSymbol(symbolId: string): void;
   setShowCrossings(show: boolean): void;
@@ -156,6 +167,8 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   tool: 'select',
   presetId: DEFAULT_AREA_PRESET_ID,
   flowCategory: DEFAULT_FLOW_CATEGORY,
+  network: DEFAULT_NETWORK,
+  networkStatus: 'existing',
   symbolId: 'sign.stop',
   showCrossings: false,
   showVerifiedCrossings: false,
@@ -194,10 +207,14 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   customZoneName: '',
   setCustomZoneName: (customZoneName) => set({ customZoneName }),
   setFlowCategory: (flowCategory) => set({ flowCategory }),
-  pickSymbol: (symbolId) =>
-    planStore.getState().readOnly
-      ? set({ symbolId })
-      : set({ symbolId, tool: 'symbol', draft: null, vertexEditing: false, editingTextId: null }),
+  setNetwork: (network) => set({ network }),
+  setNetworkStatus: (networkStatus) => set({ networkStatus }),
+  pickSymbol: (symbolId) => {
+    // Équipement d'un réseau : ce réseau devient le réseau choisi (section des réseaux cohérente).
+    const network = findSymbol(symbolId)?.network ?? get().network;
+    if (planStore.getState().readOnly) set({ symbolId, network });
+    else set({ symbolId, network, tool: 'symbol', draft: null, vertexEditing: false, editingTextId: null });
+  },
   setShowCrossings: (showCrossings) => set({ showCrossings }),
   setShowVerifiedCrossings: (showVerifiedCrossings) => set({ showVerifiedCrossings }),
   selectCrossing: (selectedCrossing) => set({ selectedCrossing }),

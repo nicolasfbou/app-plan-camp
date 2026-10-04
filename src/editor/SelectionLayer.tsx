@@ -5,6 +5,7 @@ import { isEditable } from '@/domain/model/operations.ts';
 import { isShownInEditor } from './viewVisibility.ts';
 import { geometryBox, segmentMidpoints, worldVertices } from '@/domain/model/shapes.ts';
 import type { PlanObject } from '@/domain/model/types.ts';
+import { findNetworkPreset } from '@/domain/presets/networkPresets.ts';
 import { useEditorStore } from '@/store/editorStore.ts';
 import { usePlanStore } from '@/store/planStore.ts';
 import { CrossingMarkers } from './CrossingMarkers.tsx';
@@ -38,6 +39,7 @@ function smallestSide(objects: PlanObject[], scale: number): number {
 export function SelectionLayer({ scale }: { scale: number }) {
   const selectedIds = useEditorStore((s) => s.selectedIds);
   const vertexEditing = useEditorStore((s) => s.vertexEditing);
+  const network = useEditorStore((s) => s.network);
   const selectedVertex = useEditorStore((s) => s.selectedVertex);
   const editingTextId = useEditorStore((s) => s.editingTextId);
   const draft = useEditorStore((s) => s.draft);
@@ -239,6 +241,16 @@ export function SelectionLayer({ scale }: { scale: number }) {
 
       {draft?.kind === 'path' && (
         <>
+          {draft.tool === 'utility' && (
+            // Aperçu dans la couleur du réseau choisi.
+            <Line
+              points={[...draft.points, ...(draft.cursor ? [draft.cursor] : [])].flatMap((p) => [p.x, p.y])}
+              stroke={findNetworkPreset(network).style.stroke ?? ACCENT}
+              strokeWidth={4 * px}
+              lineJoin="round"
+              listening={false}
+            />
+          )}
           {draft.tool === 'corridor' && (
             // Aperçu de la largeur par défaut du corridor.
             <Line

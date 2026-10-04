@@ -3,7 +3,11 @@
  * SÉLECTION (un ou plusieurs objets). Chaque commande correspond à UNE entrée d'historique (ou
  * fusionne avec la précédente via `mergeKey`). Verrous d'objets et de calques toujours respectés.
  */
-import { isLayerUsable } from '@/domain/model/objectFactory.ts';
+import { createLayer, defaultLayerName } from '@/domain/model/factories.ts';
+import { insertLayerByTier } from '@/domain/model/layers.ts';
+import { hideNewNetworkLayerInViews } from '@/domain/print/views.ts';
+import { isLayerUsable, tierForObject } from '@/domain/model/objectFactory.ts';
+import { isNetworkTier } from '@/domain/presets/networkPresets.ts';
 import {
   groupObjects,
   insertCopies,
@@ -26,7 +30,7 @@ import {
   removeVertex,
   type NodeTransform,
 } from '@/domain/model/shapes.ts';
-import type { PlanObject, Point, Style } from '@/domain/model/types.ts';
+import type { Layer, PlanObject, Point, Style } from '@/domain/model/types.ts';
 import { type MessageKey, t } from '@/i18n/index.ts';
 import { isShownInEditor } from './viewVisibility.ts';
 import { useEditorStore } from '@/store/editorStore.ts';
@@ -78,13 +82,25 @@ export const editActions = {
    * Ajoute un objet créé par un outil, le sélectionne et revient à l'outil Sélection. Il va dans
    * le calque actif s'il est utilisable, sinon dans le calque prévu par son modèle. Refusé (avec un
    * message) si ce calque est masqué ou verrouillé. Retourne vrai si l'objet a été créé.
+   *
+   * Réseau technique (ligne ou équipement) : toujours dans un calque de SON réseau (le calque
+   * actif seulement s'il est de ce réseau) ; si le plan n'en a pas encore, il est créé avec
+   * l'objet (une seule action : annuler retire les deux).
    */
   create(object: PlanObject, label: string): boolean {
     const d = doc();
     if (!d) return false;
     const editor = useEditorStore.getState();
+    const tier = tierForObject(object);
+    const network = isNetworkTier(tier);
     const active = d.layers.find((l) => l.id === editor.activeLayerId);
-    const layer = active && isLayerUsable(active) ? active : d.layers.find((l) => l.id === object.layerId);
+    const activeFits = active && isLayerUsable(active) && (!network || active.tier === tier);
+    let layer = activeFits ? active : d.layers.find((l) => l.id === object.layerId);
+    let newLayer: Layer | null = null;
+    if (network && layer?.tier !== tier) {
+      newLayer = createLayer(tier, defaultLayerName(tier));
+      layer = newLayer;
+    }
     if (!layer || !isLayerUsable(layer)) {
       notify('notice.layerUnusable', { name: layer?.name ?? '' });
       return false;
@@ -93,11 +109,18 @@ export const editActions = {
     for (const o of Object.values(d.objects)) if (o.layerId === layer.id) zIndex = Math.max(zIndex, o.zIndex);
     const placed = { ...object, layerId: layer.id, zIndex: zIndex + 1 } as PlanObject;
     planStore.getState().update(label, (draft) => {
+      if (newLayer) {
+        insertLayerByTier(draft, newLayer, placed.updatedAt);
+        hideNewNetworkLayerInViews(draft, newLayer.id);
+      }
       draft.objects[placed.id] = placed;
       draft.plan.updatedAt = placed.updatedAt;
     });
     editor.setTool('select');
-    const view = editor.activeViewId ? d.plan.views.find((v) => v.id === editor.activeViewId) : undefined;
+    if (newLayer) notify('notice.networkLayerCreated', { name: newLayer.name });
+    // Vue relue après la création : un nouveau calque de réseau peut y avoir été masqué.
+    const views = doc()?.plan.views ?? d.plan.views;
+    const view = editor.activeViewId ? views.find((v) => v.id === editor.activeViewId) : undefined;
     if (view?.print.excludedLayerIds.includes(layer.id)) {
       // Créé sur un calque que la vue affichée masque : l'utilisateur est prévenu (jamais d'objet « perdu »).
       notify('notice.hiddenByView', { layer: layer.name, view: view.name });

@@ -3,6 +3,7 @@
  * visibles des calques inclus), avec exactement les couleurs, styles de trait et pictogrammes
  * utilisés. Deux objets d'un même modèle mais de styles différents donnent deux entrées.
  */
+import { findNetworkPreset, PLACEMENT_LABELS, STATUS_LABELS } from '../presets/networkPresets.ts';
 import { findZonePreset, type PresetGroup } from '../presets/zonePresets.ts';
 import { assetIdOf, findSymbol, isAssetSymbol } from '../symbols/catalog.ts';
 import type { FlowObject, LegendSettings, PlanDocument, PlanObject, Style } from '../model/types.ts';
@@ -25,7 +26,8 @@ export interface LegendEntry {
   swatch: LegendSwatch;
 }
 
-export type LegendGroup = 'circulation' | 'pedestrians' | PresetGroup | 'signage' | 'measures' | 'other';
+export type LegendGroup =
+  'circulation' | 'pedestrians' | PresetGroup | 'networks' | 'signage' | 'measures' | 'other';
 
 const GROUP_ORDER: LegendGroup[] = [
   'circulation',
@@ -35,6 +37,7 @@ const GROUP_ORDER: LegendGroup[] = [
   'safety',
   'zones',
   'buildings',
+  'networks',
   'signage',
   'measures',
   'other',
@@ -62,6 +65,23 @@ function entryFor(o: PlanObject, doc: PlanDocument): Omit<LegendEntry, 'count'> 
         group: o.category === 'emergency' ? 'safety' : 'circulation',
         defaultLabel: `${FLOW_LABELS[o.category]}${o.arrows.direction === 'both' ? ' (double sens)' : ''}`,
         swatch: { kind: 'flow', style: o.style, direction: o.arrows.direction },
+      };
+    }
+    case 'utility': {
+      // Une entrée par réseau, état et disposition (ex. « Électricité (aérien) », « Eau potable
+      // (projeté) ») : le trait (couleur, tiretés) est celui réellement tracé.
+      const qualifiers = [
+        o.placement !== 'underground' ? PLACEMENT_LABELS[o.placement] : null,
+        o.status !== 'existing' ? STATUS_LABELS[o.status] : null,
+      ].filter(Boolean);
+      const arrows = o.arrows.visible ? (o.arrows.direction === 'both' ? 'both' : 'one') : 'none';
+      return {
+        key: `utility:${o.network}:${o.status}:${o.placement}:${styleKey(o.style)}:${arrows}`,
+        group: 'networks',
+        defaultLabel: `${findNetworkPreset(o.network).name}${qualifiers.length ? ` (${qualifiers.join(', ')})` : ''}`,
+        swatch: o.arrows.visible
+          ? { kind: 'flow', style: o.style, direction: o.arrows.direction }
+          : { kind: 'line', style: o.style },
       };
     }
     case 'corridor':
@@ -101,7 +121,8 @@ function entryFor(o: PlanObject, doc: PlanDocument): Omit<LegendEntry, 'count'> 
       return {
         // Le texte fait partie du pictogramme (ex. « 20 » ou « 50 » km/h) : deux entrées distinctes.
         key: `icon:${o.symbolId}:${o.text ?? ''}`,
-        group: 'signage',
+        // Équipement d'un réseau (vanne, regard…) : avec les lignes des réseaux.
+        group: !isAssetSymbol(o.symbolId) && findSymbol(o.symbolId)?.network ? 'networks' : 'signage',
         defaultLabel: name,
         swatch: { kind: 'symbol', symbolId: o.symbolId, text: o.text },
       };

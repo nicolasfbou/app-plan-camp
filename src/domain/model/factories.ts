@@ -1,6 +1,6 @@
 import { nanoid } from 'nanoid';
 import { t } from '../../i18n/index.ts';
-import { RENDER_TIERS, SCHEMA_VERSION } from './schema.ts';
+import { NETWORK_TIERS, RENDER_TIERS, SCHEMA_VERSION } from './schema.ts';
 import { planDefaults } from './planDefaults.ts';
 import type { Layer, PlanDocument, PlanKind, RenderTier, Site } from './types.ts';
 
@@ -19,9 +19,17 @@ export function createLayer(tier: RenderTier, name: string): Layer {
   return { id: newId(), name, tier, visible: true, locked: false, opacity: 1 };
 }
 
+/** Nom par défaut d'un calque de cette catégorie, dans la langue de l'interface. */
+export const defaultLayerName = (tier: RenderTier): string => t(`layer.default.${tier}`);
+
+/** Catégories d'un plan neuf : toutes sauf les réseaux techniques (calques créés au premier tracé). */
+export const DEFAULT_LAYER_TIERS: readonly RenderTier[] = RENDER_TIERS.filter(
+  (tier) => !(NETWORK_TIERS as readonly string[]).includes(tier),
+);
+
 /** Un calque par niveau de rendu, nommés dans la langue de l'interface (renommables ensuite). */
 export function createDefaultLayers(): Layer[] {
-  return RENDER_TIERS.map((tier) => createLayer(tier, t(`layer.default.${tier}`)));
+  return DEFAULT_LAYER_TIERS.map((tier) => createLayer(tier, defaultLayerName(tier)));
 }
 
 export function createPlanDocument(params: { siteId: string; name: string; kind?: PlanKind }): PlanDocument {

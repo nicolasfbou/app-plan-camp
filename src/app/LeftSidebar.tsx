@@ -1,5 +1,8 @@
 import {
+  Cable,
   Circle,
+  Eye,
+  EyeOff,
   FolderInput,
   Footprints,
   Hand,
@@ -19,6 +22,9 @@ import {
 } from 'lucide-react';
 import { useRef } from 'react';
 import { FLOW_PRESETS } from '@/domain/presets/flowPresets.ts';
+import { NETWORK_PRESETS } from '@/domain/presets/networkPresets.ts';
+import type { UtilityStatus } from '@/domain/model/types.ts';
+import { networkActions, networkSummaries } from '@/editor/networkActions.ts';
 import {
   BUILDING_PRESETS,
   findZonePreset,
@@ -26,7 +32,13 @@ import {
   ZONE_PRESETS,
   type ZonePreset,
 } from '@/domain/presets/zonePresets.ts';
-import { assetSymbolId, SYMBOL_CATEGORIES, SYMBOLS, symbolDataUrl } from '@/domain/symbols/catalog.ts';
+import {
+  assetSymbolId,
+  findSymbol,
+  SYMBOL_CATEGORIES,
+  SYMBOLS,
+  symbolDataUrl,
+} from '@/domain/symbols/catalog.ts';
 import { importSymbolFile, removeUnusedSymbols } from '@/editor/symbolActions.ts';
 import { symbolImage, useSymbolImagesVersion } from '@/editor/objects/symbolImages.ts';
 import { usePlanStore } from '@/store/planStore.ts';
@@ -48,6 +60,7 @@ const TOOLS: { tool: Tool; icon: LucideIcon; hint: MessageKey }[] = [
   { tool: 'text', icon: Type, hint: 'tools.hint.text' },
   { tool: 'label', icon: Tag, hint: 'tools.hint.text' },
   { tool: 'flow', icon: Route, hint: 'tools.hint.flow' },
+  { tool: 'utility', icon: Cable, hint: 'tools.hint.utility' },
   { tool: 'corridor', icon: Footprints, hint: 'tools.hint.corridor' },
   { tool: 'symbol', icon: SignpostBig, hint: 'tools.hint.symbol' },
   { tool: 'measure', icon: Ruler, hint: 'tools.hint.measure' },
@@ -110,7 +123,10 @@ export function LeftSidebar({ showTools }: { showTools: boolean }) {
 function ToolPalette() {
   const tool = useEditorStore((s) => s.tool);
   const setTool = useEditorStore((s) => s.setTool);
+  const symbolId = useEditorStore((s) => s.symbolId);
   const active = [...TOOLS, ...PANEL_TOOLS].find((entry) => entry.tool === tool);
+  // Équipement d'un réseau en cours de placement : la section des réseaux reste affichée.
+  const networks = tool === 'utility' || (tool === 'symbol' && Boolean(findSymbol(symbolId)?.network));
 
   return (
     <>
@@ -148,7 +164,15 @@ function ToolPalette() {
         )}
         <p className="mt-2 px-1 text-xs text-slate-500">{t('tools.navigation')}</p>
       </section>
-      {tool === 'flow' ? <FlowCategories /> : tool === 'symbol' ? <SymbolLibrary /> : <PresetList />}
+      {networks ? (
+        <NetworkPalette />
+      ) : tool === 'flow' ? (
+        <FlowCategories />
+      ) : tool === 'symbol' ? (
+        <SymbolLibrary />
+      ) : (
+        <PresetList />
+      )}
     </>
   );
 }
@@ -300,6 +324,167 @@ function FlowCategories() {
           </li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+/**
+ * Réseaux techniques : réseau à tracer (chacun dans son propre calque), état des nouveaux tracés,
+ * affichage de chaque réseau (œil, « seul ») pour les superposer, équipements du réseau choisi.
+ */
+function NetworkPalette() {
+  const network = useEditorStore((s) => s.network);
+  const status = useEditorStore((s) => s.networkStatus);
+  const tool = useEditorStore((s) => s.tool);
+  const symbolId = useEditorStore((s) => s.symbolId);
+  const doc = usePlanStore((s) => s.doc);
+  const readOnly = usePlanStore((s) => s.readOnly);
+  if (!doc) return null;
+  const summaries = new Map(networkSummaries(doc).map((n) => [n.network, n]));
+  const anyLayer = [...summaries.values()].some((n) => n.layers.length > 0);
+  const choose = (next: typeof network) => {
+    const editor = useEditorStore.getState();
+    editor.setNetwork(next);
+    if (editor.tool !== 'utility') editor.setTool('utility');
+  };
+  const equipment = SYMBOLS.filter((symbol) => symbol.network === network);
+  const statuses: UtilityStatus[] = ['existing', 'proposed'];
+  return (
+    <section
+      className="border-t border-white/10 px-3 py-3"
+      aria-label={t('networks.title')}
+      data-testid="network-palette"
+    >
+      <h2 className={sectionTitle}>{t('networks.title')}</h2>
+      <p className="mt-1 px-1 text-xs text-slate-500">{t('networks.help')}</p>
+      <ul role="radiogroup" aria-label={t('networks.choose')} className="mt-2 space-y-0.5">
+        {NETWORK_PRESETS.map((preset) => {
+          const summary = summaries.get(preset.network)!;
+          const name = t(`tier.${preset.network}`);
+          const on = network === preset.network && tool === 'utility';
+          return (
+            <li key={preset.network} className="flex items-center gap-1">
+              <button
+                type="button"
+                role="radio"
+                data-network={preset.network}
+                aria-checked={network === preset.network}
+                onClick={() => choose(preset.network)}
+                className={`${itemClass(on || network === preset.network)} min-w-0 flex-1`}
+              >
+                <span
+                  aria-hidden
+                  className="w-6 shrink-0 border-t-4"
+                  style={{
+                    borderColor: preset.style.stroke ?? undefined,
+                    borderStyle: status === 'proposed' ? 'dashed' : 'solid',
+                  }}
+                />
+                <span className="leading-tight">{name}</span>
+                {summary.lines + summary.equipment > 0 && (
+                  <span className="ml-auto text-[11px] text-slate-400 tabular-nums">
+                    {summary.lines + summary.equipment}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                aria-label={t(summary.visible ? 'networks.hide' : 'networks.show', { name })}
+                title={t(summary.visible ? 'networks.hide' : 'networks.show', { name })}
+                aria-pressed={!summary.visible}
+                disabled={readOnly || summary.layers.length === 0}
+                onClick={() => networkActions.setVisible(preset.network, !summary.visible)}
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-slate-300 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-white disabled:text-slate-600 disabled:hover:bg-transparent"
+              >
+                {summary.visible || summary.layers.length === 0 ? <Eye size={15} /> : <EyeOff size={15} />}
+              </button>
+              <button
+                type="button"
+                aria-label={t('networks.only', { name })}
+                title={t('networks.only', { name })}
+                disabled={readOnly || summary.layers.length === 0}
+                onClick={() => networkActions.showOnly(preset.network)}
+                className="shrink-0 rounded px-1 text-[11px] text-slate-400 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-white disabled:text-slate-600 disabled:hover:bg-transparent"
+              >
+                {t('networks.onlyShort')}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {anyLayer && (
+        <div className="mt-2 flex gap-1">
+          <button
+            type="button"
+            disabled={readOnly}
+            onClick={() => networkActions.setAllVisible(true)}
+            className="flex-1 rounded border border-white/15 px-2 py-1 text-xs text-slate-200 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-white"
+          >
+            {t('networks.showAll')}
+          </button>
+          <button
+            type="button"
+            disabled={readOnly}
+            onClick={() => networkActions.setAllVisible(false)}
+            className="flex-1 rounded border border-white/15 px-2 py-1 text-xs text-slate-200 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-white"
+          >
+            {t('networks.hideAll')}
+          </button>
+        </div>
+      )}
+      <div className="mt-3">
+        <h3 className="px-1 text-[11px] font-semibold tracking-wide text-slate-500 uppercase">
+          {t('networks.newStatus')}
+        </h3>
+        <div role="radiogroup" aria-label={t('networks.newStatus')} className="mt-1 flex gap-1">
+          {statuses.map((value) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={status === value}
+              data-network-status={value}
+              onClick={() => useEditorStore.getState().setNetworkStatus(value)}
+              className={`flex-1 rounded px-2 py-1 text-xs focus-visible:outline-2 focus-visible:outline-white ${
+                status === value ? 'bg-white/15 text-white' : 'text-slate-300 hover:bg-white/10'
+              }`}
+            >
+              {t(`utility.status.${value}`)}
+            </button>
+          ))}
+        </div>
+      </div>
+      {equipment.length > 0 && (
+        <div className="mt-3">
+          <h3 className="px-1 text-[11px] font-semibold tracking-wide text-slate-500 uppercase">
+            {t('networks.equipment')}
+          </h3>
+          <ul role="radiogroup" aria-label={t('networks.equipment')} className="mt-1 grid grid-cols-4 gap-1">
+            {equipment.map((symbol) => (
+              <li key={symbol.id}>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={tool === 'symbol' && symbolId === symbol.id}
+                  aria-label={symbol.name}
+                  title={symbol.name}
+                  data-symbol={symbol.id}
+                  onClick={() => useEditorStore.getState().pickSymbol(symbol.id)}
+                  className={`flex h-11 w-11 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-white ${
+                    tool === 'symbol' && symbolId === symbol.id
+                      ? 'bg-accent ring-2 ring-white'
+                      : 'hover:bg-white/10'
+                  }`}
+                >
+                  <img src={symbolDataUrl(symbol.id) ?? ''} alt="" width={32} height={32} draggable={false} />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 px-1 text-xs text-slate-500">{t('networks.equipment.help')}</p>
+        </div>
+      )}
+      <p className="mt-3 px-1 text-xs text-amber-300/80">{t('networks.disclaimer')}</p>
     </section>
   );
 }

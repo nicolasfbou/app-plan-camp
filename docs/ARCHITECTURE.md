@@ -1062,3 +1062,39 @@ Un onglet par espace (Web Lock) : envoi (fichiers, puis plans avec `If-Match` et
 explicitement (`keepServer`, `keepMine`, `keepBothAsCopy`, plus tard). État publié par
 BroadcastChannel vers `useSyncStore` (indicateur : synchronisé, hors ligne, synchronisation,
 changements locaux, conflit, erreur, reconnexion).
+
+## 21. Réseaux techniques (schéma v7)
+
+Tracer les réseaux du camp (eau potable, égout sanitaire, égout pluvial / drainage, électricité,
+propane / gaz, télécom / données, autre réseau) comme autant de « plans » superposables.
+
+### 21.1 Modèle
+
+- Une **catégorie de calque par réseau** (`NETWORK_TIERS`, dans `RENDER_TIERS` entre les
+  piétons et la signalisation). Les calques de réseau ne sont **pas** créés avec le plan : le
+  premier tracé d'un réseau crée son calque (`editActions.create`, même action annulable) ; un
+  collage dans un plan sans ce réseau le crée aussi (`copyLayerFor`).
+- Type d'objet `utility` (polyligne) : `network`, `status` (existant / projeté / abandonné : trait
+  plein / tireté / pointillé), `placement` (enfoui / aérien / en surface), `nominalSize`,
+  `material`, `depthMeters` (null = inconnue), `notes`, `arrows` (sens d'écoulement, affichées
+  par défaut pour les égouts) et `showLabel` (étiquette « Eau · 50 mm · PEHD · prof. 2,1 m »).
+- Équipements : pictogrammes de la catégorie « Réseaux techniques » (vannes, borne-fontaine,
+  regards, fosse septique, puisard, panneau électrique, transformateur, poteau, réservoir et
+  vanne de propane, boîte télécom…), placés dans le calque de **leur** réseau (`SymbolDef.network`).
+- Couleurs : code usuel de repérage des réseaux enfouis (`presets/networkPresets.ts`). Un tracé sur
+  photo n'est jamais un relevé : l'interface rappelle de faire localiser les réseaux avant de creuser.
+- Vue d'un réseau (`views[].network`) : photo, zones, bâtiments, textes et ce seul réseau ; les
+  autres réseaux, même tracés plus tard, y restent masqués (`hideNewNetworkLayerInViews`). Les
+  vues Employés et Fournisseurs masquent les réseaux.
+- Migration 6 → 7 : `network: null` sur les vues existantes ; objets et calques inchangés.
+
+### 21.2 Interface
+
+- Outil **Réseaux techniques** (touche N) : choix du réseau, état des nouveaux tracés
+  (existant / projeté), œil et « seul » par réseau, équipements du réseau choisi.
+- Onglet Calques, bloc « Réseaux techniques » : afficher / masquer, « seulement » (parmi les
+  réseaux, sans toucher aux autres calques), opacité, nombre de lignes et longueur tracée, vue
+  imprimable du réseau (`editor/networkActions.ts`).
+- Propriétés d'une ligne : réseau (la ligne passe dans le calque du nouveau réseau), état,
+  disposition, diamètre / calibre, matériau, profondeur, remarques, étiquette, sens d'écoulement.
+- Légende : groupe « Réseaux techniques » (lignes par réseau, état et disposition ; équipements).

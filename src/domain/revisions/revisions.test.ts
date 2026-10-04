@@ -216,7 +216,7 @@ describe('révision figée', () => {
     v5.schemaVersion = 5;
     delete v5.plan.draftBase;
     const migrated = parsePlanDocument(v5, MIGRATIONS);
-    expect(migrated.schemaVersion).toBe(6);
+    expect(migrated.schemaVersion).toBe(7); // 5 → 6 → 7 (réseaux techniques : rien à convertir)
     expect(migrated.plan.draftBase).toBeNull();
   });
 });

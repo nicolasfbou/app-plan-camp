@@ -103,6 +103,20 @@ export const MIGRATIONS: MigrationTable = {
     const plan = isRecord(doc.plan) ? doc.plan : {};
     return { ...doc, plan: { draftBase: null, ...plan } };
   },
+
+  /**
+   * 6 → 7 (réseaux techniques) : nouveau type d'objet, nouvelles catégories de calques et nouveau
+   * type de plan ; les vues existantes ne sont celles d'aucun réseau (`network: null`). Objets et
+   * calques inchangés : les calques des réseaux sont créés au premier tracé, jamais ici.
+   */
+  6: (doc) => {
+    const plan = isRecord(doc.plan) ? doc.plan : {};
+    const views = Array.isArray(plan.views) ? plan.views : [];
+    return {
+      ...doc,
+      plan: { ...plan, views: views.map((v) => (isRecord(v) ? { network: null, ...v } : v)) },
+    };
+  },
 };
 
 /**

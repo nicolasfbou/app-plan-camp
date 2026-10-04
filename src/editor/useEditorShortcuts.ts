@@ -3,7 +3,8 @@
  * boîte de dialogue est ouverte : le canevas ne vole jamais le focus ni les touches d'un champ.
  *
  * V Sélection · H Main · R Rectangle · U Rectangle arrondi · E Ellipse · P Polygone · L Ligne
- * K Polyligne · T Texte · G Étiquette · Suppr / Retour arrière Supprimer · Échap Annuler / désélectionner
+ * K Polyligne · T Texte · G Étiquette · F Circulation · N Réseaux techniques · C Corridor · S Pictogramme
+ * M Mesurer · Suppr / Retour arrière Supprimer · Échap Annuler / désélectionner
  * Entrée Terminer le polygone · Ctrl+C / Ctrl+V / Ctrl+D Copier / coller / dupliquer · Ctrl+A Tout
  * sélectionner · Ctrl+G / Ctrl+Maj+G Grouper / dégrouper
  * Flèches : déplacer de 1 px image (Maj : 10 px image).
@@ -26,6 +27,7 @@ export const TOOL_KEYS: Record<string, Tool> = {
   t: 'text',
   g: 'label',
   f: 'flow',
+  n: 'utility',
   c: 'corridor',
   s: 'symbol',
   m: 'measure',
