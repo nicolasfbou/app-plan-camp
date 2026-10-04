@@ -16,13 +16,14 @@ seule** : site statique construit par Railpack (`npm run build`, puis Caddy sert
 serveur ni base. Les plans restent dans le navigateur de chacun (IndexedDB, hors ligne, export
 `.campplan`) ; aucune synchronisation entre ordinateurs.
 
-- Configuration : `deploy/railway.static.json`, désignée dans les réglages du service (« Config
-  file path »). Le `railway.json` de la racine, lui, décrit le serveur complet ci-dessous et
-  n'est pas utilisé par ce service.
+- Configuration : `railway.json` à la racine du dépôt (lu automatiquement par Railway). Le
+  serveur complet décrit ci-dessous a sa propre configuration, `deploy/railway.server.json`.
 - Mise à jour : un envoi sur la branche déployée (`claude/zealous-ritchie-mpwkbn`) reconstruit et
   remet le site en ligne. Les données des navigateurs sont migrées à l'ouverture (ex. format 6 → 7).
-- Passer au serveur complet : suivre ce guide à partir du § 1, sur un service configuré avec
-  `railway.json`.
+- Passer au serveur complet : suivre ce guide à partir du § 1. Le chemin de configuration d'un
+  service n'étant plus réglable dans Railway (« Config as Code » remplacé par « Infrastructure as
+  Code »), reporter alors `deploy/railway.server.json` dans `railway.json` (ou dans
+  `.railway/railway.ts`).
 
 ## 1. Architecture
 
@@ -51,7 +52,7 @@ navigateur ──HTTPS──▶ bordure Railway (certificat automatique, *.up.ra
 
 | Service Railway           | Rôle                                                                 | Construit depuis                                    | Données durables           |
 | ------------------------- | -------------------------------------------------------------------- | --------------------------------------------------- | -------------------------- |
-| `campplanner`             | Serveur Node (API) + application React/Vite construite, même origine | `railway.json` → `deploy/Dockerfile`                | aucune (conteneur jetable) |
+| `campplanner`             | Serveur Node (API) + application React/Vite construite, même origine | `deploy/railway.server.json` → `deploy/Dockerfile`  | aucune (conteneur jetable) |
 | `Postgres`                | Modèle PostgreSQL de Railway                                         | image Railway                                       | volume du service          |
 | `fichiers` (Bucket)       | Photos aériennes, PDF d'origine, pictogrammes, logos                 | —                                                   | stockage objet Railway     |
 | `sauvegardes` (Bucket)    | Sauvegardes complètes quotidiennes                                   | —                                                   | stockage objet Railway     |
@@ -154,8 +155,8 @@ Pour le générer sur votre ordinateur : `openssl rand -hex 24`. Sous Windows Po
    Variables ou journal de démarrage).
 4. **Deux compartiments** : « + New » → Bucket → `fichiers`, puis `sauvegardes`.
 5. **Service web** : « + New » → GitHub Repo → `nicolasfbou/app-plan-camp`.
-   - Réglages : branche `claude/zealous-ritchie-mpwkbn` (pas `main`) ; fichier de configuration
-     `railway.json`.
+   - Réglages : branche `claude/zealous-ritchie-mpwkbn` (pas `main`) ; configuration
+     `deploy/railway.server.json` (voir § 0).
    - Variables du § 3, dont `BOOTSTRAP_*`.
    - Réseau : « Generate Domain » (port 8787).
 6. **Tâche planifiée** : « + New » → GitHub Repo, même dépôt et même branche.
