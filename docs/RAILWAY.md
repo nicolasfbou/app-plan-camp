@@ -9,6 +9,21 @@ Tout ce qui est décrit ici a été éprouvé sur une **simulation locale** fid�
 Les noms de variables fournis par Railway (compartiments, PostgreSQL) sont à confirmer dans le
 tableau de bord au moment de l'installation.
 
+## 0. Mode « application seule » (déploiement actuel)
+
+Le service Railway `app-plan-camp` (projet « intuitive-communication ») sert l'**application
+seule** : site statique construit par Railpack (`npm run build`, puis Caddy sert `dist/`), sans
+serveur ni base. Les plans restent dans le navigateur de chacun (IndexedDB, hors ligne, export
+`.campplan`) ; aucune synchronisation entre ordinateurs.
+
+- Configuration : `deploy/railway.static.json`, désignée dans les réglages du service (« Config
+  file path »). Le `railway.json` de la racine, lui, décrit le serveur complet ci-dessous et
+  n'est pas utilisé par ce service.
+- Mise à jour : un envoi sur la branche déployée (`claude/zealous-ritchie-mpwkbn`) reconstruit et
+  remet le site en ligne. Les données des navigateurs sont migrées à l'ouverture (ex. format 6 → 7).
+- Passer au serveur complet : suivre ce guide à partir du § 1, sur un service configuré avec
+  `railway.json`.
+
 ## 1. Architecture
 
 ```
