@@ -8,7 +8,7 @@
  */
 import { translateGeometry } from './geometry.ts';
 import { newId, nowIso } from './factories.ts';
-import { isLayerUsable, layerForTier, tierForType, topZIndex } from './objectFactory.ts';
+import { copyLayerFor, isLayerUsable, topZIndex } from './objectFactory.ts';
 import type { Layer, PlanDocument, PlanObject } from './types.ts';
 
 export function addObject(doc: PlanDocument, object: PlanObject): void {
@@ -118,11 +118,11 @@ export function replaceObject(doc: PlanDocument, next: PlanObject, now = nowIso(
 
 /**
  * Calque qui recevra la copie d'un objet : son calque d'origine s'il existe dans ce plan, sinon le
- * calque du niveau naturel de son type. `null` si ce calque est masqué ou verrouillé.
+ * calque du niveau naturel de son type (pour un réseau technique : le calque de ce réseau, créé
+ * au besoin dans `doc`). `null` si ce calque est masqué ou verrouillé.
  */
 export function copyTargetLayer(doc: PlanDocument, source: PlanObject): Layer | null {
-  const layer =
-    doc.layers.find((l) => l.id === source.layerId) ?? layerForTier(doc, tierForType(source.type));
+  const layer = copyLayerFor(doc, source);
   return isLayerUsable(layer) ? layer : null;
 }
 

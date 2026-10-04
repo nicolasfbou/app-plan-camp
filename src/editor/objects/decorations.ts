@@ -330,6 +330,38 @@ export function hatchPattern(style: Style): HTMLCanvasElement | null {
 }
 
 /**
+ * Étiquette d'une ligne de réseau (« Eau · 50 mm · PEHD ») au milieu du tracé, toujours droite à
+ * l'écran, sur un liseré blanc, dans la couleur de la ligne.
+ */
+export function drawLineLabel(
+  c: CanvasRenderingContext2D,
+  points: Point[],
+  label: string,
+  style: Style,
+  objectRotation: number,
+  scale: number,
+  display: DisplaySettings,
+): void {
+  if (points.length < 2 || !label) return;
+  const color = rgba(style.stroke ?? '#0f172a', Math.max(style.strokeOpacity, 0.8)) ?? '#0f172a';
+  const { point } = midpointAlong(points);
+  const font = Math.max(11, Math.min(display.symbolMaxPx * 0.4, 14)) / Math.max(scale, 1e-9);
+  c.save();
+  c.translate(point.x, point.y);
+  c.rotate((-objectRotation * Math.PI) / 180);
+  c.font = `600 ${font}px Inter, "Segoe UI", Arial, sans-serif`;
+  c.textAlign = 'center';
+  c.textBaseline = 'bottom';
+  c.lineJoin = 'round';
+  c.lineWidth = font * 0.3;
+  c.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+  c.strokeText(label, 0, -font * 0.35);
+  c.fillStyle = color;
+  c.fillText(label, 0, -font * 0.35);
+  c.restore();
+}
+
+/**
  * Cote : traits perpendiculaires aux extrémités et valeur mesurée au milieu du tracé, lisible
  * (taille bornée à l'écran, liseré blanc) et toujours droite.
  */

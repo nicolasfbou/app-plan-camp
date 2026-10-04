@@ -4,6 +4,7 @@
  * couche physique « content »). Chaque calque garde sa catégorie logique (`tier`).
  */
 import { newId, nowIso } from './factories.ts';
+import { RENDER_TIERS } from './schema.ts';
 import type { Layer, PlanDocument, PlanObject, RenderTier } from './types.ts';
 
 function touch(doc: PlanDocument, now: string) {
@@ -16,6 +17,21 @@ export function addLayer(doc: PlanDocument, name: string, tier: RenderTier, now 
   doc.layers.push(layer);
   touch(doc, now);
   return layer;
+}
+
+/**
+ * Insère un calque à sa place dans l'ordre des catégories (`RENDER_TIERS`) : juste au-dessus du
+ * dernier calque d'une catégorie inférieure ou égale. Sert aux calques créés à la demande (réseaux
+ * techniques), qui ne doivent pas recouvrir les textes ni la signalisation.
+ */
+export function insertLayerByTier(doc: PlanDocument, layer: Layer, now = nowIso()): void {
+  const rank = RENDER_TIERS.indexOf(layer.tier);
+  let at = 0;
+  doc.layers.forEach((l, i) => {
+    if (RENDER_TIERS.indexOf(l.tier) <= rank) at = i + 1;
+  });
+  doc.layers.splice(at, 0, layer);
+  touch(doc, now);
 }
 
 export function renameLayer(doc: PlanDocument, layerId: string, name: string, now = nowIso()): boolean {

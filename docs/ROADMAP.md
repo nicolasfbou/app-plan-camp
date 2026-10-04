@@ -142,6 +142,16 @@ Règle : le parcours complet doit être fiable avant toute fonction avancée.
 - Publication d'un projet local dans l'organisation avec récapitulatif ; `.campplan` inchangé
 - Détails : `docs/PHASE9-SERVER.md` ; démonstration Camp 105 (`bench/camp105-phase9.mjs`)
 
+## Réseaux techniques ✅
+
+- Outil « Réseaux techniques » (N) : eau potable, égout sanitaire, égout pluvial / drainage,
+  électricité, propane / gaz, télécom / données, autre réseau ; chaque réseau dans son propre
+  calque, créé au premier tracé, superposable (afficher, masquer, « seul », opacité)
+- Lignes : état (existant, projeté, abandonné), disposition (enfoui, aérien, en surface),
+  diamètre, matériau, profondeur, remarques, étiquette sur le plan, sens d'écoulement
+- Équipements par réseau (vannes, regards, puisard, panneau électrique, réservoir de propane…)
+- Légende, PDF / PNG, vue imprimable par réseau ; schéma v7 (`docs/ARCHITECTURE.md` §21)
+
 ## Phase 10 — À définir
 
 Microsoft Entra ID, pilote Azure Blob, déploiement Azure : à planifier. Collaboration en temps

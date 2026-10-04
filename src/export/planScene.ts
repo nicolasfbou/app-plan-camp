@@ -18,6 +18,7 @@ import {
   flowArrowPolygons,
 } from '@/editor/objects/decorations.ts';
 import { dashArray } from '@/editor/objects/konvaStyle.ts';
+import { utilityLabel } from '@/domain/presets/networkPresets.ts';
 import type { SymbolSource } from './assets.ts';
 import { hatch, MIN_PRINT_PT, type Rect } from './blocks.ts';
 import { MM_PER_PT, roundedRectPath, type Painter, type StrokeSpec } from './painter.ts';
@@ -233,7 +234,7 @@ function drawArea(ctx: SceneContext, o: PlanObject) {
   if (stroke) p.path([outline], closed, null, stroke);
 }
 
-function drawFlow(ctx: SceneContext, o: Extract<PlanObject, { type: 'flow' }>) {
+function drawFlow(ctx: SceneContext, o: Extract<PlanObject, { type: 'flow' | 'utility' }>) {
   const { p, m } = ctx;
   const c = geometryCenter(o.geometry);
   const world = (q: Point) => toPage(m, o.rotation ? rotatePoint(q, c, o.rotation) : q);
@@ -254,6 +255,35 @@ function drawFlow(ctx: SceneContext, o: Extract<PlanObject, { type: 'flow' }>) {
     fill,
     null,
   );
+}
+
+/** Ligne de réseau : trait, flèches d'écoulement, étiquette (sauf niveau de détail simplifié). */
+function drawUtility(ctx: SceneContext, o: Extract<PlanObject, { type: 'utility' }>) {
+  drawFlow(ctx, o);
+  if (!o.showLabel || ctx.opts.detail === 'simplified') return;
+  const label = utilityLabel(o);
+  if (!label) return;
+  const { p, m } = ctx;
+  const c = geometryCenter(o.geometry);
+  const pts = o.geometry.points.map((q) => toPage(m, o.rotation ? rotatePoint(q, c, o.rotation) : q));
+  const pt = Math.max(
+    ctx.opts.minTextPt,
+    (Math.max(11, Math.min(ctx.display.symbolMaxPx * 0.4, 14)) * MM_PER_CSS_PX) / MM_PER_PT,
+  );
+  const fontMm = pt * MM_PER_PT;
+  const mid = midpointAlong(pts).point;
+  const y = mid.y - fontMm * 0.35;
+  p.text(label, mid.x, y, {
+    size: pt,
+    bold: true,
+    color: o.style.stroke ?? '#0f172a',
+    opacity: Math.max(o.style.strokeOpacity, 0.8),
+    align: 'center',
+    baseline: 'bottom',
+    halo: { color: '#ffffff', opacity: 0.95, width: fontMm * 0.15 },
+  });
+  const w = p.textWidth(label, pt, true);
+  checkText(ctx, o, { x: mid.x - w / 2, y: y - fontMm, width: w, height: fontMm }, pt);
 }
 
 function drawCorridor(ctx: SceneContext, o: Extract<PlanObject, { type: 'corridor' }>) {
@@ -499,6 +529,9 @@ export function drawPlanObjects(
           switch (o.type) {
             case 'flow':
               drawFlow(ctx, o);
+              break;
+            case 'utility':
+              drawUtility(ctx, o);
               break;
             case 'corridor':
               drawCorridor(ctx, o);

@@ -6,6 +6,7 @@
  * Les pictogrammes s'inspirent des codes usuels (couleurs, formes) mais ne reproduisent aucun
  * panneau officiel : ils servent à la lecture du plan, pas à la signalisation réelle.
  */
+import type { NetworkTier } from '../model/types.ts';
 import { GLYPHS } from './glyphs.generated.ts';
 
 export const SYMBOL_CATEGORIES = [
@@ -16,6 +17,7 @@ export const SYMBOL_CATEGORIES = [
   { id: 'safety', name: 'Accès et sécurité' },
   { id: 'emergency', name: 'Urgence et secours' },
   { id: 'energy', name: 'Énergie et matières' },
+  { id: 'networks', name: 'Réseaux techniques' },
 ] as const;
 export type SymbolCategory = (typeof SYMBOL_CATEGORIES)[number]['id'];
 
@@ -25,6 +27,8 @@ export interface SymbolDef {
   category: SymbolCategory;
   /** Texte modifiable affiché dans le pictogramme (ex. limite de vitesse). */
   defaultText?: string;
+  /** Équipement d'un réseau technique : placé dans le calque de ce réseau. */
+  network?: NetworkTier;
   svg(text?: string | null): string;
 }
 
@@ -70,6 +74,25 @@ const slash = `<line x1="14" y1="14" x2="50" y2="50" stroke="${RED}" stroke-widt
 const triangle = `<path d="M32 4 L61 57 H3 Z" fill="${YELLOW}" stroke="${INK}" stroke-width="4" stroke-linejoin="round"/>`;
 const inTriangle = (name: string) => glyph(name, INK, 20, 26, 24, 2.4);
 
+/** Couleurs des équipements de réseau : celles des lignes (voir `presets/networkPresets.ts`). */
+const NET = {
+  water: '#2563eb',
+  sewer: '#15803d',
+  storm: '#0d9488',
+  electrical: '#dc2626',
+  propane: '#ca8a04',
+  telecom: '#ea580c',
+} as const;
+const disc = (fill: string) =>
+  `<circle cx="32" cy="32" r="28" fill="${fill}" stroke="${WHITE}" stroke-width="3"/>`;
+/** Vanne : symbole usuel en nœud papillon (deux triangles pointe contre pointe). */
+const valve = (color: string) =>
+  `<path d="M15 20 L32 32 L15 44 Z M49 20 L32 32 L49 44 Z" fill="${color}" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>`;
+/** Grille de puisard. */
+const grate = [22, 32, 42]
+  .map((x) => `<line x1="${x}" y1="16" x2="${x}" y2="48" stroke="${WHITE}" stroke-width="4"/>`)
+  .join('');
+
 function def(
   id: string,
   name: string,
@@ -78,6 +101,11 @@ function def(
   defaultText?: string,
 ): SymbolDef {
   return { id, name, category, defaultText, svg: (text) => svg(build(text)) };
+}
+
+/** Équipement d'un réseau technique (catégorie « Réseaux techniques »). */
+function net(network: NetworkTier, id: string, name: string, build: () => string): SymbolDef {
+  return { ...def(id, name, 'networks', build), network };
 }
 
 export const SYMBOLS: readonly SymbolDef[] = [
@@ -183,6 +211,69 @@ export const SYMBOLS: readonly SymbolDef[] = [
   def('sign.hazmat', 'Matières dangereuses', 'energy', () => triangle + inTriangle('biohazard')),
   def('sign.waste', 'Déchets', 'energy', () => square(GREEN) + glyph('trash', WHITE)),
   def('sign.technical', 'Zone technique', 'energy', () => square('#475569') + glyph('cog', WHITE)),
+  // Réseaux techniques (équipements placés dans le calque de leur réseau)
+  net('water', 'net.water-valve', "Vanne d'eau potable", () => disc(NET.water) + valve(WHITE)),
+  net('water', 'net.hydrant', 'Borne-fontaine', () => square(NET.water) + label('BF', 24, WHITE, 34)),
+  net('water', 'net.water-meter', "Compteur d'eau", () => disc(NET.water) + glyph('gauge', WHITE)),
+  net('water', 'net.well', 'Puits', () => disc(NET.water) + glyph('droplet', WHITE)),
+  net('water', 'net.water-tank', "Réservoir d'eau", () => square(NET.water) + glyph('cylinder', WHITE)),
+  net('sewer', 'net.manhole', "Regard d'égout", () => disc(NET.sewer) + label('R', 30, WHITE, 34)),
+  net('sewer', 'net.cleanout', 'Regard de nettoyage', () => disc(NET.sewer) + label('RN', 22, WHITE, 34)),
+  net('sewer', 'net.septic-tank', 'Fosse septique', () => square(NET.sewer) + label('FS', 24, WHITE, 34)),
+  net(
+    'sewer',
+    'net.lift-station',
+    'Station de pompage',
+    () => square(NET.sewer) + label('SP', 24, WHITE, 34),
+  ),
+  net('storm', 'net.catch-basin', 'Puisard', () => square(NET.storm) + grate),
+  net('storm', 'net.culvert', 'Ponceau', () => disc(NET.storm) + label('PC', 22, WHITE, 34)),
+  net('electrical', 'net.panel', 'Panneau électrique', () => square(NET.electrical) + glyph('zap', WHITE)),
+  net(
+    'electrical',
+    'net.transformer',
+    'Transformateur',
+    () => square(NET.electrical) + label('T', 32, WHITE, 34),
+  ),
+  net(
+    'electrical',
+    'net.pole',
+    'Poteau électrique',
+    () => disc(NET.electrical) + glyph('utility-pole', WHITE),
+  ),
+  net(
+    'electrical',
+    'net.electric-meter',
+    'Compteur électrique',
+    () => disc(NET.electrical) + glyph('gauge', WHITE),
+  ),
+  net(
+    'electrical',
+    'net.outlet',
+    'Prise / borne électrique',
+    () => disc(NET.electrical) + glyph('plug', WHITE),
+  ),
+  net(
+    'propane',
+    'net.propane-tank',
+    'Réservoir de propane',
+    () => square(NET.propane) + glyph('cylinder', INK),
+  ),
+  net('propane', 'net.gas-valve', 'Vanne de propane', () => disc(NET.propane) + valve(INK)),
+  net(
+    'propane',
+    'net.regulator',
+    'Détendeur / régulateur',
+    () => disc(NET.propane) + label('D', 30, INK, 34),
+  ),
+  net('propane', 'net.gas-meter', 'Compteur de propane', () => disc(NET.propane) + glyph('gauge', INK)),
+  net(
+    'telecom',
+    'net.telecom-box',
+    'Boîte de jonction télécom',
+    () => square(NET.telecom) + label('BT', 24, WHITE, 34),
+  ),
+  net('telecom', 'net.antenna', 'Antenne / tour', () => disc(NET.telecom) + glyph('radio-tower', WHITE)),
 ];
 
 /**

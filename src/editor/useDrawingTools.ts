@@ -6,7 +6,8 @@
  * - Ligne : cliquer-glisser, ou deux clics.
  * - Polygone, polyligne : un clic par sommet ; double clic ou Entrée pour terminer, Échap pour annuler,
  *   Retour arrière pour retirer le dernier sommet ; clic sur le premier sommet pour fermer un polygone.
- * - Circulation véhicules, corridor piéton : comme la polyligne (le tracé suit exactement les clics).
+ * - Circulation véhicules, réseaux techniques, corridor piéton : comme la polyligne (le tracé suit
+ *   exactement les clics).
  * - Pictogramme : un clic place le pictogramme choisi dans la bibliothèque.
  * - Texte, étiquette : un clic, puis saisie directe.
  * Après création, l'objet est sélectionné et l'outil Sélection est réactivé.
@@ -24,6 +25,7 @@ import {
   createIconObject,
   createLineObject,
   createTextObject,
+  createUtilityObject,
 } from '@/domain/model/objectFactory.ts';
 import { assetIdOf, findSymbol, isAssetSymbol } from '@/domain/symbols/catalog.ts';
 import type { Point } from '@/domain/model/types.ts';
@@ -99,6 +101,12 @@ export function finishPathDraft(): void {
       editActions.create(
         createFlowObject(doc, points, editor.flowCategory, scale()),
         'Créer un trajet de véhicules',
+      );
+  } else if (draft.tool === 'utility') {
+    if (points.length >= 2)
+      editActions.create(
+        createUtilityObject(doc, points, editor.network, scale(), editor.networkStatus),
+        'Tracer une ligne de réseau',
       );
   } else if (draft.tool === 'corridor') {
     if (points.length >= 2)

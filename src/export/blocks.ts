@@ -28,6 +28,7 @@ const GROUP_LABELS: Record<LegendGroup, string> = {
   safety: 'Sécurité',
   zones: 'Zones',
   buildings: 'Bâtiments',
+  networks: 'Réseaux techniques',
   signage: 'Signalisation',
   measures: 'Mesures',
   other: 'Autres',

@@ -6,6 +6,7 @@
  */
 import { z } from 'zod';
 import { createLayer, newId, nowIso } from '../model/factories.ts';
+import { insertLayerByTier } from '../model/layers.ts';
 import { withOverride } from '../model/objectFactory.ts';
 import { isEditable } from '../model/operations.ts';
 import {
@@ -13,6 +14,7 @@ import {
   displaySettingsSchema,
   hexColorSchema,
   legendSettingsSchema,
+  NETWORK_TIERS,
   printSettingsSchema,
   renderTierSchema,
   styleSchema,
@@ -76,6 +78,8 @@ export const templateSchema = z.object({
       titleBlockPlacement: z.enum(['side', 'bottom']),
       legend: legendSettingsSchema,
       print: templatePrintSchema,
+      /** Vue d'un réseau technique (absent des modèles plus anciens). */
+      network: z.enum(NETWORK_TIERS).nullable().optional(),
     }),
   ),
   /** Couleur d'accent de l'entreprise (facultative, pour l'interface). */
@@ -149,6 +153,7 @@ export function templateFromPlan(
       titleBlockPlacement: v.titleBlockPlacement,
       legend: structuredClone(v.legend),
       print: printToTemplate(doc, v.print),
+      network: v.network,
     })),
     accent: null,
   };
@@ -189,9 +194,10 @@ export function applyTemplate(
     else {
       const layer = createLayer(tl.tier, tl.name);
       Object.assign(layer, { visible: tl.visible, locked: tl.locked, opacity: tl.opacity });
-      // Inséré après le dernier calque de même catégorie (sinon en haut).
+      // Inséré après le dernier calque de même catégorie (sinon à sa place parmi les catégories).
       const index = doc.layers.map((l) => l.tier).lastIndexOf(tl.tier);
-      doc.layers.splice(index >= 0 ? index + 1 : doc.layers.length, 0, layer);
+      if (index >= 0) doc.layers.splice(index + 1, 0, layer);
+      else insertLayerByTier(doc, layer, now);
       matched.add(layer.id);
     }
   }
@@ -222,6 +228,7 @@ export function applyTemplate(
       titleBlockPlacement: tv.titleBlockPlacement,
       legend: structuredClone(tv.legend),
       print: printFromTemplate(doc, tv.print),
+      network: tv.network ?? null,
     };
     const i = doc.plan.views.findIndex((v) => v.name === tv.name);
     if (i >= 0) {

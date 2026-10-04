@@ -11,6 +11,7 @@ import {
   drawDimensionMarks,
   drawCorridorIcons,
   drawFlowArrows,
+  drawLineLabel,
   drawZoneBadge,
   drawLeader,
   hatchPattern,
@@ -18,6 +19,7 @@ import {
 } from './decorations.ts';
 import { areaFill, dashArray, hitStrokeWidth, measureText, rgba, textFontStyle } from './konvaStyle.ts';
 import { symbolBitmap, symbolImage } from './symbolImages.ts';
+import { utilityLabel } from '@/domain/presets/networkPresets.ts';
 import { useViewportStore } from '@/store/viewportStore.ts';
 
 interface ObjectNodeProps {
@@ -259,6 +261,30 @@ export const ObjectNode = memo(function ObjectNode({
             drawFlowArrows(c, { ...object, geometry: g }, s, display, view);
           }}
         />
+      </Group>
+    );
+  }
+
+  if (object.type === 'utility' && g.kind === 'polyline') {
+    const label = object.showLabel ? utilityLabel(object) : '';
+    return (
+      <Group {...common} offsetX={center.x} offsetY={center.y}>
+        <Line
+          {...stroke}
+          points={g.points.flatMap((p) => [p.x, p.y])}
+          hitStrokeWidth={hitStrokeWidth(style.strokeWidth, scale)}
+          perfectDrawEnabled={false}
+        />
+        {(object.arrows.visible || label) && (
+          <Shape
+            listening={false}
+            sceneFunc={(ctx, shape) => {
+              const { c, scale: s, view } = native(ctx, shape);
+              drawFlowArrows(c, { ...object, geometry: g }, s, display, view);
+              drawLineLabel(c, g.points, label, style, object.rotation, s, display);
+            }}
+          />
+        )}
       </Group>
     );
   }

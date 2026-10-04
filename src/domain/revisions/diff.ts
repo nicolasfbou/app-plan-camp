@@ -110,6 +110,7 @@ const NOUNS: Record<NounKey, { one: string; many: string; feminine: boolean }> =
   building: { one: 'bâtiment', many: 'bâtiments', feminine: false },
   line: { one: 'ligne', many: 'lignes', feminine: true },
   flow: { one: 'trajet', many: 'trajets', feminine: false },
+  utility: { one: 'ligne de réseau', many: 'lignes de réseau', feminine: true },
   corridor: { one: 'corridor piéton', many: 'corridors piétons', feminine: false },
   text: { one: 'texte', many: 'textes', feminine: false },
   label: { one: 'étiquette', many: 'étiquettes', feminine: true },
@@ -351,6 +352,7 @@ const VIEW_LABELS: Record<string, string> = {
   title: 'titre imprimé',
   audienceNote: 'mention du public',
   titleBlockPlacement: 'position du cartouche',
+  network: 'réseau de la vue',
 };
 
 const labelFor = (path: string, table: Record<string, string>) => table[path] ?? path;
@@ -428,6 +430,14 @@ const PROPERTY_LABELS: Record<string, string> = {
   italic: 'italique',
   align: 'alignement',
   label: 'fond de l’étiquette',
+  network: 'réseau',
+  status: 'état',
+  placement: 'disposition',
+  nominalSize: 'diamètre / calibre',
+  material: 'matériau',
+  depthMeters: 'profondeur',
+  notes: 'remarques',
+  showLabel: 'étiquette affichée',
 };
 
 function distanceText(shift: Point, before: PlanDocument, after: PlanDocument): string {
@@ -1032,6 +1042,7 @@ export function summarizeDiff(diff: PlanDiff): string[] {
     if (
       first.primary === 'reshaped' &&
       (first.type === 'flow' ||
+        first.type === 'utility' ||
         first.type === 'line' ||
         first.type === 'corridor' ||
         first.type === 'dimension')

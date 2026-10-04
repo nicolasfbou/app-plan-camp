@@ -3,18 +3,23 @@
  * Les valeurs par défaut viennent des modèles (presets) ; tout reste modifiable ensuite.
  */
 import { findFlowPreset } from '../presets/flowPresets.ts';
+import { findNetworkPreset, isNetworkTier, STATUS_DASH } from '../presets/networkPresets.ts';
 import { findZonePreset } from '../presets/zonePresets.ts';
 import { findSymbol } from '../symbols/catalog.ts';
-import { newId, nowIso } from './factories.ts';
+import { createLayer, defaultLayerName, newId, nowIso } from './factories.ts';
+import { hideNewNetworkLayerInViews } from '../print/views.ts';
+import { insertLayerByTier } from './layers.ts';
 import type {
   FlowCategory,
   Geometry,
   Layer,
+  NetworkTier,
   PlanDocument,
   PlanObject,
   Point,
   RenderTier,
   Style,
+  UtilityStatus,
 } from './types.ts';
 
 export type AreaGeometry = Extract<Geometry, { kind: 'rect' | 'ellipse' | 'polygon' }>;
@@ -66,6 +71,7 @@ export function tierForType(type: PlanObject['type']): RenderTier {
     building: 'buildings',
     line: 'circulation',
     flow: 'circulation',
+    utility: 'other-network',
     corridor: 'pedestrians',
     dimension: 'texts',
     stall: 'parking',
@@ -73,6 +79,46 @@ export function tierForType(type: PlanObject['type']): RenderTier {
     icon: 'signage',
   };
   return tiers[type];
+}
+
+/**
+ * Niveau de rendu naturel d'un objet : celui de son type, sauf pour un réseau technique (ligne de
+ * réseau, ou pictogramme d'équipement d'un réseau), qui appartient au calque de SON réseau.
+ */
+export function tierForObject(object: PlanObject): RenderTier {
+  if (object.type === 'utility') return object.network;
+  if (object.type === 'icon') {
+    const network = findSymbol(object.symbolId)?.network;
+    if (network) return network;
+  }
+  return tierForType(object.type);
+}
+
+/**
+ * Calque d'un réseau technique (ou d'une autre catégorie) qui recevra un objet : le calque
+ * utilisable de la catégorie, sinon le premier ; s'il n'en existe aucun, il est CRÉÉ à sa place
+ * dans l'ordre des catégories. Modifie `doc` (à appeler dans une mise à jour du plan).
+ */
+export function ensureTierLayer(doc: PlanDocument, tier: RenderTier): Layer {
+  const ofTier = doc.layers.filter((l) => l.tier === tier);
+  const existing = ofTier.find(isLayerUsable) ?? ofTier[0];
+  if (existing) return existing;
+  const layer = createLayer(tier, defaultLayerName(tier));
+  insertLayerByTier(doc, layer);
+  if (isNetworkTier(tier)) hideNewNetworkLayerInViews(doc, layer.id);
+  return layer;
+}
+
+/**
+ * Calque qui recevra la copie d'un objet (duplication, collage, y compris dans un autre plan) :
+ * son calque d'origine s'il existe dans ce plan ; sinon, pour un réseau technique, le calque de ce
+ * réseau (créé au besoin) ; sinon le calque du niveau naturel de son type. Peut modifier `doc`.
+ */
+export function copyLayerFor(doc: PlanDocument, source: PlanObject): Layer {
+  const same = doc.layers.find((l) => l.id === source.layerId);
+  if (same) return same;
+  const tier = tierForObject(source);
+  return isNetworkTier(tier) ? ensureTierLayer(doc, tier) : layerForTier(doc, tier);
 }
 
 /** zIndex placé au-dessus de tous les objets du calque. */
@@ -218,6 +264,46 @@ export function createFlowObject(
   };
 }
 
+/**
+ * Ligne d'un réseau technique (eau, égout, électricité, propane…) : les points suivent exactement
+ * les clics. Elle va dans le calque de son réseau (créé au premier tracé, voir `editActions.create`).
+ */
+export function createUtilityObject(
+  doc: PlanDocument,
+  points: Point[],
+  network: NetworkTier,
+  zoom = 1,
+  status: UtilityStatus = 'existing',
+): PlanObject {
+  const preset = findNetworkPreset(network);
+  const style = withOverride(scaledStyle(preset.style, zoom), doc.plan.styleOverrides[preset.id]);
+  return {
+    ...base(
+      doc,
+      network,
+      preset.name,
+      status === 'existing' ? style : { ...style, dash: STATUS_DASH[status] },
+      preset.id,
+    ),
+    type: 'utility',
+    geometry: { kind: 'polyline', points, curved: false },
+    network,
+    status,
+    placement: preset.placement,
+    nominalSize: '',
+    material: '',
+    depthMeters: null,
+    notes: '',
+    arrows: {
+      direction: 'forward',
+      visible: preset.arrows,
+      size: screenToImage(preset.arrowSizePx, zoom),
+      spacing: screenToImage(preset.arrowSpacingPx, zoom),
+    },
+    showLabel: false,
+  };
+}
+
 export const CORRIDOR_STYLE: Style = {
   fill: '#f97316',
   fillOpacity: 0.35,
@@ -280,7 +366,8 @@ export function createIconObject(
 ): PlanObject {
   const symbol = findSymbol(symbolId);
   return {
-    ...base(doc, 'signage', name, { ...TEXT_STYLE, fill: null }, symbolId),
+    // Équipement d'un réseau (vanne, regard, réservoir…) : dans le calque de son réseau.
+    ...base(doc, symbol?.network ?? 'signage', name, { ...TEXT_STYLE, fill: null }, symbolId),
     type: 'icon',
     geometry: { kind: 'point', x: at.x, y: at.y },
     symbolId,

@@ -146,6 +146,69 @@ export function NumberField({
   );
 }
 
+/**
+ * Champ numérique facultatif (ex. profondeur inconnue) : vide = null. Validé à la sortie du champ
+ * ou avec Entrée, comme `NumberField`.
+ */
+export function OptionalNumberField({
+  label,
+  value,
+  onCommit,
+  disabled,
+  min,
+  placeholder,
+}: {
+  label: string;
+  value: number | null;
+  onCommit(value: number | null): void;
+  disabled?: boolean;
+  min?: number;
+  placeholder?: string;
+}) {
+  const id = useId();
+  const shown = value === null ? '' : String(Number(value.toFixed(2))).replace('.', ',');
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    setDraft(null);
+    const cleaned = draft.trim().replace(/\s/g, '').replace(',', '.');
+    if (cleaned === '') {
+      if (value !== null) onCommit(null);
+      return;
+    }
+    const parsed = Number(cleaned);
+    if (!Number.isFinite(parsed) || (min !== undefined && parsed < min)) return;
+    if (parsed !== value) onCommit(parsed);
+  };
+  const pending = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    pending.current = draft === null ? null : commit;
+  });
+  useEffect(() => () => pending.current?.(), []);
+  return (
+    <div>
+      <label htmlFor={id} className="mb-0.5 block text-xs text-slate-600">
+        {label}
+      </label>
+      <input
+        id={id}
+        type="text"
+        inputMode="decimal"
+        value={draft ?? shown}
+        placeholder={placeholder}
+        disabled={disabled}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') setDraft(null);
+        }}
+        className={inputClass}
+      />
+    </div>
+  );
+}
+
 /** Opacité de 0 à 100 %. Le glissement du curseur forme une seule action. */
 export function OpacityField({
   label,

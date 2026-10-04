@@ -25,8 +25,11 @@ import { z } from 'zod';
  *   styles d'entreprise, nouveaux types de plans.
  * - 6 : révisions (phase 7) : `plan.draftBase`, révision figée dont le brouillon est issu. Les
  *   révisions elles-mêmes sont des instantanés complets stockés à part (`domain/revisions`).
+ * - 7 : réseaux techniques : lignes de réseau (`utility` : eau potable, égouts, électricité,
+ *   propane…), une catégorie de calque par réseau (calques créés à la demande), type de plan
+ *   « Réseaux techniques », vue d'un seul réseau (`views[].network`, null pour les vues existantes).
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 export const idSchema = z.string().min(1);
 export const isoDateSchema = z.iso.datetime();
@@ -102,8 +105,24 @@ export const styleSchema = z.object({
 // ---------------------------------------------------------------------------
 
 /**
+ * Réseaux techniques : chacun a sa propre catégorie de calque, pour être tracé à part puis
+ * superposé aux autres (affiché, masqué, atténué) comme un calque. Couleurs par défaut : code
+ * usuel de repérage des réseaux enfouis (voir `presets/networkPresets.ts`).
+ */
+export const NETWORK_TIERS = [
+  'water',
+  'sewer',
+  'storm',
+  'electrical',
+  'propane',
+  'telecom',
+  'other-network',
+] as const;
+
+/**
  * Catégories logiques de calques (ordre = ordre des calques par défaut, du dessous au-dessus).
- * Le rendu suit l'ordre réel des calques du plan (voir `editor/renderTiers.ts`).
+ * Le rendu suit l'ordre réel des calques du plan (voir `editor/renderTiers.ts`). Les calques des
+ * réseaux ne sont pas créés d'office : ils le sont au premier tracé du réseau.
  */
 export const RENDER_TIERS = [
   'zones',
@@ -113,6 +132,7 @@ export const RENDER_TIERS = [
   'buildings',
   'circulation',
   'pedestrians',
+  ...NETWORK_TIERS,
   'signage',
   'texts',
 ] as const;
@@ -167,6 +187,9 @@ export const FLOW_CATEGORIES = [
   'general',
   'custom',
 ] as const;
+
+export const UTILITY_STATUSES = ['existing', 'proposed', 'abandoned'] as const;
+export const UTILITY_PLACEMENTS = ['underground', 'aerial', 'surface'] as const;
 
 export const arrowSpecSchema = z.object({
   /** `forward` = sens du tracé (premier → dernier point) ; `both` = double sens. */
@@ -224,6 +247,30 @@ export const planObjectSchema = z.discriminatedUnion('type', [
     geometry: polylineGeometrySchema,
     category: z.enum(FLOW_CATEGORIES),
     arrows: arrowSpecSchema,
+  }),
+  z.object({
+    ...objectBase,
+    /**
+     * Ligne d'un réseau technique (conduite d'eau, égout, câble électrique, canalisation de
+     * propane…). Le trait suit `style` ; les flèches indiquent le sens d'écoulement.
+     */
+    type: z.literal('utility'),
+    geometry: polylineGeometrySchema,
+    network: z.enum(NETWORK_TIERS),
+    /** Existante, projetée (à construire) ou abandonnée. */
+    status: z.enum(UTILITY_STATUSES),
+    /** Enfouie, aérienne ou en surface. */
+    placement: z.enum(UTILITY_PLACEMENTS),
+    /** Diamètre ou calibre, texte libre (« 150 mm », « 2 po », « 4/0 AWG »). */
+    nominalSize: z.string(),
+    material: z.string(),
+    /** Profondeur d'enfouissement approximative, en mètres (null = inconnue). */
+    depthMeters: z.number().nonnegative().nullable(),
+    notes: z.string(),
+    /** Sens d'écoulement (égouts gravitaires, drainage) ; masquées par défaut ailleurs. */
+    arrows: arrowSpecSchema,
+    /** Étiquette au milieu du tracé (réseau, diamètre, matériau, profondeur). */
+    showLabel: z.boolean(),
   }),
   z.object({
     ...objectBase,
@@ -344,6 +391,7 @@ export const PLAN_KINDS = [
   'snow-removal',
   'deliveries',
   'future-works',
+  'utilities',
   'other',
 ] as const;
 
@@ -486,6 +534,11 @@ export const planViewSchema = z.object({
   titleBlockPlacement: z.enum(['side', 'bottom']),
   legend: legendSettingsSchema,
   print: printSettingsSchema,
+  /**
+   * Vue d'un seul réseau technique (« un plan par réseau ») : les autres réseaux, même tracés
+   * après sa création, y restent masqués. null = vue ordinaire.
+   */
+  network: z.enum(NETWORK_TIERS).nullable(),
 });
 
 export const variantOfSchema = z.object({
