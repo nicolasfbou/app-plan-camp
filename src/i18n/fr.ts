@@ -258,6 +258,7 @@ export const fr = {
   'props.strokeColor': 'Couleur du trait',
   'props.strokeOpacity': 'Opacité de la bordure',
   'props.strokeWidth': 'Épaisseur',
+  'props.strokeWidthScreen': 'Épaisseur (px écran, fixe au zoom)',
   'props.dash': 'Style de ligne',
   'props.dash.solid': 'Continue',
   'props.dash.dashed': 'Tirets',

@@ -28,8 +28,10 @@ import { z } from 'zod';
  * - 7 : réseaux techniques : lignes de réseau (`utility` : eau potable, égouts, électricité,
  *   propane…), une catégorie de calque par réseau (calques créés à la demande), type de plan
  *   « Réseaux techniques », vue d'un seul réseau (`views[].network`, null pour les vues existantes).
+ * - 8 : épaisseur des lignes de réseau en pixels ÉCRAN (constante au zoom ; même épaisseur à
+ *   l'impression), au lieu de pixels image.
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export const idSchema = z.string().min(1);
 export const isoDateSchema = z.iso.datetime();
@@ -253,6 +255,8 @@ export const planObjectSchema = z.discriminatedUnion('type', [
     /**
      * Ligne d'un réseau technique (conduite d'eau, égout, câble électrique, canalisation de
      * propane…). Le trait suit `style` ; les flèches indiquent le sens d'écoulement.
+     * EXCEPTION : `style.strokeWidth` est ici en pixels ÉCRAN — le trait garde la même épaisseur
+     * quel que soit le zoom, et la même épaisseur (pixels CSS) à l'impression.
      */
     type: z.literal('utility'),
     geometry: polylineGeometrySchema,

@@ -238,7 +238,9 @@ function drawFlow(ctx: SceneContext, o: Extract<PlanObject, { type: 'flow' | 'ut
   const { p, m } = ctx;
   const c = geometryCenter(o.geometry);
   const world = (q: Point) => toPage(m, o.rotation ? rotatePoint(q, c, o.rotation) : q);
-  const stroke = strokeOf(o.style, sk(ctx));
+  // Ligne de réseau : épaisseur en pixels écran, imprimée à la même taille (pixels CSS → mm).
+  const k = o.type === 'utility' ? MM_PER_CSS_PX * ctx.opts.strokeScale : sk(ctx);
+  const stroke = strokeOf(o.style, k);
   if (stroke) p.path([o.geometry.points.map(world)], false, null, stroke);
   const { polygons, outline } = flowArrowPolygons(o, printScale(m), ctx.display);
   if (!polygons.length) return;

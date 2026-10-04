@@ -117,7 +117,30 @@ export const MIGRATIONS: MigrationTable = {
       plan: { ...plan, views: views.map((v) => (isRecord(v) ? { network: null, ...v } : v)) },
     };
   },
+
+  /**
+   * 7 → 8 : épaisseur des lignes de réseau en pixels écran (constante au zoom). L'ancienne valeur,
+   * en pixels image, dépendait du zoom au moment du tracé : elle est remplacée par l'épaisseur
+   * par défaut des réseaux (4 px, valeur figée ici). Rien d'autre ne change.
+   */
+  7: (doc) => {
+    const objects = isRecord(doc.objects) ? doc.objects : {};
+    return {
+      ...doc,
+      objects: Object.fromEntries(
+        Object.entries(objects).map(([id, o]) => [
+          id,
+          isRecord(o) && o.type === 'utility' && isRecord(o.style)
+            ? { ...o, style: { ...o.style, strokeWidth: UTILITY_SCREEN_WIDTH_V8 } }
+            : o,
+        ]),
+      ),
+    };
+  },
 };
+
+/** Épaisseur des lignes de réseau (pixels écran) donnée par la migration 7 → 8. */
+const UTILITY_SCREEN_WIDTH_V8 = 4;
 
 /**
  * 3 → 4 (phase 5) : réglages du plan professionnel (unités, nord non orienté, légende, cartouche,

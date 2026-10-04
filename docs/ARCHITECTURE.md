@@ -1063,7 +1063,7 @@ explicitement (`keepServer`, `keepMine`, `keepBothAsCopy`, plus tard). État pub
 BroadcastChannel vers `useSyncStore` (indicateur : synchronisé, hors ligne, synchronisation,
 changements locaux, conflit, erreur, reconnexion).
 
-## 21. Réseaux techniques (schéma v7)
+## 21. Réseaux techniques (schémas v7 et v8)
 
 Tracer les réseaux du camp (eau potable, égout sanitaire, égout pluvial / drainage, électricité,
 propane / gaz, télécom / données, autre réseau) comme autant de « plans » superposables.
@@ -1086,7 +1086,12 @@ propane / gaz, télécom / données, autre réseau) comme autant de « plans » 
 - Vue d'un réseau (`views[].network`) : photo, zones, bâtiments, textes et ce seul réseau ; les
   autres réseaux, même tracés plus tard, y restent masqués (`hideNewNetworkLayerInViews`). Les
   vues Employés et Fournisseurs masquent les réseaux.
+- Épaisseur du trait : en pixels ÉCRAN pour les lignes de réseau (`strokeScaleEnabled: false`
+  dans Konva ; tirets aussi), donc constante au zoom ; à l'impression, la même épaisseur en
+  pixels CSS (4 px ≈ 1,06 mm). Les autres tracés gardent une épaisseur en pixels image.
 - Migration 6 → 7 : `network: null` sur les vues existantes ; objets et calques inchangés.
+- Migration 7 → 8 : épaisseur des lignes de réseau ramenée à 4 px écran (l'ancienne valeur, en
+  pixels image, dépendait du zoom au moment du tracé).
 
 ### 21.2 Interface
 

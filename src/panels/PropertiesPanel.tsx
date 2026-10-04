@@ -437,7 +437,7 @@ function ObjectProperties({ object, doc }: { object: PlanObject; doc: PlanDocume
           />
           <Row>
             <NumberField
-              label={t('props.strokeWidth')}
+              label={t(object.type === 'utility' ? 'props.strokeWidthScreen' : 'props.strokeWidth')}
               value={object.style.strokeWidth}
               min={0}
               disabled={disabled}

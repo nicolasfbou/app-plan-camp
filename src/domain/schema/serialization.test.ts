@@ -14,7 +14,7 @@ describe('sérialisation du projet', () => {
   it('écrit la version du format', () => {
     const json = JSON.parse(serializePlanDocument(makeDocument()));
     expect(json.schemaVersion).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe(7);
+    expect(SCHEMA_VERSION).toBe(8);
   });
 
   it('n’enregistre aucune donnée de viewport dans le document', () => {
