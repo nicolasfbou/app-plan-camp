@@ -17,7 +17,15 @@ import {
   hatchPattern,
   type ViewBox,
 } from './decorations.ts';
-import { areaFill, dashArray, hitStrokeWidth, measureText, rgba, textFontStyle } from './konvaStyle.ts';
+import {
+  areaFill,
+  dashArray,
+  HIT_SCREEN_PX,
+  hitStrokeWidth,
+  measureText,
+  rgba,
+  textFontStyle,
+} from './konvaStyle.ts';
 import { symbolBitmap, symbolImage } from './symbolImages.ts';
 import { utilityLabel } from '@/domain/presets/networkPresets.ts';
 import { useViewportStore } from '@/store/viewportStore.ts';
@@ -269,10 +277,12 @@ export const ObjectNode = memo(function ObjectNode({
     const label = object.showLabel ? utilityLabel(object) : '';
     return (
       <Group {...common} offsetX={center.x} offsetY={center.y}>
+        {/* Épaisseur et tirets en pixels ÉCRAN : le trait ne change pas d'épaisseur au zoom. */}
         <Line
           {...stroke}
+          strokeScaleEnabled={false}
           points={g.points.flatMap((p) => [p.x, p.y])}
-          hitStrokeWidth={hitStrokeWidth(style.strokeWidth, scale)}
+          hitStrokeWidth={Math.max(style.strokeWidth, HIT_SCREEN_PX)}
           perfectDrawEnabled={false}
         />
         {(object.arrows.visible || label) && (

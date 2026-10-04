@@ -8,7 +8,8 @@ import { MIGRATIONS } from '../schema/migrations.ts';
 import { parsePlanDocument, serializePlanDocument } from '../schema/serialization.ts';
 import { findSymbol, SYMBOLS } from '../symbols/catalog.ts';
 import { applyTemplate, templateFromPlan } from '../templates/template.ts';
-import { makeDocument } from '@/test/fixtures.ts';
+import { MM_PER_CSS_PX } from '../print/paper.ts';
+import { makeDocument, makeZone } from '@/test/fixtures.ts';
 import { DEFAULT_LAYER_TIERS } from './factories.ts';
 import { insertCopies } from './multi.ts';
 import {
@@ -106,6 +107,28 @@ describe('réseaux techniques : lignes', () => {
     expect(sewer.style.dash).toBe('dashed');
   });
 
+  it('épaisseur en pixels écran : la même quel que soit le zoom au moment du tracé', () => {
+    const doc = makeDocument();
+    const at = (zoom: number) =>
+      (createUtilityObject(doc, [P(0, 0), P(10, 0)], 'water', zoom) as UtilityObject).style.strokeWidth;
+    expect(at(0.1)).toBe(4);
+    expect(at(1)).toBe(4);
+    expect(at(8)).toBe(4);
+  });
+
+  it('migration 7 → 8 : épaisseur des lignes de réseau ramenée en pixels écran, rien d’autre', () => {
+    const doc = makeDocument();
+    const line = addUtility(doc, 'water');
+    const zone = makeZone(doc.layers[0]!.id);
+    addObject(doc, zone);
+    const v7 = JSON.parse(serializePlanDocument(doc));
+    v7.schemaVersion = 7;
+    v7.objects[line.id].style.strokeWidth = 13.3; // tracé à 30 % de zoom (pixels image)
+    const migrated = parsePlanDocument(v7, MIGRATIONS);
+    expect(migrated.objects[line.id]!.style.strokeWidth).toBe(4);
+    expect(migrated.objects[zone.id]).toEqual(zone);
+  });
+
   it('étiquette : réseau, diamètre, matériau, profondeur, disposition et état', () => {
     const base = {
       network: 'water',
@@ -134,7 +157,7 @@ describe('réseaux techniques : lignes', () => {
     const v6 = JSON.parse(serializePlanDocument(makeDocument()));
     v6.schemaVersion = 6;
     const migrated = parsePlanDocument(v6, MIGRATIONS);
-    expect(migrated.schemaVersion).toBe(7);
+    expect(migrated.schemaVersion).toBe(8);
     expect({ ...migrated, schemaVersion: 6 }).toEqual(v6);
   });
 
@@ -230,7 +253,10 @@ describe('réseaux techniques : légende, vues, export', () => {
       return { strokes, texts };
     };
     const full = draw('full');
-    expect(full.strokes.map((s) => s.color)).toContain(findNetworkPreset('propane').style.stroke);
+    const color = findNetworkPreset('propane').style.stroke;
+    expect(full.strokes.map((s) => s.color)).toContain(color);
+    // Imprimée à son épaisseur à l'écran (4 px CSS ≈ 1,06 mm), quelle que soit l'échelle du plan.
+    expect(full.strokes.find((s) => s.color === color)!.width).toBeCloseTo(4 * MM_PER_CSS_PX, 6);
     expect(full.texts).toEqual(['Propane · 1 po']);
     expect(draw('simplified').texts).toEqual([]);
   });

@@ -267,6 +267,7 @@ export function createFlowObject(
 /**
  * Ligne d'un réseau technique (eau, égout, électricité, propane…) : les points suivent exactement
  * les clics. Elle va dans le calque de son réseau (créé au premier tracé, voir `editActions.create`).
+ * Épaisseur en pixels ÉCRAN (constante au zoom) : celle du modèle, sans conversion selon le zoom.
  */
 export function createUtilityObject(
   doc: PlanDocument,
@@ -276,7 +277,7 @@ export function createUtilityObject(
   status: UtilityStatus = 'existing',
 ): PlanObject {
   const preset = findNetworkPreset(network);
-  const style = withOverride(scaledStyle(preset.style, zoom), doc.plan.styleOverrides[preset.id]);
+  const style = withOverride({ ...preset.style }, doc.plan.styleOverrides[preset.id]);
   return {
     ...base(
       doc,

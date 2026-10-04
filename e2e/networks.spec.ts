@@ -129,3 +129,44 @@ test('réseaux techniques : un calque par réseau, équipements, superposition, 
     .click();
   await expect(page.getByTestId('notice')).toContainText('Réseau — Électricité');
 });
+
+/** Épaisseur (pixels écran) du trait coupé par la colonne x, mesurée sur le canevas des objets. */
+async function strokeThickness(page: Page, x: number, y: number): Promise<number> {
+  return page.evaluate(
+    async ({ x, y }) => {
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      // Canevas physiques : fond, objets, sélection. Seuls les objets sont lus.
+      const canvas = document.querySelectorAll(
+        '[data-testid="canvas-container"] canvas',
+      )[1] as HTMLCanvasElement;
+      const ratio = canvas.width / canvas.clientWidth;
+      const data = canvas
+        .getContext('2d')!
+        .getImageData(Math.round(x * ratio), Math.round((y - 30) * ratio), 1, Math.round(60 * ratio)).data;
+      let opaque = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i]! > 128) opaque++;
+      return opaque / ratio;
+    },
+    { x, y },
+  );
+}
+
+test('ligne de réseau : même épaisseur à l’écran quel que soit le zoom', async ({ page }) => {
+  await openPlanWithPhoto(page);
+  const box = await page.getByTestId('canvas-container').boundingBox();
+  const cx = Math.round(box!.width / 2);
+  const cy = Math.round(box!.height / 2);
+  await drawNetwork(page, 'water', [
+    [cx - 150, cy],
+    [cx + 150, cy],
+  ]);
+  await page.keyboard.press('Escape'); // désélectionne : seul le trait reste sur le canevas
+  const before = await strokeThickness(page, cx + 40, cy);
+  expect(before).toBeGreaterThanOrEqual(3);
+  expect(before).toBeLessThanOrEqual(6);
+  // Zoom avant (×4 environ), centré : le trait reste au centre et garde son épaisseur.
+  for (let i = 0; i < 4; i++) await page.getByRole('button', { name: 'Zoom avant (+)' }).click();
+  await expect.poll(() => strokeThickness(page, cx + 40, cy)).toBeCloseTo(before, 0);
+  for (let i = 0; i < 8; i++) await page.getByRole('button', { name: 'Zoom arrière (−)' }).click();
+  await expect.poll(() => strokeThickness(page, cx + 10, cy)).toBeCloseTo(before, 0);
+});
